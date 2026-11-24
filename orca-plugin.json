@@ -3,7 +3,7 @@
   "id": "coordinator-board",
   "name": "Coordinator Board",
   "version": "0.1.0",
-  "description": "Group agent sessions by project and answer the ones waiting for you from one panel.",
+  "description": "Group agent sessions by project and answer the ones waiting for you, from a sidebar panel or a full-width dashboard tab.",
   "engines": {
     "orca": ">=1.4.259"
   },
@@ -18,6 +18,32 @@
         "icon": "blocks",
         "entry": "src/panel.tsx",
         "ui": "components"
+      }
+    ],
+    "customEditors": [
+      {
+        "id": "dashboard",
+        "title": "Coordinator Board",
+        "extensions": [
+          ".coordinator-board"
+        ],
+        "entry": "src/dashboard/main.ts",
+        "frame": "isolated"
+      }
+    ],
+    "commands": [
+      {
+        "id": "open-dashboard",
+        "title": "Coordinator Board: Open dashboard"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "waiting",
+        "text": "Board",
+        "icon": "blocks",
+        "tooltip": "Coordinator Board",
+        "command": "open-dashboard"
       }
     ]
   },

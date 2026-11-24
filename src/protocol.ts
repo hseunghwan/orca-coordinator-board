@@ -4,7 +4,7 @@ import type { BoardView, ProjectChoice, ReplyResult } from './model'
 declare module 'orca' {
   interface PluginRequests {
     /** Selected projects with their sessions, pull requests and the decisions waiting for a person. */
-    'board.read': { input: { refresh?: boolean }; output: BoardView }
+    'board.read': { input: { refresh?: boolean; locale?: string }; output: BoardView }
     /** Every project Orca knows, and which ones the board shows. */
     'board.projects': { output: { projects: ProjectChoice[]; selected: string[] } }
     'board.select-projects': { input: { projectIds: string[] }; output: { selected: string[] } }

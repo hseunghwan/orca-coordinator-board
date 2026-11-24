@@ -1,13 +1,19 @@
 // Runs the worker over a mock Orca host and a fake GitHub, so no git or gh process starts.
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import { activateWith, type GithubDeps } from './worker'
+import { activateWith, OPEN_DASHBOARD, type FileDeps, type GithubDeps } from './worker'
 
 const github: GithubDeps = {
   originOf: async () => 'acme/app',
   openPulls: async () => ({ status: 'ok', items: [] }),
   now: () => 5000
 }
-const worker = { default: (orca: Parameters<typeof activateWith>[0]) => activateWith(orca, github) }
+const opened: string[] = []
+const files: FileDeps = { ensureDashboard: async (root) => { opened.push(root) } }
+let stop: (() => void) | undefined
+const worker = {
+  default: (orca: Parameters<typeof activateWith>[0]) => { stop = activateWith(orca, github, { files, pollMs: 0 }) },
+  deactivate: () => stop?.()
+}
 
 const agents = (state: string, stateStartedAt = 100) => ({
   agents: [{ terminalId: 't1', title: 'fix login', agent: 'claude', state, stateStartedAt, sessionId: null, task: null }]
@@ -26,7 +32,10 @@ function host(state = 'waiting') {
       'agents.list': agents(state),
       'terminal.read': { lines: ['Which branch should I use?', ''], truncated: false },
       'terminal.sendText': { accepted: true },
-      'terminal.focus': { focused: true }
+      'terminal.focus': { focused: true },
+      'statusBar.update': { ok: true },
+      'workspace.readContext': { workspaceId: 'w1', branch: 'feat/login', displayName: 'feat-login', terminals: [] },
+      'editor.open': { opened: true }
     }
   })
 }
@@ -93,5 +102,59 @@ test('asks workspaces whose terminal count is 0: Orca still lists their agents',
   const board = await mounted.request('board.read', {})
   assert.equal(board.projects[0].sessions.length, 1)
   assert.deepEqual(h.callsOf('agents.list'), [{ workspaceId: 'w1' }])
+  await mounted.deactivate()
+})
+
+test('shows how many sessions wait in the status bar, in the panel\'s language', async () => {
+  const h = host()
+  const mounted = await mountWorker(worker, { host: h })
+  await mounted.request('board.read', {})
+  await mounted.request('board.read', { locale: 'ko-KR' })
+  const updates = h.callsOf('statusBar.update') as { id: string; text: string; tone: string }[]
+  assert.deepEqual(updates.map((u) => [u.id, u.text, u.tone]), [['waiting', '1 waiting', 'accent'], ['waiting', '기다림 1', 'accent']])
+  assert.equal(h.data().storage.locale, 'ko-KR')
+  await mounted.deactivate()
+})
+
+test('a session waiting for permission turns the status bar warning', async () => {
+  const h = host('blocked')
+  const mounted = await mountWorker(worker, { host: h })
+  await mounted.request('board.read', {})
+  const [update] = h.callsOf('statusBar.update') as { tone: string }[]
+  assert.equal(update.tone, 'warning')
+  await mounted.deactivate()
+})
+
+test('opens the dashboard on its key file in the focused workspace', async () => {
+  opened.length = 0
+  const h = host()
+  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  assert.equal(await mounted.command(OPEN_DASHBOARD), undefined)
+  assert.deepEqual(opened, ['/w/app-login'])
+  assert.deepEqual(h.callsOf('editor.open'), [{ workspaceId: 'w1', path: '.coordinator-board/board.coordinator-board' }])
+  await mounted.deactivate()
+})
+
+test('asks for a workspace when none is focused, and writes nothing', async () => {
+  opened.length = 0
+  const h = host()
+  h.respond('workspace.readContext', null)
+  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  assert.match(String(await mounted.command(OPEN_DASHBOARD)), /Open a workspace/)
+  assert.deepEqual(opened, [])
+  assert.equal(h.callsOf('editor.open').length, 0)
+  await mounted.deactivate()
+})
+
+test('does not write the key file into a workspace on another host', async () => {
+  opened.length = 0
+  const h = host()
+  h.respond('workspace.list', {
+    workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'ssh:box' }],
+    truncated: false
+  })
+  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  assert.match(String(await mounted.command(OPEN_DASHBOARD)), /another host/)
+  assert.deepEqual(opened, [])
   await mounted.deactivate()
 })

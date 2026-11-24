@@ -2,9 +2,11 @@
 // git and gh, and types the person's replies into session terminals.
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
-import { stat } from 'node:fs/promises'
-import { isAbsolute, join } from 'node:path'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { commandEnv, GH_FIELDS, GH_PROJECTION, githubRepository, parseOpenPulls, SCAN_LIMIT } from './github'
+import { translator } from './i18n'
+import { DASHBOARD_FILE, dashboardFileText, statusItem, withExcludeLine } from './summary'
 import {
   buildBoard, cleanTail, remember, replyGuard, strings,
   type BoardView, type ProjectPulls, type PullItem, type RawAgent, type RawProject, type ReplyRecord, type ReplyStatus
@@ -16,9 +18,24 @@ export type GithubDeps = {
   now(): number
 }
 
+export type FileDeps = {
+  /** Writes the dashboard key file in a local checkout and hides it from git. */
+  ensureDashboard(root: string): Promise<void>
+}
+
+export type WorkerOptions = {
+  files?: FileDeps
+  /** How often the status bar count is read again; 0 turns the background read off (tests). */
+  pollMs?: number
+}
+
 const SELECTED = 'selectedProjects'
 const DISMISSED = 'dismissed'
 const REPLIES = 'replies'
+const LOCALE = 'locale'
+export const STATUS_ITEM = 'waiting'
+export const OPEN_DASHBOARD = 'open-dashboard'
+const POLL_MS = 30_000
 const MAX_WORKSPACES = 60
 const MAX_TAILS = 12
 const TTL = 60_000
@@ -39,11 +56,9 @@ function run(command: 'git' | 'gh', args: string[]): Promise<string> {
 
 export const hostGithub: GithubDeps = {
   async originOf(path) {
-    if (!isAbsolute(path)) return null
+    // A nested non-Git folder would otherwise inherit a parent repository from git -C.
+    if (!(await isCheckout(path))) return null
     try {
-      // A nested non-Git folder would otherwise inherit a parent repository from git -C.
-      const marker = await stat(join(path, '.git'))
-      if (!marker.isFile() && !marker.isDirectory()) return null
       return githubRepository(await run('git', ['-C', path, 'remote', 'get-url', 'origin']))
     } catch {
       return null
@@ -56,6 +71,36 @@ export const hostGithub: GithubDeps = {
     ]))
   },
   now: () => Date.now()
+}
+
+/** A folder with its own .git, not one nested in another repository. */
+async function isCheckout(path: string): Promise<boolean> {
+  if (!isAbsolute(path)) return false
+  try {
+    const marker = await stat(join(path, '.git'))
+    return marker.isFile() || marker.isDirectory()
+  } catch {
+    return false
+  }
+}
+
+export const hostFiles: FileDeps = {
+  async ensureDashboard(root) {
+    if (!isAbsolute(root)) throw new Error('not a local path')
+    const target = join(root, DASHBOARD_FILE)
+    await mkdir(dirname(target), { recursive: true })
+    const text = dashboardFileText()
+    if ((await readFile(target, 'utf8').catch(() => null)) !== text) await writeFile(target, text)
+    if (!(await isCheckout(root))) return
+    // A worktree's .git is a file; git names the exclude file the checkout really reads.
+    const reported = (await run('git', ['-C', root, 'rev-parse', '--git-path', 'info/exclude'])).trim()
+    if (!reported) return
+    const exclude = isAbsolute(reported) ? reported : join(root, reported)
+    const next = withExcludeLine(await readFile(exclude, 'utf8').catch(() => ''))
+    if (next === null) return
+    await mkdir(dirname(exclude), { recursive: true })
+    await writeFile(exclude, next)
+  }
 }
 
 async function mapLimited<V, R>(items: readonly V[], limit: number, fn: (item: V) => Promise<R>): Promise<R[]> {
@@ -76,7 +121,11 @@ function replyRecords(value: unknown): ReplyRecord[] {
   return Array.isArray(value) ? (value as ReplyRecord[]).filter((row) => row && typeof row.at === 'number') : []
 }
 
-export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
+export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: WorkerOptions = {}): () => void {
+  const files = options.files ?? hostFiles
+  const pollMs = options.pollMs ?? POLL_MS
+  let locale = 'en'
+  void orca.storage.get(LOCALE).then((value) => { if (typeof value === 'string') locale = value }, () => undefined)
   const origins = new Map<string, Entry<string | null>>()
   const pullLists = new Map<string, Entry<{ status: 'ok' | 'truncated' | 'unavailable'; items: PullItem[] }>>()
 
@@ -114,7 +163,8 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     return { repo, status: list.status, items: list.items }
   }
 
-  async function readBoard(refresh: boolean): Promise<BoardView> {
+  type ReadOptions = { pulls: boolean; tails: boolean }
+  async function readBoard(refresh: boolean, read: ReadOptions = { pulls: true, tails: true }): Promise<BoardView> {
     const [projectList, workspaceList, selectedRaw, dismissedRaw, repliesRaw] = await Promise.all([
       orca.host.call('project.list', {}),
       orca.host.call('workspace.list', { includeStatus: true }),
@@ -137,7 +187,7 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
       }
     })
     const chosen = projects.filter((project) => selected.includes(project.id))
-    const pulls = new Map(await mapLimited(chosen, 3, async (project) => [project.id, await pullsFor(project, refresh)] as const))
+    const pulls = new Map(read.pulls ? await mapLimited(chosen, 3, async (project) => [project.id, await pullsFor(project, refresh)] as const) : [])
     const board = buildBoard({
       projects, selected, workspaces, agents, pulls,
       dismissed: new Set(strings(dismissedRaw)),
@@ -145,6 +195,7 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
       now: github.now(),
       truncated
     })
+    if (!read.tails) return board
     const waiting = board.decisions.filter((d) => d.kind === 'reply' && d.session?.terminalId).slice(0, MAX_TAILS)
     await mapLimited(waiting, 4, async (decision) => {
       try {
@@ -157,7 +208,42 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     return board
   }
 
-  orca.panels.handle('board.read', (input) => readBoard(input?.refresh === true))
+  // The status bar shows how many sessions wait for the person. A board read by a panel or the
+  // dashboard updates it at once; otherwise the worker reads sessions alone (no gh, no terminal output).
+  let statusRun: Promise<void> | null = null
+  let statusTimer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false
+  async function showStatus(view: BoardView | null): Promise<void> {
+    if (stopped) return
+    try {
+      await orca.host.call('statusBar.update', { id: STATUS_ITEM, ...statusItem(translator(locale), view) })
+    } catch {
+      // The browser client has no status bar.
+    }
+  }
+  function updateStatus(): Promise<void> {
+    statusRun ??= readBoard(false, { pulls: false, tails: false })
+      .then((view) => showStatus(view), () => undefined)
+      .finally(() => { statusRun = null })
+    return statusRun
+  }
+  function statusSoon(): void {
+    if (stopped) return
+    if (statusTimer) clearTimeout(statusTimer)
+    statusTimer = setTimeout(() => { statusTimer = undefined; void updateStatus() }, 500)
+  }
+  const poll = pollMs > 0 ? setInterval(() => void updateStatus(), pollMs) : undefined
+  if (pollMs > 0) void updateStatus()
+
+  orca.panels.handle('board.read', async (input) => {
+    if (typeof input?.locale === 'string' && input.locale && input.locale !== locale) {
+      locale = input.locale.slice(0, 35)
+      await orca.storage.set(LOCALE, locale)
+    }
+    const board = await readBoard(input?.refresh === true)
+    void showStatus(board)
+    return board
+  })
 
   orca.panels.handle('board.projects', async () => {
     const [{ projects }, selected] = await Promise.all([orca.host.call('project.list', {}), orca.storage.get(SELECTED)])
@@ -176,6 +262,7 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     const selected = [...new Set(strings(input?.projectIds))].filter((id) => known.has(id))
     await orca.storage.set(SELECTED, selected)
     orca.panels.post('board.changed', { at: github.now() })
+    statusSoon()
     return { selected }
   })
 
@@ -212,6 +299,7 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     }
     await orca.storage.set(REPLIES, remember(replyRecords(await orca.storage.get(REPLIES)), record, 50))
     orca.panels.post('board.changed', { at })
+    statusSoon()
     return { status, at }
   })
 
@@ -224,11 +312,50 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     if (typeof input?.key === 'string' && input.key.length <= 1024) {
       await orca.storage.set(DISMISSED, remember(strings(await orca.storage.get(DISMISSED)).filter((key) => key !== input.key), input.key, 300))
       orca.panels.post('board.changed', { at: github.now() })
+      statusSoon()
     }
     return { ok: true as const }
   })
+
+  // The status bar item and the palette open the dashboard: an editor tab on a key file in the
+  // focused workspace, drawn by src/dashboard/ with the same requests as the panel.
+  orca.commands.register(OPEN_DASHBOARD, async () => {
+    const t = translator(locale)
+    const context = await orca.host.call('workspace.readContext', {}).catch(() => null)
+    const { workspaces } = await orca.host.call('workspace.list', {})
+    const workspace = context?.workspaceId ? workspaces.find((row) => row.id === context.workspaceId) : undefined
+    if (!workspace) {
+      return t('워크스페이스를 하나 연 뒤 다시 누르세요. 대시보드는 지금 보고 있는 워크스페이스에 탭으로 열립니다.',
+        'Open a workspace, then try again. The dashboard opens as a tab in the workspace you are looking at.')
+    }
+    if (workspace.hostId && workspace.hostId !== 'local') {
+      return t('다른 호스트의 워크스페이스에서는 대시보드를 열 수 없습니다. 이 컴퓨터의 워크스페이스로 옮긴 뒤 누르세요.',
+        'The dashboard cannot open in a workspace on another host. Switch to a workspace on this computer.')
+    }
+    try {
+      await files.ensureDashboard(workspace.path)
+      await orca.host.call('editor.open', { workspaceId: workspace.id, path: DASHBOARD_FILE })
+      return undefined
+    } catch (error) {
+      orca.log(`open dashboard failed: ${error instanceof Error ? error.message : String(error)}`)
+      return t('대시보드를 열지 못했습니다.', 'Could not open the dashboard.')
+    }
+  })
+
+  return () => {
+    stopped = true
+    if (poll) clearInterval(poll)
+    if (statusTimer) clearTimeout(statusTimer)
+  }
 }
 
+let stop: (() => void) | undefined
+
 export default function activate(orca: OrcaWorkerApi): void {
-  activateWith(orca, hostGithub)
+  stop = activateWith(orca, hostGithub)
+}
+
+export function deactivate(): void {
+  stop?.()
+  stop = undefined
 }

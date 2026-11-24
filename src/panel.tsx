@@ -24,7 +24,7 @@ let generation = 0
 async function refresh(force = false): Promise<void> {
   const mine = ++generation
   try {
-    const board = await plugin.request('board.read', { refresh: force })
+    const board = await plugin.request('board.read', { refresh: force, locale: env.locale })
     if (mine !== generation) return
     set(view, board)
     set(failure, null)
