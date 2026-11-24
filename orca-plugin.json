@@ -19,14 +19,6 @@
         "entry": "src/panel.tsx",
         "ui": "components"
       }
-    ],
-    "events": [
-      {
-        "on": "agent.status.changed"
-      },
-      {
-        "on": "workspace.created"
-      }
     ]
   },
   "capabilities": [

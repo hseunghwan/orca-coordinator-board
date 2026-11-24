@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { buildBoard, cleanTail, linkWorkspaceIds, replyGuard, type RawAgent } from './model'
+import { buildBoard, cleanTail, replyGuard, type RawAgent } from './model'
 
 const agent = (over: Partial<RawAgent>): RawAgent => ({ terminalId: 't1', title: 'fix login', agent: 'claude', state: 'waiting', stateStartedAt: 100, ...over })
 const pull = (number: number, reason: 'ready' | 'draft', updatedAt = '2026-11-20T00:00:00Z') =>
@@ -56,9 +56,3 @@ test('strips escape sequences, controls and bidi overrides from terminal output'
   assert.deepEqual(cleanTail(['\u001b[31mred\u001b[0m', 'a\u202eb\u0007', '', '  ']), ['red', 'a b'])
 })
 
-test('keeps the newest workspace id pairs within the cap', () => {
-  assert.equal(linkWorkspaceIds({ a: '1' }, 'a', '1'), null)
-  assert.equal(linkWorkspaceIds({}, undefined, '1'), null)
-  assert.deepEqual(linkWorkspaceIds({ a: '1', b: '2' }, 'c', '3', 2), { b: '2', c: '3' })
-  assert.deepEqual(Object.keys(linkWorkspaceIds({ a: '1', b: '2' }, 'a', '9', 5)!), ['b', 'a'])
-})

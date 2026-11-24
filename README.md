@@ -21,9 +21,12 @@ Orca용 코디네이터 보드(MVP)다. Paseo 플러그인([../README.md](../REA
 
 코디네이터 세션과 다이제스트, 워커 배정, 보드에서 PR 병합, 사진 첨부, 모델 라우팅, 다른 프로젝트 세션 링크. Orca는 아직 플러그인이 MCP 도구를 내놓을 수 없어서, 코디네이터가 보드에 판단을 돌려주는 길은 따로 설계해야 한다.
 
-## 워크스페이스 id
+## 실기에서 확인한 Orca 동작 (1.4.272)
 
-Orca 문서는 `agents.list`의 `workspaceId`가 `workspace.list`의 id인지, 이벤트의 `workspaceId`인지 밝히지 않는다. 워커는 먼저 `workspace.list` id로 묻고, 거부되면 `agent.status.changed`와 `workspace.created` 이벤트에서 모은 `workspaceListId → workspaceId` 대응으로 한 번 더 묻는다. 대응을 아직 모르면 보드에 "일부만 보입니다"가 뜨고, 그 워크스페이스의 에이전트 상태가 한 번 바뀌면 채워진다.
+- `agents.list`의 `workspaceId`는 `workspace.list`가 주는 id다. 이벤트의 `workspaceId`는 다른 형식(`<uuid>::<경로>`)이라 쓰지 않는다.
+- 터미널 수가 0인 워크스페이스에도 에이전트가 있다. 그래서 워크스페이스를 모두 조회한다.
+- 터미널 id가 없는 에이전트가 있다. 이런 세션은 열기와 답장이 안 되고, 세션 진행에만 보인다.
+- 워커 프로세스에는 `APPDATA`와 `HOME`이 없다. Windows의 `gh`는 `%APPDATA%\\GitHub CLI`에서 로그인 정보를 읽으므로, 워커가 `USERPROFILE`로 채워서 실행한다(`commandEnv`).
 
 ## 개발
 

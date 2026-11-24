@@ -19,6 +19,22 @@ export function githubRepository(remote: string | null | undefined): string | nu
 
 export const pullUrl = (repo: string, number: number): string => `https://github.com/${repo}/pull/${number}`
 
+/**
+ * The environment for git and gh. Orca starts the worker without APPDATA (and HOME), and gh on
+ * Windows reads its sign-in from %APPDATA%\\GitHub CLI, so it would answer "not logged in".
+ * Fill only what is missing, from USERPROFILE. Prompts stay off: a hung prompt never holds the board.
+ */
+export function commandEnv(env: Readonly<Record<string, string | undefined>>, platform: string): Record<string, string | undefined> {
+  const next: Record<string, string | undefined> = { ...env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' }
+  const profile = env.USERPROFILE
+  if (platform === 'win32' && profile) {
+    next.APPDATA ??= profile + '\\AppData\\Roaming'
+    next.LOCALAPPDATA ??= profile + '\\AppData\\Local'
+    next.HOME ??= profile
+  }
+  return next
+}
+
 export const SCAN_LIMIT = 200
 export const GH_FIELDS = 'number,title,state,updatedAt,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest'
 export const GH_PROJECTION = '[.[] | {number,title,state,updatedAt,isDraft,mergeable,mergeStateStatus,reviewDecision,checks:[.statusCheckRollup[]? | {status,conclusion,state}],autoMerge:(.autoMergeRequest != null)}]'

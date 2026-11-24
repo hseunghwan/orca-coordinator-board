@@ -4,9 +4,9 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { GH_FIELDS, GH_PROJECTION, githubRepository, parseOpenPulls, SCAN_LIMIT } from './github'
+import { commandEnv, GH_FIELDS, GH_PROJECTION, githubRepository, parseOpenPulls, SCAN_LIMIT } from './github'
 import {
-  buildBoard, cleanTail, linkWorkspaceIds, remember, replyGuard, strings, workspaceIds,
+  buildBoard, cleanTail, remember, replyGuard, strings,
   type BoardView, type ProjectPulls, type PullItem, type RawAgent, type RawProject, type ReplyRecord, type ReplyStatus
 } from './model'
 
@@ -19,13 +19,12 @@ export type GithubDeps = {
 const SELECTED = 'selectedProjects'
 const DISMISSED = 'dismissed'
 const REPLIES = 'replies'
-const WORKSPACE_IDS = 'workspaceIds'
 const MAX_WORKSPACES = 60
 const MAX_TAILS = 12
 const TTL = 60_000
 const FAILED_TTL = 15_000
 
-// shell:false, a timeout, a buffer cap and no interactive prompts: a hung gh never holds the board.
+// shell:false, a timeout and a buffer cap; commandEnv turns prompts off.
 function run(command: 'git' | 'gh', args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(command, args, {
@@ -33,7 +32,7 @@ function run(command: 'git' | 'gh', args: string[]): Promise<string> {
       windowsHide: true,
       timeout: command === 'gh' ? 15_000 : 3_000,
       maxBuffer: 2 * 1024 * 1024,
-      env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' }
+      env: commandEnv(process.env, process.platform)
     }, (error: Error | null, stdout: string | Buffer) => (error ? reject(error) : resolve(String(stdout))))
   })
 }
@@ -94,26 +93,9 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     return entry.value
   }
 
-  async function learnIds(listId: string | undefined, workspaceId: string | null | undefined): Promise<void> {
-    const next = linkWorkspaceIds(workspaceIds(await orca.storage.get(WORKSPACE_IDS)), listId, workspaceId)
-    if (next) await orca.storage.set(WORKSPACE_IDS, next)
-  }
-
-  orca.events.on('agent.status.changed', (event) => learnIds(event.workspaceListId, event.workspaceId))
-  orca.events.on('workspace.created', (event) => learnIds(event.workspaceListId, event.workspaceId))
-
-  /**
-   * Agents of a workspace named by its `workspace.list` id. If Orca refuses that id, try the
-   * workspace's own id learned from events; with neither, the first refusal stands.
-   */
-  async function agentsOf(listId: string): Promise<RawAgent[]> {
-    try {
-      return (await orca.host.call('agents.list', { workspaceId: listId })).agents
-    } catch (refused) {
-      const own = workspaceIds(await orca.storage.get(WORKSPACE_IDS))[listId]
-      if (!own || own === listId) throw refused
-      return (await orca.host.call('agents.list', { workspaceId: own })).agents
-    }
+  async function agentsOf(workspaceId: string): Promise<RawAgent[]> {
+    // Checked live on Orca 1.4.272: agents.list takes the id workspace.list gives.
+    return (await orca.host.call('agents.list', { workspaceId })).agents
   }
 
   async function pullsFor(project: RawProject, refresh: boolean): Promise<ProjectPulls> {
@@ -121,7 +103,13 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     const repo = await cached(origins, project.path, refresh, () => github.originOf(project.path), () => TTL)
     if (!repo) return { repo: null, status: 'unmapped', items: [] }
     const list = await cached(pullLists, repo, refresh, async () => {
-      try { return await github.openPulls(repo) } catch { return { status: 'unavailable' as const, items: [] } }
+      try {
+        return await github.openPulls(repo)
+      } catch (error) {
+        const { code, stderr } = error as { code?: unknown; stderr?: unknown }
+        orca.log(`gh pr list failed for ${repo}: exit ${String(code ?? '')}: ${String(stderr ?? '').trim().slice(0, 300)}`)
+        return { status: 'unavailable' as const, items: [] }
+      }
     }, (value) => (value.status === 'unavailable' ? FAILED_TTL : TTL))
     return { repo, status: list.status, items: list.items }
   }
@@ -137,10 +125,9 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps): void {
     const projects: RawProject[] = projectList.projects
     const selected = strings(selectedRaw).filter((id) => projects.some((project) => project.id === id))
     const workspaces = workspaceList.workspaces.filter((w) => w.projectId != null && selected.includes(w.projectId))
-    // A workspace with no terminal has no agent to ask.
-    const live = workspaces.filter((w) => !w.status || w.status.terminalCount > 0)
-    const scanned = live.slice(0, MAX_WORKSPACES)
-    let truncated = projectList.truncated || workspaceList.truncated || live.length > scanned.length
+    // Ask every workspace: Orca lists agents even where the terminal count is 0.
+    const scanned = workspaces.slice(0, MAX_WORKSPACES)
+    let truncated = projectList.truncated || workspaceList.truncated || workspaces.length > scanned.length
     const agents = new Map<string, RawAgent[]>()
     await mapLimited(scanned, 4, async (workspace) => {
       try {

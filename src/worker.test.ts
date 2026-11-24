@@ -1,5 +1,5 @@
 // Runs the worker over a mock Orca host and a fake GitHub, so no git or gh process starts.
-import { assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
+import { assert, mockHost, mountWorker, test } from 'orca/testing'
 import { activateWith, type GithubDeps } from './worker'
 
 const github: GithubDeps = {
@@ -81,22 +81,17 @@ test('keeps only projects Orca knows when saving a selection', async () => {
   await mounted.deactivate()
 })
 
-test('falls back to the workspace id learned from events when Orca refuses the list id', async () => {
+
+test('asks workspaces whose terminal count is 0: Orca still lists their agents', async () => {
   const h = host()
-  h.respond('agents.list', (params: { workspaceId?: string }) => {
-    if (params?.workspaceId === 'w1') throw hostError('invalid_params', 'no workspace has this id')
-    if (params?.workspaceId === 'own-1') return agents('waiting')
-    throw hostError('invalid_params', 'unknown')
+  h.respond('workspace.list', {
+    workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'local',
+      status: { state: 'inactive', unread: false, terminalCount: 0, lastActivityAt: null } }],
+    truncated: false
   })
-  const mounted = await mountWorker(worker, { host: h, events: ['agent.status.changed', 'workspace.created'] })
-  // Before any event the board cannot read the agents, and says the list is partial.
-  const before = await mounted.request('board.read', {})
-  assert.equal(before.decisions.length, 0)
-  assert.equal(before.truncated, true)
-  await mounted.emit('agent.status.changed', { workspaceId: 'own-1', workspaceListId: 'w1', paneKey: 'p', terminalId: 't1', state: 'waiting', receivedAt: 1 })
-  assert.deepEqual(h.data().storage.workspaceIds, { w1: 'own-1' })
-  const after = await mounted.request('board.read', {})
-  assert.equal(after.decisions.length, 1)
-  assert.equal((await mounted.request('board.reply', reply)).status, 'sent')
+  const mounted = await mountWorker(worker, { host: h })
+  const board = await mounted.request('board.read', {})
+  assert.equal(board.projects[0].sessions.length, 1)
+  assert.deepEqual(h.callsOf('agents.list'), [{ workspaceId: 'w1' }])
   await mounted.deactivate()
 })

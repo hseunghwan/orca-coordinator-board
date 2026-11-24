@@ -176,28 +176,6 @@ export function replyGuard(agent: RawAgent | undefined, text: string, expectedSi
   return null
 }
 
-/**
- * Orca names a workspace two ways: events carry its own `workspaceId` and the
- * `workspaceListId` that `workspace.list` gives it. The host docs do not say which one
- * `agents.list` takes, so the worker keeps the pairs it has seen, newest last.
- */
-export type WorkspaceIds = Record<string, string>
-
-export function workspaceIds(value: unknown): WorkspaceIds {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return Object.fromEntries(Object.entries(value).filter((pair): pair is [string, string] => typeof pair[1] === 'string'))
-}
-
-export function linkWorkspaceIds(map: WorkspaceIds, listId: string | undefined, workspaceId: string | null | undefined, cap = 500): WorkspaceIds | null {
-  if (!listId || !workspaceId || map[listId] === workspaceId) return null
-  const next = { ...map }
-  delete next[listId]
-  next[listId] = workspaceId
-  const keys = Object.keys(next)
-  for (const key of keys.slice(0, Math.max(0, keys.length - cap))) delete next[key]
-  return next
-}
-
 export function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }

@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { githubRepository, parseOpenPulls } from './github'
+import { commandEnv, githubRepository, parseOpenPulls } from './github'
 
 test('reads GitHub.com remotes only', () => {
   assert.equal(githubRepository('https://github.com/Acme/App.git'), 'acme/app')
@@ -37,4 +37,15 @@ test('classifies open pull requests the way the Paseo board does', () => {
 test('cleans pull request titles', () => {
   const [pull] = parseOpenPulls('acme/app', JSON.stringify([row({ title: 'evil\u202etitle\n' })])).items
   assert.equal(pull.title, 'evil title ')
+})
+
+test('gives gh its Windows profile folders when Orca leaves them out', () => {
+  const env = commandEnv({ USERPROFILE: 'C:\\Users\\me', PATH: 'p' }, 'win32')
+  assert.equal(env.APPDATA, 'C:\\Users\\me\\AppData\\Roaming')
+  assert.equal(env.LOCALAPPDATA, 'C:\\Users\\me\\AppData\\Local')
+  assert.equal(env.HOME, 'C:\\Users\\me')
+  assert.equal(env.GH_PROMPT_DISABLED, '1')
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0')
+  assert.equal(commandEnv({ USERPROFILE: 'C:\\Users\\me', APPDATA: 'D:\\roam' }, 'win32').APPDATA, 'D:\\roam')
+  assert.equal(commandEnv({ HOME: '/home/me' }, 'linux').APPDATA, undefined)
 })
