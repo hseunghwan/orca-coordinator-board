@@ -6,7 +6,7 @@ import {
 } from 'orca'
 import { translator, type T } from './i18n'
 import { pullReasonLabel, pullStatusNote, replyStatusLabel, stateLabel, stateTone } from './labels'
-import { MAX_REPLY, without, type BoardView, type Decision, type ProjectChoice, type ProjectLane, type ReplyResult, type SessionRow } from './model'
+import { MAX_REPLY, without, type BoardView, type Decision, type ProjectChoice, type ProjectLane, type ReplyResult, type SessionRow, type ClosedSession } from './model'
 
 const view = atom<BoardView | null>(null)
 const failure = atom<string | null>(null)
@@ -62,6 +62,28 @@ async function focus(session: SessionRow): Promise<void> {
 
 function openLabel(t: T, session: SessionRow): string {
   return session.terminalId ? t('세션 열기', 'Open session') : t('채팅 열기', 'Open chat')
+}
+
+async function resume(projectName: string, session: ClosedSession): Promise<void> {
+  const key = session.key
+  update(sending, (map) => ({ ...map, [key]: true }))
+  try {
+    const result = await plugin.request('board.resume-reply', {
+      workspaceId: session.workspaceId,
+      sessionId: session.sessionId,
+      agent: session.agent,
+      text: read(drafts)[key] ?? '',
+      projectName,
+      workspaceName: session.workspaceName,
+      title: session.title
+    })
+    update(receipts, (map) => ({ ...map, [key]: result }))
+    if (result.status === 'sent') update(drafts, (map) => without(map, key))
+  } catch {
+    update(receipts, (map) => ({ ...map, [key]: { status: 'failed' as const, at: Date.now() } }))
+  } finally {
+    update(sending, (map) => without(map, key))
+  }
 }
 
 async function dismiss(key: string): Promise<void> {
@@ -265,9 +287,44 @@ function laneView(t: T, lane: ProjectLane) {
             ))}
           </List>
         )}
+        {lane.closed.length > 0 && (
+          <Collapsible title={t(`닫힌 최근 세션 ${lane.closed.length}개`, `${lane.closed.length} recently closed`)}>
+            <Stack gap="sm">{lane.closed.map((session) => closedView(t, lane, session))}</Stack>
+          </Collapsible>
+        )}
         {note && <Text size="xs" muted>{note}</Text>}
       </Stack>
     </Collapsible>
+  )
+}
+
+/** A closed session: answering it resumes it in a new terminal, then types the reply there. */
+function closedView(t: T, lane: ProjectLane, session: ClosedSession) {
+  const key = session.key
+  const draft = read(drafts)[key] ?? ''
+  const busy = !!read(sending)[key]
+  const receipt = read(receipts)[key]
+  return (
+    <Stack gap="xs">
+      <Text size="sm">{session.title}</Text>
+      <Text size="xs" muted>{session.workspaceName} · <RelativeTime at={session.updatedAt} /></Text>
+      <Textarea
+        label={t('닫힌 세션에 보낼 답', 'Reply to the closed session')}
+        labelHidden
+        placeholder={t('이어 연 뒤 보낼 답을 쓰세요', 'Write the reply to send after resuming')}
+        rows={2}
+        maxLength={MAX_REPLY}
+        value={draft}
+        disabled={busy}
+        onChange={(value) => update(drafts, (map) => ({ ...map, [key]: value }))}
+      />
+      {receipt && <Text size="sm" tone={receipt.status === 'sent' ? 'success' : 'warning'}>{replyStatusLabel(t, receipt.status)}</Text>}
+      <Row>
+        <Button size="sm" icon="play" disabled={busy || !draft.trim()} onPress={() => resume(lane.name, session)}>
+          {t('이어 열고 보내기', 'Resume and send')}
+        </Button>
+      </Row>
+    </Stack>
   )
 }
 

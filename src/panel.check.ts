@@ -24,7 +24,11 @@ export default defineCheck({
           { terminalId: null, title: 'review notes', agent: 'claude', state: 'waiting', stateStartedAt: 1700000200000 }
         ]
       },
-      'terminal.read': { lines: ['Which branch should I use?'], truncated: false }
+      'terminal.read': { lines: ['Which branch should I use?'], truncated: false },
+      'agent.listSessions': {
+        sessions: [{ sessionId: 's-old', agent: 'claude', title: 'update the changelog', workspaceId: 'w1', hostId: 'ssh:demo', branch: 'feat/login', createdAt: 1700000000000, updatedAt: 1700000300000, messageCount: 4, totalTokens: 100, running: false }],
+        truncated: false
+      }
     }
   }
 })

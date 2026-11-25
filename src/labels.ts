@@ -47,5 +47,6 @@ export function replyStatusLabel(t: T, status: ReplyStatus): string {
     case 'busy': return t('세션이 작업 중이라 보내지 않았습니다. 끝나면 다시 보내세요.', 'Not sent: the session is working. Send again when it stops.')
     case 'changed': return t('세션 상태가 바뀌었습니다. 최근 출력을 다시 확인한 뒤 보내세요.', 'The session changed. Check its latest output, then send again.')
     case 'failed': return t('보내지 못했습니다.', 'Could not send.')
+    case 'open': return t('이 세션이 지금 열려 있어 이어 열지 않았습니다. 열린 세션에서 답하세요.', 'Not resumed: the session is open now. Answer it where it runs.')
   }
 }

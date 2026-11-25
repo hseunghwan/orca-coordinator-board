@@ -6,7 +6,7 @@ const session = { key: 't1@100', terminalId: 't1', workspaceId: 'w1', workspaceN
 const board = (over: Partial<BoardView> = {}): BoardView => ({
   at: 1000,
   selected: ['p1'],
-  projects: [{ projectId: 'p1', name: 'App', sessions: [session], repo: 'acme/app', pullStatus: 'ok', pulls: [] }],
+  projects: [{ projectId: 'p1', name: 'App', sessions: [session], closed: [], repo: 'acme/app', pullStatus: 'ok', pulls: [] }],
   decisions: [{ key: 't1@100', kind: 'reply', projectName: 'App', since: 100, session, tail: ['Which branch?'] }],
   replies: [],
   truncated: false,
@@ -77,6 +77,27 @@ test('a chat tab waiting for an answer offers to open it, not a reply box', asyn
   assert.equal(view.find({ label: 'Reply' }), null)
   await view.press({ text: 'Open chat' })
   assert.deepEqual(focused.map((input) => ({ ...(input as object) })), [{ terminalId: null, workspaceId: 'w1' }])
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('answers a closed session by resuming it', async () => {
+  const closed = { key: 'closed:s-old', sessionId: 's-old', agent: 'claude' as const, title: 'old task', workspaceId: 'w1', workspaceName: 'feat-login', branch: 'feat/login', updatedAt: 900 }
+  const sent: unknown[] = []
+  const host = mockHost({
+    requests: {
+      'board.read': () => board({ decisions: [], projects: [{ projectId: 'p1', name: 'App', sessions: [], closed: [closed], repo: null, pullStatus: 'unmapped', pulls: [] }] }),
+      'board.resume-reply': (input) => { sent.push(input); return { status: 'sent', at: 2000 } }
+    }
+  })
+  const view = await mount(panel, { host, locale: 'en' })
+  await view.select({ label: 'Board view' }, 'progress')
+  await view.toggle({ label: '1 recently closed' })
+  await view.type({ label: 'Reply to the closed session' }, 'go on')
+  await view.press({ text: 'Resume and send' })
+  assert.deepEqual(sent.map((input) => ({ ...(input as object) })), [{
+    workspaceId: 'w1', sessionId: 's-old', agent: 'claude', text: 'go on', projectName: 'App', workspaceName: 'feat-login', title: 'old task'
+  }])
   assert.deepEqual(view.errors, [])
   await view.unmount()
 })

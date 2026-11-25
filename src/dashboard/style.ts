@@ -54,6 +54,10 @@ textarea { width: 100%; min-height: 66px; resize: vertical; background: var(--or
 .bar .working { background: var(--cb-working); } .bar .done { background: var(--cb-done); }
 .sessions { display: flex; flex-direction: column; gap: 1px; margin: 0 -6px; }
 .session { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; min-width: 0; }
+.closed { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.closed-session { display: flex; flex-direction: column; gap: 6px; }
+.closed-session .session { cursor: default; margin: 0 -6px; }
+.closed-session .actions { justify-content: flex-end; }
 .session:hover { background: var(--orca-accent); color: var(--orca-accent-foreground); }
 .session[aria-disabled="true"] { cursor: default; }
 .session .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

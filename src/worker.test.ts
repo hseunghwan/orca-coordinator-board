@@ -21,7 +21,7 @@ const agents = (state: string, stateStartedAt = 100) => ({
 
 function host(state = 'waiting', shown: string[] = []) {
   // Orca types only into the focused workspace's terminals; focusing one shows its workspace.
-  const focusable = new Set(['t1'])
+  const focusable = new Set(['t1', 't9'])
   return mockHost({
     storage: { selectedProjects: ['p1'] },
     results: {
@@ -42,7 +42,9 @@ function host(state = 'waiting', shown: string[] = []) {
       'statusBar.update': { ok: true },
       'workspace.readContext': () => ({ workspaceId: 'w1', branch: 'feat/login', displayName: 'feat-login', terminals: shown.map((id) => ({ id })) }),
       'editor.open': { opened: true },
-      'workspace.open': { opened: true }
+      'workspace.open': { opened: true },
+      'agent.listSessions': { sessions: [], truncated: false },
+      'agent.resume': { terminalId: 't9', started: true }
     }
   })
 }
@@ -194,5 +196,48 @@ test('does not write the key file into a workspace on another host', async () =>
   const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
   assert.match(String(await mounted.command(OPEN_DASHBOARD)), /another host/)
   assert.deepEqual(opened, [])
+  await mounted.deactivate()
+})
+
+const closedReply = { workspaceId: 'w1', sessionId: 's-old', agent: 'claude', text: '이어서 해 줘', projectName: 'App', workspaceName: 'feat-login', title: 'old task' }
+const oldRow = (running = false) => ({ sessions: [{ sessionId: 's-old', agent: 'claude', title: 'old task', workspaceId: 'w1', hostId: 'local', branch: 'feat/login', createdAt: 1, updatedAt: 4000, messageCount: 3, totalTokens: 10, running }], truncated: false })
+const liveNamed = { agents: [{ terminalId: 't1', title: 'fix login', agent: 'claude', state: 'waiting', stateStartedAt: 100, sessionId: 's-live', task: null }] }
+
+test('lists a closed session on the board and leaves out the one that runs now', async () => {
+  const h = host()
+  h.respond('agents.list', liveNamed)
+  h.respond('agent.listSessions', { sessions: [...oldRow().sessions, { ...oldRow().sessions[0], sessionId: 's-live' }], truncated: false })
+  const mounted = await mountWorker(worker, { host: h })
+  const board = await mounted.request('board.read', {})
+  assert.deepEqual(board.projects[0].closed.map((s) => s.sessionId), ['s-old'])
+  await mounted.deactivate()
+})
+
+test('resumes a closed session, shows its terminal, then types the reply as written', async () => {
+  const h = host()
+  h.respond('agents.list', liveNamed)
+  h.respond('agent.listSessions', oldRow())
+  h.respond('terminal.read', { lines: ['> ready'], truncated: false })
+  const mounted = await mountWorker(worker, { host: h })
+  const result = await mounted.request('board.resume-reply', closedReply)
+  assert.equal(result.status, 'sent')
+  const order = h.calls.map((call) => call.method).filter((m) => m === 'agent.resume' || m === 'terminal.focus' || m === 'terminal.sendText')
+  assert.deepEqual(order, ['agent.resume', 'terminal.focus', 'terminal.sendText'])
+  assert.deepEqual(h.callsOf('agent.resume'), [{ workspaceId: 'w1', agent: 'claude', sessionId: 's-old' }])
+  assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 't9', text: '이어서 해 줘', enter: true }])
+  await mounted.deactivate()
+})
+
+test('never resumes a session that runs again, or beside a pane it cannot name', async () => {
+  const h = host()
+  h.respond('agents.list', liveNamed)
+  h.respond('agent.listSessions', oldRow(true))
+  const mounted = await mountWorker(worker, { host: h })
+  assert.equal((await mounted.request('board.resume-reply', closedReply)).status, 'open')
+  h.respond('agent.listSessions', oldRow())
+  h.respond('agents.list', { agents: [{ ...liveNamed.agents[0], terminalId: null, sessionId: null }] })
+  assert.equal((await mounted.request('board.resume-reply', closedReply)).status, 'open')
+  assert.equal(h.callsOf('agent.resume').length, 0)
+  assert.equal(h.callsOf('terminal.sendText').length, 0)
   await mounted.deactivate()
 })

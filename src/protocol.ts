@@ -25,6 +25,22 @@ declare module 'orca' {
       output: ReplyResult
     }
     /** Shows a session: its terminal, or its workspace when it has none (a chat tab). */
+    /**
+     * Resumes a closed session in a new terminal and types the person's reply into it. The worker
+     * reads the session's workspace and history again first and refuses one that is open again.
+     */
+    'board.resume-reply': {
+      input: {
+        workspaceId: string
+        sessionId: string
+        agent: string
+        text: string
+        projectName: string
+        workspaceName: string
+        title: string
+      }
+      output: ReplyResult
+    }
     'board.focus': { input: { terminalId?: string | null; workspaceId?: string }; output: { focused: boolean } }
     /** Hides a reply or review card until its session or pull request changes. */
     'board.dismiss': { input: { key: string }; output: { ok: true } }

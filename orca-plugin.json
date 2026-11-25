@@ -65,6 +65,12 @@
     },
     {
       "kind": "workspace:write"
+    },
+    {
+      "kind": "agent:launch"
+    },
+    {
+      "kind": "history:read"
     }
   ]
 }

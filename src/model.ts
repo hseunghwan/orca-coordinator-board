@@ -16,7 +16,18 @@ export type RawAgent = {
   agent: string | null
   state: AgentState
   stateStartedAt: number
+  /** What `agent.resume` takes; Orca leaves it out for some panes. */
+  sessionId?: string | null
   task?: { title: string } | null
+}
+/** One row of Orca's Agent Session History (`agent.listSessions`). */
+export type RawHistorySession = {
+  sessionId: string
+  agent: string
+  title: string
+  workspaceId: string | null
+  updatedAt: number
+  running: boolean
 }
 
 export type PullReason =
@@ -37,10 +48,23 @@ export type SessionRow = {
   state: AgentState
   since: number
 }
+/** A session no Orca pane runs now; the person can answer it by resuming it in a new terminal. */
+export type ClosedSession = {
+  key: string
+  sessionId: string
+  agent: ResumeAgent
+  title: string
+  workspaceId: string
+  workspaceName: string
+  branch: string | null
+  updatedAt: number
+}
 export type ProjectLane = {
   projectId: string
   name: string
   sessions: SessionRow[]
+  /** Recently closed sessions, newest first; empty when Orca's history cannot be read. */
+  closed: ClosedSession[]
   repo: string | null
   pullStatus: PullStatus
   pulls: PullItem[]
@@ -55,7 +79,7 @@ export type Decision = {
   tail?: string[]
   pull?: PullItem
 }
-export type ReplyStatus = 'sent' | 'empty' | 'too-long' | 'gone' | 'permission' | 'busy' | 'changed' | 'failed'
+export type ReplyStatus = 'sent' | 'empty' | 'too-long' | 'gone' | 'permission' | 'busy' | 'changed' | 'failed' | 'open'
 export type ReplyResult = { status: ReplyStatus; at: number }
 export type ReplyRecord = { projectName: string; workspaceName: string; title: string; text: string; status: ReplyStatus; at: number }
 export type ProjectChoice = { id: string; name: string; path: string; remote: boolean }
@@ -69,6 +93,64 @@ export type BoardView = {
 }
 
 export const MAX_REPLY = 8000
+export const CLOSED_PER_PROJECT = 3
+export const CLOSED_MAX_AGE = 7 * 24 * 60 * 60 * 1000
+
+/** The agents `agent.resume` accepts (Orca host API 1.9). */
+export const RESUME_AGENTS = [
+  'claude', 'codebuddy', 'codex', 'qoder', 'qoder-cn', 'qwen-code', 'gemini', 'antigravity', 'opencode', 'opencode2', 'pi',
+  'mimo-code', 'droid', 'grok', 'devin', 'omp', 'prime-agent', 'copilot', 'cursor', 'kimi', 'muse', 'zcode', 'dsh', 'jcode', 'kiro', 'hermes'
+] as const
+export type ResumeAgent = (typeof RESUME_AGENTS)[number]
+export const isResumeAgent = (agent: string): agent is ResumeAgent => (RESUME_AGENTS as readonly string[]).includes(agent)
+
+/**
+ * Closed sessions of one project's workspaces that may be resumed. A session must never run in two
+ * places, so this leaves out sessions Orca runs now (`running`, or a live pane with that id) and
+ * every session of a workspace that has a live pane whose session id Orca does not give: that pane
+ * could be any of them, a chat tab included.
+ */
+export function closedSessions(input: {
+  history: readonly RawHistorySession[]
+  workspaces: readonly RawWorkspace[]
+  agents: ReadonlyMap<string, readonly RawAgent[]>
+  now: number
+  limit?: number
+}): ClosedSession[] {
+  const byId = new Map(input.workspaces.map((workspace) => [workspace.id, workspace]))
+  const live = new Set<string>()
+  const unsure = new Set<string>()
+  for (const workspace of input.workspaces) {
+    const agents = input.agents.get(workspace.id)
+    // Agents not read: nothing is known about what runs there.
+    if (!agents) { unsure.add(workspace.id); continue }
+    for (const agent of agents) {
+      if (agent.sessionId) live.add(agent.sessionId)
+      else unsure.add(workspace.id)
+    }
+  }
+  const out: ClosedSession[] = []
+  const seen = new Set<string>()
+  for (const row of [...input.history].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    const workspace = row.workspaceId ? byId.get(row.workspaceId) : undefined
+    if (!workspace || unsure.has(workspace.id) || row.running || live.has(row.sessionId) || seen.has(row.sessionId)) continue
+    if (!isResumeAgent(row.agent) || !/^[A-Za-z0-9._:-]{1,256}$/.test(row.sessionId)) continue
+    if (input.now - row.updatedAt > CLOSED_MAX_AGE) continue
+    seen.add(row.sessionId)
+    out.push({
+      key: 'closed:' + row.sessionId,
+      sessionId: row.sessionId,
+      agent: row.agent,
+      title: cleanLine(row.title || row.agent, 200),
+      workspaceId: workspace.id,
+      workspaceName: cleanLine(workspace.name, 200),
+      branch: workspace.branch,
+      updatedAt: row.updatedAt
+    })
+    if (out.length >= (input.limit ?? CLOSED_PER_PROJECT)) break
+  }
+  return out
+}
 
 // Terminal output and agent titles reach the panel only after escape sequences, control
 // characters and bidirectional overrides are gone.
@@ -138,6 +220,8 @@ export type BoardInput = {
   pulls: ReadonlyMap<string, ProjectPulls>
   dismissed: ReadonlySet<string>
   replies: readonly ReplyRecord[]
+  /** Orca's Agent Session History; leave it out when it was not read. */
+  history?: readonly RawHistorySession[]
   now: number
   truncated: boolean
 }
@@ -147,12 +231,13 @@ export function buildBoard(input: BoardInput): BoardView {
     .filter((project) => input.selected.includes(project.id))
     .sort((a, b) => a.name.localeCompare(b.name))
   const projects = chosen.map((project): ProjectLane => {
-    const sessions = input.workspaces
-      .filter((workspace) => workspace.projectId === project.id)
+    const own = input.workspaces.filter((workspace) => workspace.projectId === project.id)
+    const closed = input.history ? closedSessions({ history: input.history, workspaces: own, agents: input.agents, now: input.now }) : []
+    const sessions = own
       .flatMap((workspace) => sessionRows(workspace, input.agents.get(workspace.id) ?? []))
       .sort((a, b) => b.since - a.since)
     const pulls = input.pulls.get(project.id) ?? { repo: null, status: 'unmapped', items: [] }
-    return { projectId: project.id, name: cleanLine(project.name, 200), sessions, repo: pulls.repo, pullStatus: pulls.status, pulls: pulls.items }
+    return { projectId: project.id, name: cleanLine(project.name, 200), sessions, closed, repo: pulls.repo, pullStatus: pulls.status, pulls: pulls.items }
   })
   return {
     at: input.now,
@@ -162,6 +247,26 @@ export function buildBoard(input: BoardInput): BoardView {
     replies: [...input.replies],
     truncated: input.truncated
   }
+}
+
+/**
+ * Why a closed session must not be resumed for this reply now, or null when it may be. Called with
+ * the workspace's live agents and its history row read again just before the resume.
+ */
+export function resumeGuard(input: {
+  text: string
+  sessionId: string
+  agent: string
+  row: RawHistorySession | undefined
+  live: readonly RawAgent[] | undefined
+}): ReplyStatus | null {
+  if (!input.text.trim()) return 'empty'
+  if (input.text.length > MAX_REPLY) return 'too-long'
+  if (!input.row || input.row.agent !== input.agent || !isResumeAgent(input.agent)) return 'gone'
+  // Open again since the card was drawn, or a pane Orca cannot name: answer it there instead.
+  if (input.row.running || !input.live) return 'open'
+  if (input.live.some((agent) => agent.sessionId === input.sessionId || !agent.sessionId)) return 'open'
+  return null
 }
 
 /** Why a reply must not be typed into the session now, or null when it may be. */

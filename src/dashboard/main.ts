@@ -1,7 +1,7 @@
 // The dashboard: a full-width editor tab Orca opens on .coordinator-board files. The file is only a
 // key; everything shown comes from the worker through the same requests the sidebar panel makes.
 import { translator } from '../i18n'
-import type { Decision } from '../model'
+import type { ClosedSession, Decision } from '../model'
 import { STYLE } from './style'
 import { renderApp, type Actions, type DashState } from './view'
 
@@ -117,6 +117,32 @@ async function send(decision: Decision): Promise<void> {
   }
 }
 
+async function resume(projectName: string, session: ClosedSession): Promise<void> {
+  const key = session.key
+  state.sending[key] = true
+  draw()
+  try {
+    const result = await orca.plugin.request('board.resume-reply', {
+      workspaceId: session.workspaceId,
+      sessionId: session.sessionId,
+      agent: session.agent,
+      text: state.drafts[key] ?? '',
+      projectName,
+      workspaceName: session.workspaceName,
+      title: session.title
+    })
+    state.receipts[key] = result
+    if (result.status === 'sent') delete state.drafts[key]
+  } catch {
+    state.receipts[key] = { status: 'failed', at: Date.now() }
+  } finally {
+    delete state.sending[key]
+    const active = document.activeElement as HTMLElement | null
+    if (active?.dataset?.terminal === key) active.blur()
+    draw()
+  }
+}
+
 const actions: Actions = {
   refresh: () => void refresh(true),
   openPicker: () => void openPicker(),
@@ -138,6 +164,7 @@ const actions: Actions = {
     state.drafts[terminalId] = text
   },
   send: (decision) => void send(decision),
+  resume: (projectName, session) => void resume(projectName, session),
   focus(session) {
     void orca.plugin.request('board.focus', { terminalId: session.terminalId, workspaceId: session.workspaceId }).catch(() => undefined)
   },

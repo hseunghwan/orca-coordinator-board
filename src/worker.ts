@@ -8,8 +8,8 @@ import { commandEnv, GH_FIELDS, GH_PROJECTION, githubRepository, parseOpenPulls,
 import { translator } from './i18n'
 import { DASHBOARD_FILE, dashboardFileText, focusedWorkspace, statusItem, withExcludeLine } from './summary'
 import {
-  buildBoard, cleanTail, remember, replyGuard, strings,
-  type BoardView, type ProjectPulls, type PullItem, type RawAgent, type RawProject, type ReplyRecord, type ReplyStatus
+  buildBoard, cleanTail, isResumeAgent, remember, replyGuard, resumeGuard, strings,
+  type BoardView, type ProjectPulls, type PullItem, type RawAgent, type RawHistorySession, type RawProject, type ReplyRecord, type ReplyStatus
 } from './model'
 
 export type GithubDeps = {
@@ -163,6 +163,16 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
     return { repo, status: list.status, items: list.items }
   }
 
+  async function readHistory(workspaceId?: string): Promise<RawHistorySession[] | undefined> {
+    try {
+      const { sessions } = await orca.host.call('agent.listSessions', workspaceId ? { workspaceId, limit: 200 } : { limit: 200 })
+      return sessions
+    } catch (error) {
+      orca.log(`agent history unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
+    }
+  }
+
   type ReadOptions = { pulls: boolean; tails: boolean }
   async function readBoard(refresh: boolean, read: ReadOptions = { pulls: true, tails: true }): Promise<BoardView> {
     const [projectList, workspaceList, selectedRaw, dismissedRaw, repliesRaw] = await Promise.all([
@@ -188,10 +198,13 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
     })
     const chosen = projects.filter((project) => selected.includes(project.id))
     const pulls = new Map(read.pulls ? await mapLimited(chosen, 3, async (project) => [project.id, await pullsFor(project, refresh)] as const) : [])
+    // Closed sessions come from Orca's history (history:read); without it the board just shows none.
+    const history = read.pulls ? await readHistory() : undefined
     const board = buildBoard({
       projects, selected, workspaces, agents, pulls,
       dismissed: new Set(strings(dismissedRaw)),
       replies: replyRecords(repliesRaw).slice(-20).reverse(),
+      history,
       now: github.now(),
       truncated
     })
@@ -304,6 +317,59 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
         } catch (error) {
           orca.log(`reply failed: ${error instanceof Error ? error.message : String(error)}`)
           status = 'failed'
+        }
+      }
+    }
+    const record: ReplyRecord = {
+      projectName: String(input?.projectName ?? '').slice(0, 200),
+      workspaceName: String(input?.workspaceName ?? '').slice(0, 200),
+      title: String(input?.title ?? '').slice(0, 200),
+      text: text.slice(0, 2000),
+      status,
+      at
+    }
+    await orca.storage.set(REPLIES, remember(replyRecords(await orca.storage.get(REPLIES)), record, 50))
+    orca.panels.post('board.changed', { at })
+    statusSoon()
+    return { status, at }
+  })
+
+  // A resumed agent starts in a new terminal: wait until its screen has drawn and stopped changing.
+  async function settled(terminalId: string, timeoutMs = 30_000): Promise<boolean> {
+    let last = ''
+    let same = 0
+    for (const end = Date.now() + timeoutMs; Date.now() < end;) {
+      await new Promise((done) => setTimeout(done, 500))
+      const output = await orca.host.call('terminal.read', { terminalId, maxLines: 40 }).catch(() => null)
+      const text = output ? output.lines.join('\n').trim() : ''
+      same = text && text === last ? same + 1 : 0
+      last = text
+      if (same >= 3) return true
+    }
+    return false
+  }
+
+  orca.panels.handle('board.resume-reply', async (input) => {
+    const at = github.now()
+    const text = typeof input?.text === 'string' ? input.text : ''
+    let status: ReplyStatus
+    if (typeof input?.workspaceId !== 'string' || typeof input?.sessionId !== 'string' || typeof input?.agent !== 'string') {
+      status = 'gone'
+    } else {
+      // Read again now: the session may have been opened somewhere since the card was drawn.
+      const [live, history] = await Promise.all([agentsOf(input.workspaceId).catch(() => undefined), readHistory(input.workspaceId)])
+      const row = history?.find((session) => session.sessionId === input.sessionId)
+      const refused = resumeGuard({ text, sessionId: input.sessionId, agent: input.agent, row, live })
+      status = refused ?? 'failed'
+      if (!refused && isResumeAgent(input.agent)) {
+        // The person wrote this text and pressed send: it goes as typed. Never retried.
+        try {
+          const resumed = await orca.host.call('agent.resume', { workspaceId: input.workspaceId, agent: input.agent, sessionId: input.sessionId })
+          orca.log(`resume reply: ${resumed.started ? 'started' : 'already running'} in ${resumed.terminalId}`)
+          if (await settled(resumed.terminalId)) status = (await typeInto(resumed.terminalId, text.trimEnd())) ? 'sent' : 'failed'
+          else orca.log('resume reply: the resumed terminal did not settle; nothing typed')
+        } catch (error) {
+          orca.log(`resume reply failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
     }

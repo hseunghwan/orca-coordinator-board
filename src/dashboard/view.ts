@@ -2,7 +2,7 @@
 // guards come from the shared .ts modules; nothing here decides what may be sent.
 import type { T } from '../i18n'
 import { pullReasonLabel, pullStatusNote, replyStatusLabel, stateLabel } from '../labels'
-import { MAX_REPLY, type AgentState, type BoardView, type Decision, type ProjectChoice, type ProjectLane, type ReplyResult, type SessionRow } from '../model'
+import { MAX_REPLY, type AgentState, type BoardView, type ClosedSession, type Decision, type ProjectChoice, type ProjectLane, type ReplyResult, type SessionRow } from '../model'
 import { ago, laneGroups, waitingCounts } from '../summary'
 import { h, type Child } from './dom'
 
@@ -29,6 +29,8 @@ export type Actions = {
   closePicker(): void
   draft(terminalId: string, text: string): void
   send(decision: Decision): void
+  /** Resumes a closed session in a new terminal and types the person's reply into it. */
+  resume(projectName: string, session: ClosedSession): void
   /** Shows the session: its terminal, or its workspace for a chat tab. */
   focus(session: SessionRow): void
   dismiss(key: string): void
@@ -209,7 +211,49 @@ function laneCard(t: T, s: DashState, a: Actions, lane: ProjectLane): HTMLElemen
     lane.pulls.length > 0 && h('div', { class: 'pulls' }, lane.pulls.map((pull) => h('div', { class: 'pull small' },
       h('a', { href: pull.url, title: pull.title, onClick: (event: MouseEvent) => { event.preventDefault(); a.openUrl(pull.url) } }, `#${pull.number} ${pull.title}`),
       badge(pull.reason === 'ready' ? 'review' : '', pullReasonLabel(t, pull.reason))))),
+    lane.closed.length > 0 && details(s, a, 'closed:' + lane.projectId, t(`닫힌 최근 세션 ${lane.closed.length}개`, `${lane.closed.length} recently closed`),
+      h('div', { class: 'closed' }, lane.closed.map((session) => closedRow(t, s, a, lane, session)))),
     note && h('div', { class: 'muted small' }, note))
+}
+
+/** A closed session: answering it resumes it in a new terminal, then types the reply there. */
+function closedRow(t: T, s: DashState, a: Actions, lane: ProjectLane, session: ClosedSession): HTMLElement {
+  const key = session.key
+  const busy = !!s.sending[key]
+  const receipt = s.receipts[key]
+  const send = button(busy ? t('이어 여는 중', 'Resuming') : t('이어 열고 보내기', 'Resume and send'), () => a.resume(lane.name, session), {
+    kind: 'primary', disabled: busy || !(s.drafts[key] ?? '').trim(),
+    title: t('이 세션을 새 터미널에서 이어 연 뒤 답을 보냅니다', 'Resumes this session in a new terminal, then sends your reply')
+  }) as HTMLButtonElement
+  return h('div', { class: 'closed-session' },
+    h('div', { class: 'session' },
+      h('span', { class: 'dot done' }),
+      h('span', { class: 'name', title: session.title }, session.title),
+      h('span', { class: 'where muted small' }, session.workspaceName),
+      h('span', { class: 'muted small' }, ago(t, s.now, session.updatedAt))),
+    h('textarea', {
+      rows: 2,
+      maxlength: MAX_REPLY,
+      placeholder: t('이어 연 뒤 보낼 답을 쓰세요', 'Write the reply to send after resuming'),
+      'aria-label': t('닫힌 세션에 보낼 답', 'Reply to the closed session'),
+      'data-terminal': key,
+      value: s.drafts[key] ?? '',
+      disabled: busy,
+      onInput: (event: Event) => {
+        const text = (event.currentTarget as HTMLTextAreaElement).value
+        a.draft(key, text)
+        send.disabled = busy || !text.trim()
+      },
+      onKeydown: (event: KeyboardEvent) => {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+          event.preventDefault()
+          if (!send.disabled) a.resume(lane.name, session)
+        }
+      }
+    }),
+    receipt && h('div', { class: 'small', style: receipt.status === 'sent' ? null : 'color: var(--cb-blocked)' },
+      `${replyStatusLabel(t, receipt.status)} · ${ago(t, s.now, receipt.at)}`),
+    h('div', { class: 'actions' }, send))
 }
 
 function progressColumn(t: T, s: DashState, a: Actions, board: BoardView): HTMLElement {
