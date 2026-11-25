@@ -19,7 +19,9 @@ const agents = (state: string, stateStartedAt = 100) => ({
   agents: [{ terminalId: 't1', title: 'fix login', agent: 'claude', state, stateStartedAt, sessionId: null, task: null }]
 })
 
-function host(state = 'waiting') {
+function host(state = 'waiting', shown: string[] = []) {
+  // Orca types only into the focused workspace's terminals; focusing one shows its workspace.
+  const focusable = new Set(['t1'])
   return mockHost({
     storage: { selectedProjects: ['p1'] },
     results: {
@@ -32,10 +34,15 @@ function host(state = 'waiting') {
       'agents.list': agents(state),
       'terminal.read': { lines: ['Which branch should I use?', ''], truncated: false },
       'terminal.sendText': { accepted: true },
-      'terminal.focus': { focused: true },
+      'terminal.focus': ({ terminalId }: { terminalId: string }) => {
+        if (!focusable.has(terminalId)) return { focused: false }
+        shown.splice(0, shown.length, terminalId)
+        return { focused: true }
+      },
       'statusBar.update': { ok: true },
-      'workspace.readContext': { workspaceId: 'w1', branch: 'feat/login', displayName: 'feat-login', terminals: [] },
-      'editor.open': { opened: true }
+      'workspace.readContext': () => ({ workspaceId: 'w1', branch: 'feat/login', displayName: 'feat-login', terminals: shown.map((id) => ({ id })) }),
+      'editor.open': { opened: true },
+      'workspace.open': { opened: true }
     }
   })
 }
@@ -59,9 +66,40 @@ test('types the person\'s reply as written and records it', async () => {
   const mounted = await mountWorker(worker, { host: h })
   const result = await mounted.request('board.reply', reply)
   assert.equal(result.status, 'sent')
+  // The session was not in view: it is shown first, then the text goes in.
+  const order = h.calls.map((call) => call.method).filter((method) => method === 'terminal.focus' || method === 'terminal.sendText')
+  assert.deepEqual(order, ['terminal.focus', 'terminal.sendText'])
   assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 't1', text: 'main 브랜치\n로 가세요', enter: true }])
   assert.equal((h.data().storage.replies as unknown[]).length, 1)
   assert.deepEqual(mounted.posts.map((p) => p.event), ['board.changed'])
+  await mounted.deactivate()
+})
+
+test('types straight into a session already in view, without moving the window', async () => {
+  const h = host('waiting', ['t1'])
+  const mounted = await mountWorker(worker, { host: h })
+  assert.equal((await mounted.request('board.reply', reply)).status, 'sent')
+  assert.equal(h.callsOf('terminal.focus').length, 0)
+  assert.equal(h.callsOf('terminal.sendText').length, 1)
+  await mounted.deactivate()
+})
+
+test('does not type when Orca cannot show the session', async () => {
+  const h = host()
+  h.respond('terminal.focus', { focused: false })
+  const mounted = await mountWorker(worker, { host: h })
+  assert.equal((await mounted.request('board.reply', reply)).status, 'failed')
+  assert.equal(h.callsOf('terminal.sendText').length, 0)
+  await mounted.deactivate()
+})
+
+test('opens a session by its terminal, or a chat tab by its workspace', async () => {
+  const h = host()
+  const mounted = await mountWorker(worker, { host: h })
+  assert.deepEqual(await mounted.request('board.focus', { terminalId: 't1', workspaceId: 'w1' }), { focused: true })
+  assert.deepEqual(await mounted.request('board.focus', { terminalId: null, workspaceId: 'w1' }), { focused: true })
+  assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 't1' }])
+  assert.deepEqual(h.callsOf('workspace.open'), [{ workspaceId: 'w1' }])
   await mounted.deactivate()
 })
 

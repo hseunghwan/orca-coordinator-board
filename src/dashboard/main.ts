@@ -37,6 +37,8 @@ function draw(): void {
   const scroll = window.scrollY
   state.now = Date.now()
   app.replaceChildren(renderApp(t, state, actions))
+  // A session's question sits at the end of its output: show the newest lines first.
+  app.querySelectorAll<HTMLElement>('pre.tail').forEach((tail) => { tail.scrollTop = tail.scrollHeight })
   window.scrollTo(0, scroll)
 }
 window.addEventListener('pointerdown', () => { pressing = true }, true)
@@ -136,8 +138,8 @@ const actions: Actions = {
     state.drafts[terminalId] = text
   },
   send: (decision) => void send(decision),
-  focus(terminalId) {
-    if (terminalId) void orca.plugin.request('board.focus', { terminalId }).catch(() => undefined)
+  focus(session) {
+    void orca.plugin.request('board.focus', { terminalId: session.terminalId, workspaceId: session.workspaceId }).catch(() => undefined)
   },
   dismiss(key) {
     void orca.plugin.request('board.dismiss', { key }).catch((error: unknown) => { state.error = message(error); draw() })

@@ -29,7 +29,8 @@ export type Actions = {
   closePicker(): void
   draft(terminalId: string, text: string): void
   send(decision: Decision): void
-  focus(terminalId: string | null): void
+  /** Shows the session: its terminal, or its workspace for a chat tab. */
+  focus(session: SessionRow): void
   dismiss(key: string): void
   openUrl(url: string): void
   toggle(key: string, open: boolean): void
@@ -83,12 +84,30 @@ function permissionCard(t: T, s: DashState, a: Actions, decision: Decision): HTM
     meta(t, s, decision, session),
     h('div', { class: 'small' }, t('권한 요청을 기다리는 중입니다. 보드는 이 세션에 글을 보내지 않습니다. 세션에서 직접 승인하거나 거절하세요.',
       'This session is waiting for permission. The board never types into it. Approve or deny in the session.')),
-    h('div', { class: 'actions' }, button(t('세션 열기', 'Open session'), () => a.focus(session.terminalId), { disabled: !session.terminalId })))
+    h('div', { class: 'actions' }, button(openLabel(t, session), () => a.focus(session))))
+}
+
+function openLabel(t: T, session: SessionRow): string {
+  return session.terminalId ? t('세션 열기', 'Open session') : t('채팅 열기', 'Open chat')
+}
+
+/** A chat tab waiting for an answer: Orca gives plugins no way to type into it, so the person answers there. */
+function chatCard(t: T, s: DashState, a: Actions, decision: Decision): HTMLElement {
+  const session = decision.session!
+  return h('article', { class: 'card reply' },
+    h('div', { class: 'card-head' }, h('h3', { title: session.title }, session.title), badge('waiting', stateLabel(t, 'waiting'))),
+    meta(t, s, decision, session),
+    h('div', { class: 'small' }, t('채팅 탭에서 도는 세션이라 보드에서 답을 보낼 수 없습니다. 채팅 열기로 가서 답하세요.',
+      'This session runs in a chat tab, so the board cannot send to it. Open the chat to answer.')),
+    h('div', { class: 'actions' },
+      button(t('채팅 열기', 'Open chat'), () => a.focus(session), { kind: 'primary' }),
+      button(t('확인함', 'Mark reviewed'), () => a.dismiss(decision.key), { kind: 'ghost' })))
 }
 
 function replyCard(t: T, s: DashState, a: Actions, decision: Decision): HTMLElement {
   const session = decision.session!
-  const terminalId = session.terminalId!
+  if (!session.terminalId) return chatCard(t, s, a, decision)
+  const terminalId = session.terminalId
   const busy = !!s.sending[terminalId]
   const receipt = s.receipts[terminalId]
   const send = button(busy ? t('보내는 중', 'Sending') : t('보내기', 'Send'), () => a.send(decision), {
@@ -123,7 +142,7 @@ function replyCard(t: T, s: DashState, a: Actions, decision: Decision): HTMLElem
       `${replyStatusLabel(t, receipt.status)} · ${ago(t, s.now, receipt.at)}`),
     h('div', { class: 'actions' },
       send,
-      button(t('세션 열기', 'Open session'), () => a.focus(terminalId), { kind: 'ghost' }),
+      button(t('세션 열기', 'Open session'), () => a.focus(session), { kind: 'ghost' }),
       button(t('확인함', 'Mark reviewed'), () => a.dismiss(decision.key), { kind: 'ghost' })))
 }
 
@@ -158,15 +177,14 @@ function history(t: T, s: DashState, a: Actions, board: BoardView): Child {
 }
 
 function sessionRow(t: T, s: DashState, a: Actions, session: SessionRow): HTMLElement {
-  const go = () => a.focus(session.terminalId)
+  const go = () => a.focus(session)
   return h('div', {
     class: 'session',
     role: 'button',
-    tabindex: session.terminalId ? 0 : -1,
-    'aria-disabled': session.terminalId ? null : 'true',
-    title: session.terminalId ? t('눌러서 세션 열기', 'Open the session') : t('터미널이 없는 세션이라 열 수 없습니다', 'This session has no terminal to open'),
-    onClick: session.terminalId ? go : null,
-    onKeydown: (event: KeyboardEvent) => { if (session.terminalId && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); go() } }
+    tabindex: 0,
+    title: session.terminalId ? t('눌러서 세션 열기', 'Open the session') : t('눌러서 채팅이 있는 워크스페이스 열기', 'Open the workspace of this chat'),
+    onClick: go,
+    onKeydown: (event: KeyboardEvent) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); go() } }
   },
   h('span', { class: 'dot ' + session.state }),
   h('span', { class: 'name' }, session.title),

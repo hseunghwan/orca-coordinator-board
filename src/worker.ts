@@ -6,7 +6,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { commandEnv, GH_FIELDS, GH_PROJECTION, githubRepository, parseOpenPulls, SCAN_LIMIT } from './github'
 import { translator } from './i18n'
-import { DASHBOARD_FILE, dashboardFileText, statusItem, withExcludeLine } from './summary'
+import { DASHBOARD_FILE, dashboardFileText, focusedWorkspace, statusItem, withExcludeLine } from './summary'
 import {
   buildBoard, cleanTail, remember, replyGuard, strings,
   type BoardView, type ProjectPulls, type PullItem, type RawAgent, type RawProject, type ReplyRecord, type ReplyStatus
@@ -266,6 +266,24 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
     return { selected }
   })
 
+  // Orca types only into terminals of the focused workspace, so a reply first shows its session.
+  // Only a person pressing send gets here; the window moves to the session they answered.
+  async function typeInto(terminalId: string, text: string): Promise<boolean> {
+    const inFocus = async () => {
+      const context = await orca.host.call('workspace.readContext', {}).catch(() => null)
+      return !!context?.terminals.some((terminal) => terminal.id === terminalId)
+    }
+    if (!(await inFocus())) {
+      const moved = await orca.host.call('terminal.focus', { terminalId }).catch(() => ({ focused: false }))
+      if (!moved.focused) return false
+      let shown = false
+      for (let tries = 0; tries < 20 && !(shown = await inFocus()); tries += 1) await new Promise((done) => setTimeout(done, 100))
+      if (!shown) return false
+    }
+    const sent = await orca.host.call('terminal.sendText', { terminalId, text, enter: true })
+    return sent.accepted
+  }
+
   orca.panels.handle('board.reply', async (input) => {
     const at = github.now()
     const text = typeof input?.text === 'string' ? input.text : ''
@@ -282,9 +300,9 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
         // The person wrote this text and pressed send, so it goes as typed, without a board label.
         // Never retry: a send that may have landed must not be typed twice.
         try {
-          const sent = await orca.host.call('terminal.sendText', { terminalId: input.terminalId, text: text.trimEnd(), enter: true })
-          status = sent.accepted ? 'sent' : 'failed'
-        } catch {
+          status = (await typeInto(input.terminalId, text.trimEnd())) ? 'sent' : 'failed'
+        } catch (error) {
+          orca.log(`reply failed: ${error instanceof Error ? error.message : String(error)}`)
           status = 'failed'
         }
       }
@@ -304,8 +322,12 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
   })
 
   orca.panels.handle('board.focus', async (input) => {
-    if (typeof input?.terminalId !== 'string') return { focused: false }
-    try { return await orca.host.call('terminal.focus', { terminalId: input.terminalId }) } catch { return { focused: false } }
+    try {
+      if (typeof input?.terminalId === 'string') return await orca.host.call('terminal.focus', { terminalId: input.terminalId })
+      // A chat tab has no terminal Orca lets a plugin reach: show its workspace instead.
+      if (typeof input?.workspaceId === 'string') return { focused: (await orca.host.call('workspace.open', { workspaceId: input.workspaceId })).opened }
+    } catch { /* not focusable */ }
+    return { focused: false }
   })
 
   orca.panels.handle('board.dismiss', async (input) => {
@@ -321,9 +343,13 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
   // focused workspace, drawn by src/dashboard/ with the same requests as the panel.
   orca.commands.register(OPEN_DASHBOARD, async () => {
     const t = translator(locale)
-    const context = await orca.host.call('workspace.readContext', {}).catch(() => null)
+    const context = await orca.host.call('workspace.readContext', {}).catch((error: unknown) => {
+      orca.log(`open dashboard: readContext failed: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    })
     const { workspaces } = await orca.host.call('workspace.list', {})
-    const workspace = context?.workspaceId ? workspaces.find((row) => row.id === context.workspaceId) : undefined
+    const workspace = focusedWorkspace(context, workspaces)
+    orca.log(`open dashboard: focused ${context?.workspaceId ?? 'none'} -> ${workspace?.id ?? 'no match'}`)
     if (!workspace) {
       return t('워크스페이스를 하나 연 뒤 다시 누르세요. 대시보드는 지금 보고 있는 워크스페이스에 탭으로 열립니다.',
         'Open a workspace, then try again. The dashboard opens as a tab in the workspace you are looking at.')
@@ -335,6 +361,7 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
     try {
       await files.ensureDashboard(workspace.path)
       await orca.host.call('editor.open', { workspaceId: workspace.id, path: DASHBOARD_FILE })
+      orca.log('open dashboard: opened')
       return undefined
     } catch (error) {
       orca.log(`open dashboard failed: ${error instanceof Error ? error.message : String(error)}`)

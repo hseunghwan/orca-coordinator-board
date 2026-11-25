@@ -6,7 +6,7 @@ import {
 } from 'orca'
 import { translator, type T } from './i18n'
 import { pullReasonLabel, pullStatusNote, replyStatusLabel, stateLabel, stateTone } from './labels'
-import { MAX_REPLY, without, type BoardView, type Decision, type ProjectChoice, type ProjectLane, type ReplyResult } from './model'
+import { MAX_REPLY, without, type BoardView, type Decision, type ProjectChoice, type ProjectLane, type ReplyResult, type SessionRow } from './model'
 
 const view = atom<BoardView | null>(null)
 const failure = atom<string | null>(null)
@@ -55,8 +55,13 @@ async function saveProjects(): Promise<void> {
   await refresh(true)
 }
 
-async function focus(terminalId: string | null): Promise<void> {
-  if (terminalId) await plugin.request('board.focus', { terminalId })
+/** Shows the session: its terminal, or its workspace for a chat tab. */
+async function focus(session: SessionRow): Promise<void> {
+  await plugin.request('board.focus', { terminalId: session.terminalId, workspaceId: session.workspaceId })
+}
+
+function openLabel(t: T, session: SessionRow): string {
+  return session.terminalId ? t('세션 열기', 'Open session') : t('채팅 열기', 'Open chat')
 }
 
 async function dismiss(key: string): Promise<void> {
@@ -111,8 +116,8 @@ function permissionCard(t: T, decision: Decision) {
             'This session is waiting for permission. The board never types into it. Approve or deny in the session.')}
         </Text>
         <Row>
-          <Button size="sm" icon="terminal" disabled={!session.terminalId} onPress={() => focus(session.terminalId)}>
-            {t('세션 열기', 'Open session')}
+          <Button size="sm" icon="terminal" onPress={() => focus(session)}>
+            {openLabel(t, session)}
           </Button>
         </Row>
       </Stack>
@@ -120,9 +125,37 @@ function permissionCard(t: T, decision: Decision) {
   )
 }
 
+/** A chat tab waiting for an answer: Orca gives plugins no way to type into it, so the person answers there. */
+function chatCard(t: T, decision: Decision) {
+  const session = decision.session!
+  return (
+    <Card title={session.title} description={`${decision.projectName} · ${session.workspaceName}`}>
+      <Stack gap="sm">
+        <Row gap="xs">
+          <Badge tone={stateTone[session.state]}>{stateLabel(t, session.state)}</Badge>
+          <Text size="xs" muted><RelativeTime at={session.since} /></Text>
+        </Row>
+        <Text size="sm">
+          {t('채팅 탭에서 도는 세션이라 보드에서 답을 보낼 수 없습니다. 채팅 열기로 가서 답하세요.',
+            'This session runs in a chat tab, so the board cannot send to it. Open the chat to answer.')}
+        </Text>
+        <Row gap="xs" wrap>
+          <Button size="sm" icon="terminal" onPress={() => focus(session)}>
+            {t('채팅 열기', 'Open chat')}
+          </Button>
+          <Button size="sm" variant="ghost" icon="check" onPress={() => dismiss(decision.key)}>
+            {t('확인함', 'Mark reviewed')}
+          </Button>
+        </Row>
+      </Stack>
+    </Card>
+  )
+}
+
 function replyCard(t: T, decision: Decision) {
   const session = decision.session!
-  const terminalId = session.terminalId!
+  if (!session.terminalId) return chatCard(t, decision)
+  const terminalId = session.terminalId
   const draft = read(drafts)[terminalId] ?? ''
   const busy = !!read(sending)[terminalId]
   const receipt = read(receipts)[terminalId]
@@ -158,7 +191,7 @@ function replyCard(t: T, decision: Decision) {
           <Button size="sm" icon="next" disabled={busy || !draft.trim()} onPress={() => send(decision)}>
             {t('보내기', 'Send')}
           </Button>
-          <Button size="sm" variant="ghost" icon="terminal" onPress={() => focus(terminalId)}>
+          <Button size="sm" variant="ghost" icon="terminal" onPress={() => focus(session)}>
             {t('세션 열기', 'Open session')}
           </Button>
           <Button size="sm" variant="ghost" icon="check" onPress={() => dismiss(decision.key)}>
@@ -213,8 +246,7 @@ function laneView(t: T, lane: ProjectLane) {
                 icon="agent"
                 title={session.title}
                 description={`${session.workspaceName} · ${stateLabel(t, session.state)}`}
-                disabled={!session.terminalId}
-                onPress={() => focus(session.terminalId)}
+                onPress={() => focus(session)}
               />
             ))}
           </List>

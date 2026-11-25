@@ -20,7 +20,8 @@ export default defineCheck({
       'agents.list': {
         agents: [
           { terminalId: 't1', title: 'fix login', agent: 'claude', state: 'waiting', stateStartedAt: 1700000000000 },
-          { terminalId: 't2', title: 'migrate db', agent: 'codex', state: 'blocked', stateStartedAt: 1700000100000 }
+          { terminalId: 't2', title: 'migrate db', agent: 'codex', state: 'blocked', stateStartedAt: 1700000100000 },
+          { terminalId: null, title: 'review notes', agent: 'claude', state: 'waiting', stateStartedAt: 1700000200000 }
         ]
       },
       'terminal.read': { lines: ['Which branch should I use?'], truncated: false }

@@ -24,7 +24,8 @@ declare module 'orca' {
       }
       output: ReplyResult
     }
-    'board.focus': { input: { terminalId: string }; output: { focused: boolean } }
+    /** Shows a session: its terminal, or its workspace when it has none (a chat tab). */
+    'board.focus': { input: { terminalId?: string | null; workspaceId?: string }; output: { focused: boolean } }
     /** Hides a reply or review card until its session or pull request changes. */
     'board.dismiss': { input: { key: string }; output: { ok: true } }
   }

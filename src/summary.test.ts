@@ -1,7 +1,7 @@
 import { assert, test } from 'orca/testing'
 import { translator } from './i18n'
 import { buildBoard, type RawAgent } from './model'
-import { ago, laneGroups, statusItem, waitingCounts, withExcludeLine } from './summary'
+import { ago, laneGroups, statusItem, waitingCounts, withExcludeLine, focusedWorkspace } from './summary'
 
 const en = translator('en')
 const ko = translator('ko')
@@ -57,4 +57,17 @@ test('says how long ago in both languages', () => {
   assert.equal(ago(ko, 10 * 60_000, 0), '10분 전')
   assert.equal(ago(en, 3 * 3_600_000, 0), '3h ago')
   assert.equal(ago(ko, 2 * 86_400_000, 0), '2일 전')
+})
+
+test('finds the focused workspace by id, by the path in a project::path id, or by a unique name', () => {
+  const rows = [
+    { id: 'identity:wt2:local:a', name: 'main', path: 'C:/repo', branch: 'main' },
+    { id: 'identity:wt2:local:b', name: 'feat-x', path: 'C:/ws/repo/feat-x', branch: 'feat/x' },
+    { id: 'folder:c', name: 'notes', path: 'C:\\notes', branch: null }
+  ]
+  assert.equal(focusedWorkspace({ workspaceId: 'folder:c', branch: '', displayName: 'notes' }, rows)?.id, 'folder:c')
+  assert.equal(focusedWorkspace({ workspaceId: 'p1::C:\\ws\\repo\\feat-x\\', branch: 'feat/x', displayName: 'feat-x' }, rows)?.id, 'identity:wt2:local:b')
+  assert.equal(focusedWorkspace({ branch: 'main', displayName: 'main' }, rows)?.id, 'identity:wt2:local:a')
+  assert.equal(focusedWorkspace({ workspaceId: 'other', branch: 'dev', displayName: 'main' }, rows), undefined)
+  assert.equal(focusedWorkspace(null, rows), undefined)
 })

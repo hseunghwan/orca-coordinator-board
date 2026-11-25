@@ -63,3 +63,20 @@ test('shows a permission card without a reply box', async () => {
   assert.deepEqual(view.errors, [])
   await view.unmount()
 })
+
+test('a chat tab waiting for an answer offers to open it, not a reply box', async () => {
+  const chat = { ...session, key: 'w1:chat@100', terminalId: null, title: 'chat' }
+  const focused: unknown[] = []
+  const host = mockHost({
+    requests: {
+      'board.read': () => board({ decisions: [{ key: chat.key, kind: 'reply', projectName: 'App', since: 100, session: chat }] }),
+      'board.focus': (input) => { focused.push(input); return { focused: true } }
+    }
+  })
+  const view = await mount(panel, { host, locale: 'en' })
+  assert.equal(view.find({ label: 'Reply' }), null)
+  await view.press({ text: 'Open chat' })
+  assert.deepEqual(focused.map((input) => ({ ...(input as object) })), [{ terminalId: null, workspaceId: 'w1' }])
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})

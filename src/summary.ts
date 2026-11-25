@@ -74,3 +74,34 @@ export function withExcludeLine(current: string): string | null {
   const head = current && !current.endsWith('\n') ? current + '\n' : current
   return head + '# Coordinator Board (Orca plugin): the dashboard key file\n' + EXCLUDE_LINE + '\n'
 }
+
+export type WorkspaceRow = { id: string; name: string; path: string; branch: string | null }
+export type FocusContext = { workspaceId?: string; branch: string; displayName: string } | null
+
+function samePath(a: string, b: string): boolean {
+  const norm = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  return norm(a) === norm(b)
+}
+
+/**
+ * The `workspace.list` row of the focused workspace. Orca names a workspace in more than one way
+ * (`identity:...`, `folder:...`, `<project>::<path>`), so after the id this tries the path in a
+ * `::` id, then a unique name and branch.
+ */
+export function focusedWorkspace<W extends WorkspaceRow>(context: FocusContext, workspaces: readonly W[]): W | undefined {
+  if (!context) return undefined
+  const id = context.workspaceId
+  if (id) {
+    const exact = workspaces.find((row) => row.id === id)
+    if (exact) return exact
+    const cut = id.indexOf('::')
+    if (cut >= 0) {
+      const path = id.slice(cut + 2)
+      const byPath = workspaces.filter((row) => samePath(row.path, path))
+      if (byPath.length === 1) return byPath[0]
+    }
+  }
+  if (!context.displayName) return undefined
+  const byName = workspaces.filter((row) => row.name === context.displayName && (row.branch ?? '') === context.branch)
+  return byName.length === 1 ? byName[0] : undefined
+}

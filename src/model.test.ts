@@ -38,6 +38,14 @@ test('a dismissed reply card returns when the session changes state', () => {
   assert.equal(board([agent({ stateStartedAt: 400 })], ['t1@100']).decisions.filter((d) => d.kind === 'reply').length, 1)
 })
 
+test('a chat tab waiting for an answer gets a card with no terminal to type into', () => {
+  const view = board([agent({ terminalId: null, title: 'chat', state: 'waiting', stateStartedAt: 300 })])
+  const reply = view.decisions.find((d) => d.kind === 'reply')
+  assert.ok(reply)
+  assert.equal(reply.session?.terminalId, null)
+  assert.equal(reply.session?.workspaceId, 'w1')
+})
+
 test('a permission card cannot be dismissed', () => {
   assert.equal(board([agent({ state: 'blocked' })], ['t1@100']).decisions[0].kind, 'permission')
 })

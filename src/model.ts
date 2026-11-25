@@ -112,8 +112,9 @@ export function decisionsFor(lanes: readonly ProjectLane[], dismissed: ReadonlyS
       // A permission prompt is never dismissed here: only the session itself can clear it.
       if (session.state === 'blocked') {
         out.push({ key: session.key, kind: 'permission', projectName: lane.name, since: session.since, session })
-      } else if (session.state === 'waiting' && session.terminalId && !dismissed.has(session.key)) {
+      } else if (session.state === 'waiting' && !dismissed.has(session.key)) {
         // A finished ('done') session shows only under session progress: nothing asks the person yet.
+        // A session without a terminal (a chat tab) still gets a card, answered in its own tab.
         out.push({ key: session.key, kind: 'reply', projectName: lane.name, since: session.since, session })
       }
     }
