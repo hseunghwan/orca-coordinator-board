@@ -1,0 +1,21 @@
+{
+  "name": "orca-coordinator-board",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Orca plugin: group agent sessions by project and answer the ones waiting for you.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hseunghwan/orca-coordinator-board.git"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "orca plugin test .",
+    "check": "orca plugin check .",
+    "validate": "orca plugin validate ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}

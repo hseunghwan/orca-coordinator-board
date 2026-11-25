@@ -1,9 +1,10 @@
 {
   "extends": "./.orca/types/tsconfig.json",
   "compilerOptions": {
+    "noEmit": true,
     "typeRoots": [
       "./.orca/types",
-      "../node_modules/@types"
+      "./node_modules/@types"
     ],
     "types": [
       "orca",

@@ -1,12 +1,39 @@
 # Coordinator Board for Orca
 
-Orca용 코디네이터 보드(MVP)다. Paseo 플러그인([../README.md](../README.md))과 같은 저장소에 있지만 따로 설치하고 따로 버전을 매긴다.
+Orca 에이전트 세션을 프로젝트별로 모으고, 사람이 답하거나 승인해야 할 세션을 한곳에 올리는 Orca 플러그인(MVP)이다. Paseo용 [코디네이터 보드](https://github.com/devbrother2024/paseo-coordinator-board)를 Orca로 옮겨 왔다(아래 "출처와 라이선스").
 
 보드는 세 곳에 나온다.
 
 - **상태바**: 기다리는 세션 수(권한 대기 + 답 기다림)를 보여 준다. 권한 대기가 있으면 경고 색이다. 누르면 대시보드가 열린다. PR은 세지 않는다.
 - **대시보드**: 편집 영역에 전체 폭 탭으로 열린다. 왼쪽에 내 결정 카드, 오른쪽에 프로젝트별 진행 카드가 놓인다. 상태바를 누르거나 명령 팔레트에서 `Coordinator Board: Open dashboard`를 실행한다.
 - **오른쪽 사이드바 패널**: 같은 내용을 좁은 화면에 맞춰 탭으로 나눠 보여 준다.
+
+## 설치
+
+Orca 1.4.259 이상이 필요하다. 코드를 실행하는 플러그인이라 개발 폴더로 불러온다.
+
+```sh
+git clone https://github.com/hseunghwan/orca-coordinator-board.git
+cd orca-coordinator-board
+orca plugin dev load .
+```
+
+Orca가 권한 목록과 `orca plugin dev reload <폴더> --approve <fingerprint>` 명령을 보여 준다. 목록을 확인한 사람이 직접 승인한다. 그 뒤 오른쪽 사이드바의 **Coordinator Board** 패널이나 상태바 항목을 눌러 보드에 모을 프로젝트를 고른다. PR 목록은 이 컴퓨터에 로그인된 `gh`로 읽는다(없으면 PR만 비어 보인다).
+
+### 요청하는 권한
+
+| 권한 | 쓰는 곳 |
+| --- | --- |
+| `storage:own` | 고른 프로젝트, 확인함 표시, 보낸 답장 기록 |
+| `workspace:read` | 프로젝트, 워크스페이스, 터미널 목록 |
+| `agent:read` | 에이전트 상태(권한 대기, 답 기다림, 작업 중, 완료) |
+| `terminal:read` | 답 기다림 카드에 보이는 터미널 최근 출력 |
+| `terminal:send` | 사람이 쓰고 보내기를 누른 답장 입력 |
+| `workspace:write` | 세션 터미널로 화면 옮기기, 채팅 워크스페이스 열기, 대시보드 파일 열기 |
+| `agent:launch` | 닫힌 세션을 새 터미널에서 이어 열기 |
+| `history:read` | 닫힌 최근 세션 목록. 제목과 시각만 읽고 대화 내용은 읽지 않는다 |
+
+상태바 갱신은 권한이 필요 없다.
 
 ## 하는 일
 
@@ -35,9 +62,12 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - 닫힌 세션은 같은 대화가 두 곳에서 돌지 않게 한다. 지금 도는 세션(기록의 `running`, 또는 같은 세션 id의 열린 창)은 목록에서 빼고, 세션 id를 모르는 열린 창이 있는 워크스페이스는 통째로 뺀다. 보내기 직전에 기록과 에이전트 목록을 다시 읽고, 그사이 열렸으면 이어 열지 않는다(`open`).
 - 이어 연 터미널은 화면이 그려지고 멈출 때까지(최대 30초) 기다린 뒤 보낸다. 멈추지 않으면 아무것도 보내지 않는다.
 - 실패해도 다시 보내지 않는다.
-- 보드가 스스로 만든 문장을 보내는 기능은 아직 없다. 생기면 `[coordinator-board]` 머리말을 붙인다(`../AGENTS.md` 참고).
+- 보드가 스스로 만든 문장을 보내는 기능은 아직 없다. 생기면 `[coordinator-board]` 머리말을 붙인다([AGENTS.md](AGENTS.md) 참고).
 
 ## Paseo판에 있고 여기엔 아직 없는 것
+
+[Paseo판](https://github.com/devbrother2024/paseo-coordinator-board)에 있는 기능 가운데 아래는 아직 없다.
+
 
 코디네이터 세션과 다이제스트, 워커 배정, 보드에서 PR 병합, 사진 첨부, 모델 라우팅, 다른 프로젝트 세션 링크. Orca는 아직 플러그인이 MCP 도구를 내놓을 수 없어서, 코디네이터가 보드에 판단을 돌려주는 길은 따로 설계해야 한다.
 
@@ -57,14 +87,20 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 ## 개발
 
 ```sh
-npm ci                      # 저장소 루트에서. orca/tsconfig.json이 루트의 @types/node를 쓴다
-orca plugin types orca      # orca/.orca/types 생성 (git에 올리지 않음)
-npx tsc -p orca             # 타입 검사
-orca plugin test orca       # 테스트
-orca plugin check orca      # 패널을 시나리오별로 그려 본다 (src/panel.check.ts)
-orca plugin validate orca
+npm ci                  # typescript와 @types/node(타입 검사용)만 설치한다. 플러그인 실행에는 필요 없다
+orca plugin types .     # .orca/types 생성 (git에 올리지 않음)
+npm run typecheck       # npx tsc -p .
+orca plugin test .      # 테스트
+orca plugin check .     # 패널을 시나리오별로 그려 보고 대시보드를 정적 검사한다 (src/panel.check.ts)
+orca plugin validate .
 ```
 
-설치해서 써 볼 때는 `orca plugin dev load orca`를 실행한다. 코드를 실행하는 플러그인이라 Orca가 권한 목록과 `--approve <fingerprint>` 명령을 보여 준다. 목록을 확인한 사람이 직접 승인한다.
+에이전트용 규칙은 [AGENTS.md](AGENTS.md)에 있다.
 
-요청하는 권한: `storage:own`, `workspace:read`, `agent:read`, `terminal:read`, `terminal:send`, `workspace:write`(터미널 포커스, 대시보드 파일 열기), `agent:launch`(닫힌 세션 이어 열기), `history:read`(닫힌 최근 세션 목록. 제목과 시각만 읽고 대화 내용은 읽지 않음). 상태바 갱신은 권한이 필요 없다.
+## 출처와 라이선스
+
+MIT 라이선스([LICENSE](LICENSE)).
+
+- 이 플러그인은 DevBrothers의 [paseo-coordinator-board](https://github.com/devbrother2024/paseo-coordinator-board)(MIT)를 Orca용으로 옮긴 것이다. 보드 구성과 결정 카드 순서, 전송 규칙(사람이 쓴 글만, 권한 대기 세션에는 보내지 않음), PR 분류와 제목 정리(`server/prs.ts`)를 의존성 없이 `src/`에 다시 썼다. 원저작권 표기는 LICENSE에 그대로 둔다.
+- 기록은 그 저장소의 `orca/` 폴더에서 시작했고, 이 저장소로 옮길 때 커밋 기록을 유지했다.
+- `tsconfig.json` 등 뼈대는 Orca(stablyai/orca, MIT)의 `orca plugin create` 템플릿에서 시작했다. `.orca/types`는 `orca plugin types`가 만드는 Orca 타입이라 저장소에 넣지 않는다.
