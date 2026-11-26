@@ -315,8 +315,11 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       if (stopped) void server.close()
       else channel = server
     }, (error: unknown) => orca.log(`coordinator channel did not open: ${error instanceof Error ? error.message : String(error)}`))
-    orca.hooks.on('agent.launch.before', async (event, next) =>
-      next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter }, board.pendingLaunch())))
+    orca.hooks.on('agent.launch.before', async (event, next) => {
+      // Key names only: which PATH spelling Orca hands the hook decides whether the bin reaches the agent.
+      orca.log(`launch hook: PATH keys in the launch env: ${Object.keys(event.env).filter((key) => key.toUpperCase() === 'PATH').join(', ') || 'none'}`)
+      return next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter }, board.pendingLaunch()))
+    })
   }
 
   return () => {

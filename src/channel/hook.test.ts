@@ -7,10 +7,10 @@ const launch = (more: Partial<LaunchEvent> = {}): LaunchEvent => ({
   env: { Path: 'C:\\Windows;C:\\tools' }, ...more
 })
 
-test('every launch gets the channel address, the CLI first on PATH under its own key, and a token for its terminal', () => {
+test('every launch gets the channel address, the CLI first on PATH under its own key and under PATH, and a token for its terminal', () => {
   const out = withChannel(launch(), channel)
   expect(out.env).toEqual({
-    Path: 'C:\\plugins\\board\\bin;C:\\Windows;C:\\tools',
+    Path: 'C:\\plugins\\board\\bin;C:\\Windows;C:\\tools', PATH: 'C:\\plugins\\board\\bin;C:\\Windows;C:\\tools',
     CB_PIPE: channel.pipe, CB_BIN: channel.bin, CB_NODE: channel.node,
     CB_TERMINAL: 'term_1', CB_CALLER_TOKEN: callerToken(channel.secret, 'term_1')
   })
@@ -22,6 +22,9 @@ test('every launch gets the channel address, the CLI first on PATH under its own
 
 test('a launch without PATH, or with a POSIX one on Windows, keeps its PATH; no terminal means no token', () => {
   expect(withChannel(launch({ env: {} }), channel).env).not.toHaveProperty('PATH')
+  expect(withChannel(launch({ env: { PATH: 'C:\\Windows' } }), channel).env).toEqual(expect.not.objectContaining({ Path: expect.anything() }))
+  expect(withChannel(launch({ env: { Path: 'C:\\a', PATH: 'C:\\b' } }), channel).env).toMatchObject({ Path: channel.bin + ';C:\\a', PATH: channel.bin + ';C:\\b' })
+  expect(withChannel(launch({ env: { Path: 'C:\\a' } }), { ...channel, delimiter: ':' }).env).not.toHaveProperty('PATH')
   expect(withChannel(launch({ env: { PATH: '/usr/bin:/bin' } }), channel).env.PATH).toBe('/usr/bin:/bin')
   expect(withChannel(launch({ env: { PATH: '/usr/bin:/bin' } }), { ...channel, delimiter: ':' }).env.PATH).toBe(channel.bin + ':/usr/bin:/bin')
   const noTerminal = withChannel(launch({ terminalId: undefined }), channel).env
