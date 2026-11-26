@@ -59,17 +59,17 @@ test('setup launches one terminal coordinator in the focused workspace, marked f
   const f = setup()
   f.orca.behavior.reportAfterPs = 2
   let pendingDuringLaunch: unknown
-  f.orca.behavior.onWrite = () => { pendingDuringLaunch = f.board.pendingLaunch() }
+  f.orca.behavior.onWrite = () => { pendingDuringLaunch = f.board.pendingLaunches()[0] }
   const started = await f.setupCoordinator() as { sessionId: string; workspaceId: string; reused: boolean }
   expect(started).toEqual({ sessionId: 'launched-1', workspaceId: 'acme::/w/acme', reused: false, pinFailed: true })
   const [args] = f.launches()
   const flag = (name: string) => args[args.indexOf(name) + 1]
   expect([flag('--agent'), flag('--worktree'), flag('--surface'), flag('--model'), flag('--effort')]).toEqual(['claude', 'id:acme::/w/acme', 'terminal', 'claude-opus-5-5', 'high'])
-  const launch = pendingDuringLaunch as { launchId: string; modeId: string }
-  expect(launch.modeId).toBe('bypass')
+  const launch = pendingDuringLaunch as { launchId: string; modeId: string; role: string }
+  expect(launch).toMatchObject({ modeId: 'bypass', role: 'coordinator' })
   expect(flag('--prompt').startsWith(launchMarker(launch.launchId) + '\n')).toBe(true)
   expect(flag('--prompt')).toContain('/plugin/bin')
-  expect(f.board.pendingLaunch()).toBeUndefined()
+  expect(f.board.pendingLaunches()).toEqual([])
   expect(f.prefs.read().coordinator).toBe('launched-1')
   expect(await f.setupCoordinator({ expectedCoordinator: 'launched-1' })).toMatchObject({ sessionId: 'launched-1', reused: true })
   expect(f.launches()).toHaveLength(1)

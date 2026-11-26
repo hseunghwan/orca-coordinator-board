@@ -1,6 +1,6 @@
 // What agent.launch.before adds to every agent Orca starts: the channel's address, the CLI on PATH, and
-// a caller token only the board can make for that terminal. A coordinator launch also gets its
-// permission mode. Pure and synchronous: Orca gives a hook 2 s, then carries on without it.
+// a caller token only the board can make for that terminal. A coordinator or worker launch the board
+// started also gets its permission mode. Pure and synchronous: Orca gives a hook 2 s, then carries on without it.
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 export type LaunchEvent = {
@@ -55,12 +55,31 @@ export const COORDINATOR_MODES: Readonly<Record<string, readonly { id: string; l
   ]
 }
 
+/**
+ * Worker modes, Paseo's rule (server/dispatch.ts): never a bypass mode, except Codex full access. The
+ * recommended ones come first (claude auto, codex auto-review, shared/dispatch.ts recommendedWorkerMode).
+ */
+export const WORKER_MODES: Readonly<Record<string, readonly { id: string; label: string; args: readonly string[] }[]>> = {
+  claude: [
+    { id: 'auto', label: 'Auto', args: ['--permission-mode', 'auto'] },
+    { id: 'default', label: 'Default', args: ['--permission-mode', 'default'] }
+  ],
+  codex: [
+    { id: 'auto-review', label: 'Auto review', args: ['--approve-for-me'] },
+    { id: 'auto', label: 'Auto', args: ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request'] },
+    { id: 'full-access', label: 'Full access', args: ['--sandbox', 'danger-full-access', '--ask-for-approval', 'never'] }
+  ]
+}
+
+/** A launch the board started and has not seen running yet; the hook finds it by its marker. */
+export type PendingLaunch = { launchId: string; modeId: string | null; role: 'coordinator' | 'worker' }
+
 // Orca writes each word POSIX-quoted ('--model' 'haiku' '--' '<prompt>', observed 2026-11-26), and adds
 // the bypass flag when the person's agent setting asks for it.
 const PERMISSION_FLAGS = /(?:^|\s)'?(?:--permission-mode|--approve-for-me|--sandbox|-s|--ask-for-approval|-a|--full-auto)'?(?=\s|=|$)/
 const BYPASS_FLAGS = /\s'?(?:--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox)'?(?=\s|$)/g
 
-/** The first line of a coordinator's launch prompt; the hook finds the launch by it in the command. */
+/** The first line of a launch prompt the board writes; the hook finds the launch by it in the command. */
 export const launchMarker = (launchId: string) => '[coordinator-board:' + launchId + ']'
 
 /** Before the prompt word and the '--' that ends the options in front of it. */
@@ -79,7 +98,7 @@ function beforePrompt(command: string, at: number, args: readonly string[]): str
  * Git Bash reads "PATH". A launch whose env has no PATH, or a POSIX one on Windows (WSL), keeps its
  * PATH, and the agent reaches the CLI through CB_BIN.
  */
-export function withChannel(event: LaunchEvent, channel: ChannelEnv, coordinator?: { launchId: string; modeId: string | null }): LaunchEvent {
+export function withChannel(event: LaunchEvent, channel: ChannelEnv, launches: readonly PendingLaunch[] = []): LaunchEvent {
   const env: Record<string, string> = { ...event.env, [ENV.pipe]: channel.pipe, [ENV.bin]: channel.bin, [ENV.node]: channel.node }
   if (event.terminalId) {
     env[ENV.terminal] = event.terminalId
@@ -91,8 +110,9 @@ export function withChannel(event: LaunchEvent, channel: ChannelEnv, coordinator
   for (const key of pathKeys) env[key] = event.env[key] ? channel.bin + channel.delimiter + event.env[key] : channel.bin
   if (windows && pathKeys.length && !pathKeys.includes('PATH')) env.PATH = env[pathKeys[0]]
   let command = event.command
-  const at = coordinator?.modeId ? command.indexOf(launchMarker(coordinator.launchId)) : -1
-  const mode = COORDINATOR_MODES[event.agent]?.find((m) => m.id === coordinator?.modeId)
+  const launch = launches.find((l) => l.modeId && command.indexOf(launchMarker(l.launchId)) > 0)
+  const at = launch ? command.indexOf(launchMarker(launch.launchId)) : -1
+  const mode = (launch?.role === 'worker' ? WORKER_MODES : COORDINATOR_MODES)[event.agent]?.find((m) => m.id === launch?.modeId)
   if (mode && at > 0) {
     // Only the words before the prompt: the charter itself may mention flags.
     if (mode.id === 'bypass') {

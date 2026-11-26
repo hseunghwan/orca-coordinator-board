@@ -23,6 +23,7 @@ import { ProjectPullRequests } from "./prs";
 import { MergeNotifications } from "./merge-notifications";
 import type { Command } from "../channel/names";
 import { coordinatorCommands, runCommand } from "./coordinator";
+import { dispatchCommands, WorkerJournal } from "./dispatch";
 import { BoardFacts } from "./board-facts";
 import { trackedReviewTool } from "./tracked-review";
 import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
@@ -58,7 +59,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const facts = new BoardFacts(prefs, notes, reader, fleet);
   facts.register(server);
   registerSessionLinks(server, prefs);
-  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()) });
+  const workers = new WorkerJournal(join(dataDir, "workers.json"));
+  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()),
+    ...dispatchCommands(prefs, { fleet, journal: workers }) });
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
@@ -317,10 +320,15 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     count: () => reads.count(() => buildSnapshot(fleet.paseo)),
     configured: () => prefs.read().projects.length > 0,
     coordinator: () => prefs.read().coordinator,
-    /** The coordinator launch the agent.launch.before hook should give its permission mode. */
-    pendingLaunch: () => lifecycle.pendingLaunch(),
-    /** Names the started coordinator once its terminal reports a session. */
-    adoptCoordinator: () => lifecycle.adopt(),
+    /** The coordinator and worker launches the agent.launch.before hook should give their permission mode. */
+    pendingLaunches: () => [...[lifecycle.pendingLaunch()].filter(l => !!l), ...workers.pending()],
+    /** Names the started coordinator and workers once their terminals report a session. */
+    async adoptCoordinator() {
+      const coordinator = await lifecycle.adopt();
+      return workers.adopt(await fleet.view()) || coordinator;
+    },
+    /** Paseo's metadata of a worker the coordinator started through the board. */
+    worker: (sessionId: string) => workers.worker(sessionId),
     /** Who may run a coordinator-board command: only the designated coordinator, or any session on the board. */
     audience: (command: Command) => commands[command].audience,
     /** A coordinator-board command from the session the channel verified. */

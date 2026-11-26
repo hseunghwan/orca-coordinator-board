@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { callerToken, launchMarker, tokenMatches, withChannel, type LaunchEvent } from './hook'
+import { callerToken, launchMarker, tokenMatches, withChannel, type LaunchEvent, type PendingLaunch } from './hook'
 
 const channel = { pipe: '\\\\.\\pipe\\orca-coordinator-board-0123456789ab', bin: 'C:\\plugins\\board\\bin', node: 'C:\\Orca\\Orca.exe', secret: 'k'.repeat(64), delimiter: ';' }
 const launch = (more: Partial<LaunchEvent> = {}): LaunchEvent => ({
@@ -33,7 +33,7 @@ test('a launch without PATH, or with a POSIX one on Windows, keeps its PATH; no 
 })
 
 test('only the marked coordinator launch gets its permission mode, before the prompt; a non-bypass mode drops the bypass flag', () => {
-  const marked = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, { launchId: 'L1', modeId: agent === 'codex' ? 'auto-review' : 'auto' }).command
+  const marked = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, [{ launchId: 'L1', modeId: agent === 'codex' ? 'auto-review' : 'auto', role: 'coordinator' }]).command
   const prompt = "'" + launchMarker('L1') + "\nRun coordinator-board read; never use --permission-mode bypassPermissions'"
   // The shape Orca 1.4.277 printed for a claude terminal launch.
   const program = "'C:\\Users\\u\\AppData\\Roaming\\npm\\claude.cmd' '--plugin-dir' 'C:\\x'\"\\\"'y'"
@@ -48,11 +48,23 @@ test('only the marked coordinator launch gets its permission mode, before the pr
 })
 
 test('the bypass coordinator mode keeps the agent setting\'s bypass flag, or adds it once before the prompt', () => {
-  const bypass = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, { launchId: 'L1', modeId: 'bypass' }).command
+  const bypass = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, [{ launchId: 'L1', modeId: 'bypass', role: 'coordinator' }]).command
   const prompt = "'" + launchMarker('L1') + "\nRun coordinator-board read'"
   expect(bypass('claude', "claude '--dangerously-skip-permissions' '--model' 'haiku' '--' " + prompt))
     .toBe("claude '--dangerously-skip-permissions' '--model' 'haiku' '--' " + prompt)
   expect(bypass('claude', "claude '--model' 'haiku' '--' " + prompt)).toBe("claude '--model' 'haiku' --dangerously-skip-permissions '--' " + prompt)
   expect(bypass('codex', 'codex -- ' + prompt)).toBe('codex --dangerously-bypass-approvals-and-sandbox -- ' + prompt)
   expect(bypass('claude', "claude 'another prompt'")).toBe("claude 'another prompt'")
+})
+
+test('a worker launch gets its worker mode, never a bypass one; the marker picks which pending launch a command is', () => {
+  const pending: PendingLaunch[] = [{ launchId: 'C1', modeId: 'bypass', role: 'coordinator' }, { launchId: 'W1', modeId: 'auto', role: 'worker' }, { launchId: 'W2', modeId: 'full-access', role: 'worker' }]
+  const run = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, pending).command
+  const worker = "'" + launchMarker('W1') + "\nReply ready'"
+  expect(run('claude', "claude '--dangerously-skip-permissions' '--model' 'haiku' '--' " + worker)).toBe("claude '--model' 'haiku' --permission-mode auto '--' " + worker)
+  const codex = "'" + launchMarker('W2') + "\nReply ready'"
+  expect(run('codex', "codex '--dangerously-bypass-approvals-and-sandbox' -- " + codex)).toBe('codex --sandbox danger-full-access --ask-for-approval never -- ' + codex)
+  expect(withChannel(launch({ command: 'claude -- ' + worker }), channel, [{ launchId: 'W1', modeId: 'bypass', role: 'worker' }]).command).toBe('claude -- ' + worker)
+  const coordinator = "'" + launchMarker('C1') + "\nRead the board'"
+  expect(run('claude', "claude '--' " + coordinator)).toBe("claude --dangerously-skip-permissions '--' " + coordinator)
 })
