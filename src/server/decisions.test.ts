@@ -13,7 +13,7 @@ import { sendDecision, type DecisionInput } from '../paseo/shared/decision-actio
 import { NoteStore } from '../paseo/server/notes'
 import { PreferenceStore } from '../paseo/server/preferences'
 import { ConversationReader } from './conversation'
-import { decorateDecision, DecisionSender, noCoordinator, noPhotos } from './decisions'
+import { decorateDecision, DecisionSender, noPhotos } from './decisions'
 import { discoverSessions } from './discovery'
 
 const dirs: string[] = []
@@ -90,14 +90,18 @@ test('구조화 질문·추천·선택은 해당 근거에만 붙고 자유 입�
   expect((await f.row()).decision).toBeUndefined()
 })
 
-test('질문은 답변 처리하지 않고, 지정한 세션 이외와 코디네이터 조율은 보내지 않는다', async () => {
+test('질문과 코디네이터 조율은 답변 처리하지 않고, 지정한 세션이나 코디네이터 이외에는 보내지 않는다', async () => {
   const f = await fixture()
   await expect(f.send({ recipientId: 'other' })).rejects.toThrow()
-  await expect(f.send({ action: 'coordinate', recipientId: 'coordinator', text: '두 작업의 순서를 조율해 주세요.' })).rejects.toThrow(noCoordinator)
+  await expect(f.send({ action: 'coordinate', recipientId: 'worker' })).rejects.toThrow('바뀌었습니다')
   expect(f.orca.writes).toEqual([])
+  await f.send({ action: 'coordinate', recipientId: 'coordinator', text: '두 작업의 순서를 조율해 주세요.' })
+  expect(f.sent()).toEqual([expect.objectContaining({ id: 'coordinator' })])
+  expect(f.sent()[0].text.endsWith('두 작업의 순서를 조율해 주세요.')).toBe(true)
   await f.send({ action: 'question', text: '두 줄로 나누면 어디에서 끊나요?', requestKey: 'send-000000002' })
-  expect(f.sent()[0].id).toBe('worker')
+  expect(f.sent().map(s => s.id).sort()).toEqual(['coordinator', 'worker'])
   expect(f.prefs.read().answers).toEqual({})
+  expect(Object.values(f.prefs.read().decisionReceipts).map(r => r.activity?.coordinator).sort()).toEqual([false, true])
 })
 
 test('권한 요청, 관리 범위 철회, 변경된 발췌, 바뀐 활동 시각을 전송 직전 거절한다', async () => {

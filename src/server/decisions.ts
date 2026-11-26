@@ -1,13 +1,14 @@
 // Adapted from paseo-coordinator-board server/decisions.ts @ 2e9d128. Sending goes through fleet.deliver
 // instead of agent.send: a refused send leaves nothing behind and drops its pending receipt, and a
-// pending receipt is settled by fleet.reconcile, which never sends again. Photos, coordinate actions,
-// managed coordinators and board facts come in later phases and are refused or left out here.
+// pending receipt is settled by fleet.reconcile, which never sends again. A coordinate action waits for
+// an idle coordinator, as Orca cannot steer a running turn. Photos and board facts come in later phases
+// and are refused or left out here.
 import { createHash } from "node:crypto";
 import type { Fleet, PluginHandlerContext, SessionId } from "../orca";
 import type { Decision, DecisionInput } from "../paseo/shared/decision-actions";
 import type { Note, SessionRow } from "../paseo/shared/contract";
 import type { NoteStore } from "../paseo/server/notes";
-import type { Preferences, PreferenceStore } from "../paseo/server/preferences";
+import { isManagedCoordinator, type Preferences, type PreferenceStore } from "../paseo/server/preferences";
 import { classify, ConversationReader, lastConversationQuestion, type Evidence } from "./conversation";
 import { restoreClarifiedDecision } from "./clarifications";
 import { sessionReplyMessage } from "./decision-message";
@@ -21,7 +22,6 @@ const changed = "결정 카드 또는 수신자가 바뀌었습니다. 보드를
 const blocked = "이 세션의 현재 상태에서는 보낼 수 없습니다. 원래 세션에서 권한 요청과 작업 상태를 확인하세요.";
 const uncertain = "전송 결과를 확인하지 못했습니다. 같은 요청을 다시 확인하거나 수신 세션을 열어 주세요.";
 export const noPhotos = "사진 첨부는 아직 보낼 수 없습니다. 글로만 보내 주세요.";
-export const noCoordinator = "코디네이터에게 보내기는 아직 지원하지 않습니다. 세션에 직접 답하거나 질문해 주세요.";
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export function decorateDecision(row: SessionRow, note: Note | undefined, prefs: Preferences, evidence?: Evidence) {
@@ -77,7 +77,6 @@ export class DecisionSender {
 
   send(paseo: Sdk, input: DecisionInput): Promise<Receipt> {
     if (input.images?.length) return Promise.reject(Error(noPhotos));
-    if (input.action === "coordinate") return Promise.reject(Error(noCoordinator));
     const messageId = messageUuid(input.requestKey);
     const fingerprint = hash([input.projectId, input.sessionId, input.recipientId, input.version, input.action, input.text]);
     const running = this.active.get(messageId);
@@ -114,7 +113,8 @@ export class DecisionSender {
     const rows = await discoverSessions(paseo);
     const managed = managedSessions(rows, this.store.read());
     const row = managed.find(r => r.id === input.sessionId && r.projectId === input.projectId);
-    const destination = managed.find(r => r.id === input.recipientId);
+    const destination = managed.find(r => r.id === input.recipientId) ??
+      (isManagedCoordinator(scope, input.recipientId) ? rows.find(r => r.id === input.recipientId) : undefined);
     if (!row || !destination) throw Error(changed);
     if (earlier) {
       if (earlier.fingerprint !== fingerprint) throw Error("같은 전송 키로 다른 답을 보낼 수 없습니다.");
@@ -128,7 +128,7 @@ export class DecisionSender {
       const outcome = await this.fleet.reconcile(messageId);
       const latestScope = this.store.read();
       requireScope(latestScope, input);
-      if (!isCurrentMembership(row, latestScope) || !isCurrentMembership(destination, latestScope)) throw Error(changed);
+      if (!isCurrentMembership(row, latestScope) || (!isCurrentMembership(destination, latestScope) && !isManagedCoordinator(latestScope, destination.id))) throw Error(changed);
       if (outcome?.status === "delivered") {
         this.finish(input, messageId, requestId);
         return receipt;
@@ -155,7 +155,7 @@ export class DecisionSender {
     let text = "";
     this.store.change(current => {
       requireScope(current, input);
-      if (!isCurrentMembership(row, current) || !isCurrentMembership(destination, current)) throw Error(changed);
+      if (!isCurrentMembership(row, current) || (!isCurrentMembership(destination, current) && !isManagedCoordinator(current, destination.id))) throw Error(changed);
       const judgment = current.judgments[row.id];
       Object.assign(row, classify(evidence, row, judgment?.projectId === row.projectId ? judgment : undefined, row.id === current.coordinator), { evidenceId: evidence.id });
       decorateDecision(row, note, current, evidence);
@@ -166,7 +166,7 @@ export class DecisionSender {
         messageHash: hash(text),
         activity: { origin: { sessionId: row.id, cardId: row.id, revision: input.version, questions: [{ id: input.version }] },
           title: row.decision.question || row.title, at: new Date().toISOString(), projectId: input.projectId,
-          answer: input.text, recipientId: input.recipientId, coordinator: false },
+          answer: input.text, recipientId: input.recipientId, coordinator: input.action === "coordinate" },
         fingerprint, sessionId: row.id, version: input.version, evidenceId: evidence.id, status: "pending", beforeAnswer: current.answers[row.id]?.version, ...(note?.kind === "question" ? { noteRevision: note.revision } : {}),
       };
     });
