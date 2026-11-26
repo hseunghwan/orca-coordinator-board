@@ -226,3 +226,37 @@ test('the coordinator reads and classifies over the channel with the env its lau
   assert.deepEqual([notes.writer?.text, notes.writer?.origin, notes.chat?.text], ['Draft is ready.', 'agent', 'Ready?'])
   await mounted.deactivate()
 })
+
+test('with a coordinator the board mail terminal lives in its workspace, and moves there from where it was', async () => {
+  const orca = fakeOrca([
+    { id: 'writer', surface: 'chat', state: 'done', updatedAt: 1, title: 'Writer', project: 'studio' },
+    { id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'ops' }
+  ])
+  orca.say('writer', 'assistant', '제목을 골라 주실 수 있나요? 할까요?')
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en', mailbox: { terminalId: 'term_old', workspaceId: 'w-dash' } }, results: {
+    'workspace.readContext': { workspaceId: 'w-dash', branch: 'main', displayName: 'studio', terminals: [] },
+    'terminal.create': { terminalId: 'term_board' },
+    'terminal.list': { terminals: [{ id: 'term_old' }], truncated: false },
+    'terminal.close': { closed: true },
+    'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false }
+  } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: null }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'ops', enabled: true })
+  await mounted.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
+  const card = ((await mounted.request('board.snapshot', { fresh: true })) as { sessions: { id: string; decision?: { version: string } }[] })
+    .sessions.find((s) => s.id === 'writer')!.decision!
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: card.version,
+    action: 'reply', text: 'Use the second.', requestKey: 'worker-reply-000009' })
+  assert.deepEqual(h.callsOf('terminal.close'), [{ terminalId: 'term_old' }])
+  assert.deepEqual(h.callsOf('terminal.create'), [{ workspaceId: 'identity:wt2:local:1', title: 'Coordinator Board mail' }])
+  assert.deepEqual(h.data().storage.mailbox, { terminalId: 'term_board', workspaceId: 'identity:wt2:local:1' })
+  assert.deepEqual(mounted.refusals, [])
+  await mounted.deactivate()
+})
