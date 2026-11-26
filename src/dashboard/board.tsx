@@ -27,7 +27,8 @@ import { Button, column, Disclosure, fontSize, row, space } from "./ui/controls"
 import { BoardLanguageSetting, useBoardLanguage } from "./ui/language";
 import { BoardViewSetting, BoardViewSwitch, useBoardViewMode } from "./ui/view-mode-setting";
 import { InboxView } from "./view-inbox";
-import { LaterView } from "./view-later";
+import { FocusView } from "./view-focus";
+import { MatrixView } from "./view-matrix";
 
 export type BoardViewProps = {
   snapshot: Snapshot | null; readiness: BoardReadiness | null; hostLabel: string; compact: boolean;
@@ -176,9 +177,13 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
     const props: BoardLayoutProps = {
       compact, entries, total: model.total, filteredTotal: model.filteredTotal, filtered: filters.length > 0, incomplete: model.incomplete, renderReceipt,
       slots: { filters: filtersNode, notices: noticesNode, operations: operationsNode, history: historyNode, progress: progressNode },
-      projects: { name: model.projectName },
+      projects: {
+        list: model.visibleProjects, hostWide: model.showHostWide, name: model.projectName, records: model.records,
+        pulls: snapshot?.pullRequests?.items ?? [], hostLabel, open: onOpen,
+        renderRecord: item => renderRecord(item), renderPull: pr => renderPull(pr),
+      },
     };
-    const Layout = layoutMode === "inbox" ? InboxView : LaterView;
+    const Layout = layoutMode === "focus" ? FocusView : layoutMode === "matrix" ? MatrixView : InboxView;
     return <div style={{ ...column, height: "100%", background: "var(--bg)" }}>
       <div style={{ ...column, gap: space[2], padding: `${space[3]}px ${pad}px`, borderBottom: "1px solid var(--border)" }}>
         {header}

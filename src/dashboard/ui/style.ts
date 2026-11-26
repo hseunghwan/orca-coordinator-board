@@ -143,4 +143,16 @@ html.dark .badge-danger{background:color-mix(in oklab,var(--destructive) 60%,tra
 .md-tr{display:flex;border-bottom:1px solid var(--border)}
 .md-td{flex:1;min-width:0;padding:4px}
 .md hr{width:100%;height:1px;border:0;background:var(--border);margin:0}
+.ribbon-card{display:flex;flex-direction:column;gap:4px;flex:none;width:210px;padding:12px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--bg);color:var(--fg);text-align:left;cursor:pointer;outline:none}
+.ribbon-card:hover{background:color-mix(in oklab,var(--accent) 50%,transparent)}
+.ribbon-card:active{background:var(--card)}
+.ribbon-card[aria-expanded=true]{border-color:var(--muted-fg)}
+.ribbon-card:focus-visible{box-shadow:var(--focus)}
+.cell-button{display:flex;flex-direction:column;gap:4px;min-width:0;padding:12px;border:0;background:transparent;color:var(--fg);text-align:left;cursor:pointer;outline:none}
+.cell-button:hover:not(:disabled){background:color-mix(in oklab,var(--accent) 50%,transparent)}
+.cell-button:active:not(:disabled){background:var(--card)}
+.cell-button[aria-expanded=true]{background:var(--accent)}
+.cell-button:disabled{cursor:default}
+.cell-button:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in oklab,var(--ring) 60%,transparent)}
+.table-head{background:color-mix(in oklab,var(--muted) 50%,transparent)}
 `;
