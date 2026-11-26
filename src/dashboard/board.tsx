@@ -19,6 +19,7 @@ import { Clarification } from "./clarification";
 import { DecisionActions, type DecisionReceipt } from "./decision-actions";
 import { DecisionEditingRow, keepEditingPositions, useDecisionEditing } from "./decision-editing";
 import { InlineDecisionReceipt } from "./inline-receipt";
+import { OperationsPanel } from "./operations";
 import { ReplyHistory } from "./reply-history";
 import { Project } from "./project-kanban";
 import { SessionProgress } from "./session-progress";
@@ -31,16 +32,17 @@ import { LaterView } from "./view-later";
 export type BoardViewProps = {
   snapshot: Snapshot | null; readiness: BoardReadiness | null; hostLabel: string; compact: boolean;
   error: string | null; loading: boolean; updatedAt: Date | null; changing: boolean;
-  onRefresh: () => void; onProject: (id: string, enabled: boolean) => void; onOpen: OpenSession;
+  onRefresh: () => void; onProject: (id: string, enabled: boolean) => void; onCoordinator: (sessionId: string | null) => void; onOpen: OpenSession;
 };
 
-export function BoardView({ snapshot, readiness, hostLabel, compact, error, loading, updatedAt, changing, onRefresh, onProject, onOpen }: BoardViewProps) {
+export function BoardView({ snapshot, readiness, hostLabel, compact, error, loading, updatedAt, changing, onRefresh, onProject, onCoordinator, onOpen }: BoardViewProps) {
   const { t, language } = useBoardLanguage();
   const view = useBoardViewMode();
   const [chosenProjects, setChosenProjects] = useState<ProjectId[]>([]);
   const [settings, setSettings] = useState(false);
   const [showError, setShowError] = useState(false);
   const [manage, setManage] = useState(false);
+  const [pickSession, setPickSession] = useState(false);
   const [digestLimit, setDigestLimit] = useState(5);
   const [inlineReceipts, setInlineReceipts] = useState<InlineReceipt[]>([]);
   const [receipts, setReceipts] = useState<DecisionReceipt[]>([]);
@@ -50,6 +52,8 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed) : null;
   const configured = model ? model.configured : readiness?.configured;
   const pickingProjects = !configured || (!settings && !snapshot?.coordinator);
+  const coordinatorId = snapshot ? snapshot.coordinator : readiness?.coordinator ?? null;
+  const operationsReady = !!snapshot || !!(readiness?.configured && readiness.coordinator && !settings);
   const layoutMode = !settings && snapshot && configured ? view.mode : "classic";
 
   const rankedKeys = model?.ranked.map(row => row.key) ?? [];
@@ -125,7 +129,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
     {!settings && !!snapshot && !!configured && <BoardViewSwitch view={view} />}
     {!settings && <Button variant="ghost" size="sm" label={loading ? t("조회 중…", "Refreshing…") : t("새로 고침", "Refresh")} onPress={onRefresh} disabled={loading} />}
     <Button variant="ghost" size="sm" label={settings ? t("보드로 돌아가기", "Back to board") : t("설정", "Settings")} onPress={() => {
-      setSettings(!settings); setManage(false);
+      setSettings(!settings); setManage(false); setPickSession(false);
     }} />
   </div>;
   const errorDetail = !!error && showError && <p className="danger" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{error}</p>;
@@ -148,10 +152,8 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
     {filters.length > 0 && !model.filteredTotal && model.total > 0 && !model.incomplete && <p className="muted">{t("선택한 프로젝트에 결정할 일이 없습니다.", "No decisions in the selected projects.")}</p>}
     {model.total === 0 && !model.incomplete && <p className="muted">{t("지금 결정할 일이 없습니다.", "No decisions are waiting for you.")}</p>}
   </> : null;
-  const operationsNode = <div className="surface" style={{ ...column, gap: 10, padding: 14, borderRadius: "var(--r-lg)" }}>
-    <span role="heading" aria-level={2} style={{ fontSize: 17, lineHeight: "24px", fontWeight: 600 }}>{t("코디네이터", "Coordinator")}</span>
-    <p className="muted">{t("코디네이터에 요청하는 기능은 다음 단계에서 제공합니다.", "Requests to the coordinator are coming in a later phase.")}</p>
-  </div>;
+  const operationsNode = <OperationsPanel settings={operationsReady && settings} coordinator={operationsReady ? coordinatorId : null}
+    configured={operationsReady && !!configured} projects={snapshot?.projects ?? []} refreshBoard={onRefresh} openCoordinator={onOpen} />;
   const progressNode = model && snapshot && !settings && configured ? <SessionProgress cards={model.visibleProjects.flatMap(project => project.cards)}
     hostLabel={hostLabel} projectName={model.projectName} open={onOpen}>
     {!model.visibleProjects.length && !model.showHostWide && <p className="muted">{t("표시할 세션이 없습니다.", "No sessions to show.")}</p>}
@@ -215,6 +217,18 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
         : <Disclosure title={t("보드에서 관리할 프로젝트 선택", "Choose projects to manage")} expanded={manage} onPress={() => setManage(!manage)}>
           {projectPicker}
         </Disclosure>)}
+      {operationsNode}
+      {settings && snapshot && <div style={{ ...column, gap: space[2], alignItems: "flex-start" }}>
+        <Button label={pickSession ? t("기존 세션 목록 닫기", "Close session list") : t("기존 세션에서 코디네이터 지정", "Choose an existing coordinator session")}
+          expanded={pickSession} onPress={() => setPickSession(!pickSession)} />
+        {pickSession && <>
+          {snapshot.coordinator && <Button disabled={changing} label={t("현재 코디네이터 지정 해제", "Clear current coordinator")} onPress={() => onCoordinator(null)} />}
+          {snapshot.sessions.filter(session => session.id !== snapshot.coordinator).map(session => <Button key={session.id} disabled={changing}
+            projectId={session.projectId} project={session.projectTitle} label={`${session.projectTitle} · ${session.title} · ${t("지정", "Assign")}`}
+            onPress={() => onCoordinator(session.id)} />)}
+          {!snapshot.sessions.length && <p className="muted">{t("관리할 프로젝트를 선택하면 지정할 수 있는 세션이 표시됩니다.", "Select a project to see its available sessions.")}</p>}
+        </>}
+      </div>}
       {!settings && !snapshot && !error && !!readiness?.decisionTitles?.length && <div style={{ ...column, gap: space[1.5] }}>
         <h2 style={{ margin: 0, fontSize: fontSize.base, fontWeight: 500 }}>{t("내 결정", "My decisions")}</h2>
         {readiness.decisionTitles.map((title, index) => <p key={index} className="clamp2">{title}</p>)}

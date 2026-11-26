@@ -1,6 +1,6 @@
 // The frame side of the worker contract: Paseo's RPC definitions, called through orca.plugin.request.
 import { z, type ZodType } from "zod";
-import { defineRpc, type PluginRpcContract } from "../paseo/plugin-shim";
+import type { PluginRpcContract } from "../paseo/plugin-shim";
 
 type Request = (name: string, input?: unknown) => Promise<unknown>;
 const request: Request = (name, input) => (orca.plugin.request as unknown as Request).call(orca.plugin, name, input);
@@ -12,9 +12,4 @@ export async function call<Input extends ZodType, Output extends ZodType>(
   return contract.output.parse(await request(contract.name, input)) as z.output<Output>;
 }
 
-// Orca-only: a terminal session is focused, a chat session's workspace is opened.
-export const openSession = defineRpc({
-  name: "board.open-session",
-  input: z.object({ sessionId: z.string().min(1) }),
-  output: z.object({ opened: z.boolean() }),
-});
+export { coordinatorWorkspace, openSession, operations, startCoordinator } from "../contract";

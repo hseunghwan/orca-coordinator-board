@@ -5,8 +5,6 @@
 // request waits until the coordinator is idle. Orca has no pin, photos come later, and tool names in
 // the prompts are coordinator-board commands.
 import { createHash } from "node:crypto";
-import { z } from "zod";
-import { defineRpc } from "../paseo/plugin-shim";
 import type { Fleet, SessionId, World, WorkspaceRecord, WorktreeId } from "../orca";
 import { workspaceKey } from "../orca";
 import type { T } from "../i18n";
@@ -14,25 +12,15 @@ import { setUsageRouting } from "../paseo/shared/usage-routing";
 import { askDigest, coordinatorPinSettings, operationState, pinCurrentCoordinator, requestWork, setCoordinatorAutoPin,
   setProviderInclusion, setupCoordinator, setWorkerMode, updateRouting } from "../paseo/shared/operations";
 import { requestRecommendation } from "../paseo/shared/recommendation";
-import { includedCatalog, resolveRoute, sameRoute, validateCandidates, workspaceChoiceSchema } from "../paseo/shared/dispatch";
+import { includedCatalog, resolveRoute, sameRoute, validateCandidates } from "../paseo/shared/dispatch";
 import type { PluginServerContext } from "../orca";
 import type { PreferenceStore } from "../paseo/server/preferences";
 import { readAccountUsage, readDirectory } from "./catalog";
 import type { DecisionSender } from "./decisions";
 import { CoordinatorLifecycle } from "./lifecycle";
 
-/** Orca-only: the workspaces a coordinator can start in, and the one picked. The frame's copy is src/dashboard/rpc.ts. */
-export const coordinatorWorkspace = workspaceChoiceSchema.extend({ focused: z.boolean().optional() });
-export const operations = defineRpc({
-  name: operationState.name,
-  input: operationState.input,
-  output: operationState.output.extend({ workspaces: z.array(coordinatorWorkspace).optional() }),
-});
-export const startCoordinator = defineRpc({
-  name: setupCoordinator.name,
-  input: setupCoordinator.input.extend({ workspaceId: z.string().min(1).max(256).optional() }),
-  output: setupCoordinator.output,
-});
+export { coordinatorWorkspace, operations, startCoordinator } from "../contract";
+import { operations, startCoordinator } from "../contract";
 
 export type OperationDeps = {
   t: () => T;

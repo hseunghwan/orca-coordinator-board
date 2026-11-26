@@ -77,6 +77,13 @@ html.dark .textarea{background:color-mix(in oklab,var(--input) 30%,transparent)}
 .textarea::placeholder{color:var(--muted-fg)}
 .textarea:focus{border-color:var(--ring);box-shadow:var(--focus)}
 .textarea:disabled{opacity:.5;cursor:not-allowed}
+.textarea-strong{min-height:64px;padding:10px;border-width:2px;border-color:color-mix(in oklab,var(--muted-fg) 55%,transparent)}
+.textarea-strong:focus{border-color:var(--primary)}
+.select{height:32px;min-width:0;max-width:100%;padding:0 8px;border:1px solid var(--input);border-radius:var(--r-md);background:transparent;color:var(--fg);font-size:14px;box-shadow:var(--shadow-xs);outline:none;cursor:pointer;text-overflow:ellipsis}
+html.dark .select{background:color-mix(in oklab,var(--input) 30%,transparent)}
+.select:focus-visible{border-color:var(--ring);box-shadow:var(--focus)}
+.select:disabled{opacity:.5;cursor:not-allowed}
+.select option{background:var(--card);color:var(--fg)}
 .send-wrap{position:relative;display:inline-flex;max-width:100%}
 .tooltip{position:absolute;bottom:100%;left:0;z-index:90;margin-bottom:6px;padding:6px 12px;border-radius:var(--r-md);background:var(--fg);color:var(--bg);font-size:12px;line-height:16px;white-space:nowrap;pointer-events:none}
 .tooltip[hidden]{display:none}
