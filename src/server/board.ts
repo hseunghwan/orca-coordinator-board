@@ -29,6 +29,8 @@ import { trackedReviewTool } from "./tracked-review";
 import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
 import { photoFiles } from "./photo-files";
 import { ProjectIcons } from "./project-icons";
+import { HostWatch } from "./hosts";
+import { boardHosts } from "../contract";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
 import { canReceiveBoardInput } from "./discovery";
@@ -61,6 +63,8 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const facts = new BoardFacts(prefs, notes, reader, fleet);
   facts.register(server);
   registerSessionLinks(server, prefs);
+  const hosts = new HostWatch(fleet.cli, () => fleet.view());
+  server.handle(boardHosts, () => hosts.read(host.t()));
   const workers = new WorkerJournal(join(dataDir, "workers.json"));
   const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()),
     ...dispatchCommands(prefs, { fleet, journal: workers }) });

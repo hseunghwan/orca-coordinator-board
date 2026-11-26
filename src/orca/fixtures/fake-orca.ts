@@ -42,7 +42,10 @@ export function fakeOrca(sessions: FakeSession[]) {
     /** How many worktree ps reads a launched agent stays without a session id. */
     reportAfterPs: 0,
     agents: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'grok', name: 'Grok' }],
-    rateLimits: {} as Record<string, unknown>
+    rateLimits: {} as Record<string, unknown>,
+    /** orca host list rows, and what agent list --environment answers per environment id ('fail': it does not answer). */
+    hosts: [{ kind: 'local', name: 'this machine', id: 'local' }] as Record<string, unknown>[],
+    remote: {} as Record<string, Record<string, unknown>[] | 'fail'>
   }
   const launches: { operationId: string; session: FakeSession; hiddenFor: number }[] = []
   let mails = 0
@@ -83,6 +86,11 @@ export function fakeOrca(sessions: FakeSession[]) {
     }
     if (verb === 'agent installed') return ok({ agents: behavior.agents.map((a) => ({ ...a, default: false })) })
     if (verb === 'account list') return ok({ rateLimits: behavior.rateLimits })
+    if (verb === 'host list') return ok({ hosts: behavior.hosts })
+    if (verb === 'agent list') {
+      const remote = behavior.remote[flag('--environment')]
+      return !remote || remote === 'fail' ? fail('unreachable', 'environment did not answer') : ok({ agents: remote })
+    }
     if (verb === 'repo list') return ok({ repos: [...new Set(sessions.map((s) => s.project ?? 'acme'))].map((id) => ({ id, path: '/w/' + id, displayName: id })) })
     if (verb === 'agent read') {
       const id = args[2].replace('orca_session_id:', '')
