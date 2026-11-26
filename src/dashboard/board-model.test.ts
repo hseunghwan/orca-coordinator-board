@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import type { Snapshot } from "../paseo/client/model";
 import { trackedDecisionSchema } from "../paseo/shared/tracked-decisions";
 import { sessionRowKey } from "../paseo/client/decision-receipts";
-import { boardModel, toggleFilter } from "./board-model";
+import { boardModel, shownViewMode, shownViewModes, toggleFilter } from "./board-model";
 
 const NOW = Date.parse("2026-11-26T12:00:00Z");
 const t = (ko: string) => ko;
@@ -89,4 +89,10 @@ test("a partial decision ledger marks the board incomplete", () => {
   const data = snapshot();
   data.trackedDecisions!.status = "partial";
   expect(boardModel(data, [], t, NOW).incomplete).toBe(true);
+});
+
+test("the board offers inbox, focus and matrix, and a saved classic view opens the inbox", () => {
+  expect(shownViewModes).toEqual(["inbox", "focus", "matrix"]);
+  expect(shownViewMode("classic")).toBe("inbox");
+  expect(shownViewMode("matrix")).toBe("matrix");
 });

@@ -1,14 +1,15 @@
 /** @jsxImportSource react */
-// Paseo's board view switch (client/view-mode-setting.tsx), saved per device.
-import { boardViewDescription, boardViewLabel, boardViewModes, boardViewSetting, type BoardViewMode } from "../../paseo/client/view-mode";
+// Paseo's board view switch (client/view-mode-setting.tsx), saved per device, without the classic view.
+import { boardViewDescription, boardViewLabel, boardViewSetting } from "../../paseo/client/view-mode";
+import { shownViewMode, shownViewModes, type ShownViewMode } from "../board-model";
 import { useDeviceSetting } from "../device-setting";
 import { column, SectionLabel, SegmentedControl, space } from "./controls";
 import { useBoardLanguage } from "./language";
 
 export function useBoardViewMode() {
   const saved = useDeviceSetting(boardViewSetting);
-  const mode = saved.values.mode;
-  async function select(next: BoardViewMode) {
+  const mode = shownViewMode(saved.values.mode);
+  async function select(next: ShownViewMode) {
     if (saved.saving || next === mode) return;
     await saved.save({ mode: next });
   }
@@ -19,7 +20,7 @@ export type BoardViewState = ReturnType<typeof useBoardViewMode>;
 export function BoardViewSwitch({ view }: { view: BoardViewState }) {
   const { t } = useBoardLanguage();
   return <SegmentedControl accessibilityLabel={t("보드 보기", "Board view")} value={view.mode} disabled={view.saving}
-    options={boardViewModes.map(id => ({ id, label: boardViewLabel(id, t) }))} onChange={id => void view.select(id)} />;
+    options={shownViewModes.map(id => ({ id, label: boardViewLabel(id, t) }))} onChange={id => void view.select(id)} />;
 }
 
 export function BoardViewSetting({ view }: { view: BoardViewState }) {

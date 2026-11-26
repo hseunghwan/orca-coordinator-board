@@ -6,6 +6,7 @@ import { projectCards, projectFilterNames, type Card, type Snapshot } from "../p
 import type { PullRequestItem } from "../paseo/shared/prs";
 import { pullKey, trackedCoverage, type TrackedDecision } from "../paseo/shared/tracked-decisions";
 import type { Translate } from "../paseo/view-types";
+import { boardViewModes, type BoardViewMode } from "../paseo/client/view-mode";
 
 export type ProjectId = string | null;
 export type ProjectGroup = { id: string; title: string; cards: Card[] };
@@ -82,3 +83,8 @@ export function toggleFilter(previous: readonly ProjectId[], id: ProjectId, list
   const active = previous.filter(value => listed.has(value));
   return active.includes(id) ? active.filter(value => value !== id) : [...active, id];
 }
+
+/** The board views Orca offers: Paseo's without the classic stack. A saved "classic" opens the inbox. */
+export const shownViewModes = boardViewModes.filter((mode): mode is ShownViewMode => mode !== "classic");
+export type ShownViewMode = Exclude<BoardViewMode, "classic">;
+export const shownViewMode = (mode: BoardViewMode): ShownViewMode => mode === "classic" ? "inbox" : mode;

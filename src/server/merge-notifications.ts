@@ -1,5 +1,6 @@
 // Adapted from paseo-coordinator-board server/merge-notifications.ts @ 2e9d128. The notice goes through
-// fleet.deliver as mail from the board's own terminal (Paseo's sourceAgentId "plugin:coordinator-board").
+// fleet.deliver from the board (Paseo's sourceAgentId "plugin:coordinator-board"): to a chat as mail from
+// the board's own terminal, to a terminal as input under the board header.
 // A send Orca refused left nothing behind, so a busy recipient's row goes back to queued and any other
 // refusal makes it unavailable; an unconfirmed one is never resent.
 import { createHash } from "node:crypto";
