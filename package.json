@@ -9,6 +9,8 @@
     "url": "https://github.com/hseunghwan/orca-coordinator-board.git"
   },
   "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
     "typecheck": "tsc -p .",
     "test": "orca plugin test .",
     "check": "orca plugin check .",
@@ -16,6 +18,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
-    "typescript": "^5.9.3"
+    "esbuild": "^0.25.12",
+    "typescript": "^5.9.3",
+    "zod": "^4.6.7"
   }
 }

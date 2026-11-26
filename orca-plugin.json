@@ -9,7 +9,7 @@
   },
   "execution": "trusted-worker",
   "pluginApi": 1,
-  "main": "src/worker.ts",
+  "main": "dist/worker.mjs",
   "contributes": {
     "panels": [
       {
@@ -27,7 +27,7 @@
         "extensions": [
           ".coordinator-board"
         ],
-        "entry": "src/dashboard/main.ts",
+        "entry": "dist/dashboard.js",
         "frame": "isolated"
       }
     ],
