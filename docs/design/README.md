@@ -66,6 +66,10 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 - 짝지은 환경 하나는 `orca agent list --environment <id> --json`에 약 1.1초 만에 에이전트 8개를 돌려줬다. 행의 키는 `orcaSessionId kind agent state worktreeId workspace hostId paneKey title lastAssistantMessage updatedAt`이고, 이 기기의 목록과 달리 `repo`가 없었다. 다른 환경(WSL)은 0.6초 만에 `remote_runtime_unavailable`로 거절했다. 원격 세션은 `worktreeId`의 저장소 id가 이 기기 프로젝트와 같을 때만 프로젝트에 붙는다.
 - 살아 있는 코디네이터를 거치는 배정은 아직 보내지 않았다. 로드된 개발 플러그인은 `feat/paseo-parity` 작업 트리의 0.5.0이고, `node scripts/probe-dispatch.mjs check`가 코디네이터(터미널, `done`)와 대상 워크스페이스는 찾았지만 카탈로그에 Haiku가 없다고 보고했다(이 브랜치 코드가 아직 로드되지 않았다는 뜻). 작업 요청 하나는 이 코드가 로드된 뒤 `probe-dispatch.mjs send`로 보낸다.
 
+- 작업자 배정 전체 경로(2026-11-26, 0.6.0): 코디네이터가 `coordinator-board plan`과 `assign`을 실행해 haiku 작업자 하나를 adf-langflow에 띄웠다. 실행은 한 번이었고(`launches: 1`), 모드는 `auto`, 메타데이터(requestKey, grade D, parent 코디네이터, reports)가 남았다. 작업자는 "준비됨"만 답했고 시험 뒤 닫았다.
+- 훅이 PATH에 붙인 bin 폴더는 에이전트 프로세스에 닿지 않는다. 훅을 고친 뒤 새로 뜬 작업자 `claude.exe`도 PATH 키는 `PATH` 하나이고 bin 폴더가 없다. `CB_*` 변수는 들어온다. Claude의 Bash 도구가 띄운 `bash.exe`에는 `CB_*`도 없다. CLI는 자기 위치에서 pipe 이름을 계산하므로 절대 경로로 부르면 동작한다. 그래서 charter의 절대 경로가 실제 경로다.
+- 코디네이터 셸에서 실행한 `orca agent launch`로 띄운 작업자의 `parentPaneKey`는 `null`이었다. Orca 화면에 "코디네이터가 넘김"으로 묶이지 않는다. 보드는 부모를 자기 저장소에 기록한다.
+
 ## 확인할 것
 
 - 코디네이터 셸에서 돌린 `orca agent launch`가 Orca 화면에 코디네이터가 넘긴 것으로 나오는가, 새 작업자에게 훅의 작업자 권한 인자와 PATH의 bin이 들어가는가(`probe-dispatch.mjs send`, `verify`, `scripts/probe-path.mjs --match <표식>`).
