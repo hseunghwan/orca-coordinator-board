@@ -33,6 +33,8 @@ export function fakeOrca(sessions: FakeSession[]) {
     loseAnswer: false,
     /** The text never lands. */
     dropText: false,
+    /** Called before each worktree ps answer, as Orca's state can change between two reads. */
+    beforePs: () => {},
     /** Called as the write starts, before the text lands. */
     onWrite: (_args: readonly string[]) => {}
   }
@@ -67,7 +69,10 @@ export function fakeOrca(sessions: FakeSession[]) {
   const runner: Runner = async (args) => {
     const verb = args.slice(0, 2).join(' ')
     const flag = (name: string) => args[args.indexOf(name) + 1]
-    if (verb === 'worktree ps') return ps()
+    if (verb === 'worktree ps') {
+      behavior.beforePs()
+      return ps()
+    }
     if (verb === 'repo list') return ok({ repos: [...new Set(sessions.map((s) => s.project ?? 'acme'))].map((id) => ({ id, path: '/w/' + id, displayName: id })) })
     if (verb === 'agent read') {
       const id = args[2].replace('orca_session_id:', '')

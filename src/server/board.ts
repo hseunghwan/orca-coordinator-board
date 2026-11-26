@@ -1,18 +1,21 @@
-// Adapted from paseo-coordinator-board index.server.ts @ 2e9d128: the read RPCs only (snapshot, decision
-// count, readiness, scope). Clarifications, board facts, tracked decisions, merge notices, coordinator
-// tools and every send come with sending, so their parts of the snapshot are left out for now.
+// Adapted from paseo-coordinator-board index.server.ts @ 2e9d128: the snapshot, decision count, readiness
+// and scope, and the session sends (board.send-decision, board.ask-clarification) through fleet.deliver.
+// Board facts, tracked decisions, merge notices and coordinator tools come later, so their parts are left out.
 import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, PluginServerContext } from "../orca";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
 import { boardReadiness } from "../paseo/shared/readiness";
 import { decisionCount, displayLane } from "../paseo/shared/decision-count";
+import { sendDecision } from "../paseo/shared/decision-actions";
+import { askClarification, sourceQuestion } from "../paseo/shared/clarifications";
 import { boardDecisionCount, boardScope, boardSnapshot, type Note, type SessionRow } from "../paseo/shared/contract";
 import { SnapshotReads } from "../paseo/server/snapshot-reads";
 import { NoteStore } from "../paseo/server/notes";
 import { setCoordinator, PreferenceStore } from "../paseo/server/preferences";
 import { catalogProjects, discoverSessions, liveSelection } from "./discovery";
-import { ConversationReader } from "./conversation";
-import { decorateDecision } from "./decisions";
+import { ConversationReader, excerpt } from "./conversation";
+import { decorateDecision, DecisionSender } from "./decisions";
+import { ClarificationSender, clarificationHistory, restoreClarifiedDecision } from "./clarifications";
 import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } from "./session-links";
 import { ProjectPullRequests } from "./prs";
 
@@ -32,6 +35,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const prefs = new PreferenceStore(join(dataDir, "scope.json"));
   const reader = new ConversationReader();
   const prs = new ProjectPullRequests(prefs, pulls);
+  const decisions = new DecisionSender(prefs, notes, reader, fleet);
   let decisionTitles: string[] = [];
 
   server.handle(boardReadiness, async () => {
@@ -54,7 +58,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     const latest = prefs.read();
     const visible = sessions.filter(row => isCurrentMembership(row, latest));
     const visibleNotes = notes.visible(new Set(visible.map(s => s.id)));
-    for (const row of visible) decorateDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
+    for (const row of visible) {
+      decorateDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
+      restoreClarifiedDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
+    }
     // A deleted project stays in the saved selection so it returns if restored, but shows nothing meanwhile.
     const selected = liveSelection(latest.projects, catalogProjects(await catalogRead) && new Set(choices.keys()));
     const pullRequests = {
@@ -88,8 +95,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       entry.recipientState = target.lane === "running" ? "running" : target.status === "idle" || target.status === "closed" || target.status === "error" ? target.status : "unknown";
     }
     const replyHistory = activity.sort((a,b) => b.at.localeCompare(a.at));
+    const clarifications = clarificationHistory(prefs, targets, evidence);
     decisionTitles = previewTitles(visible, visibleNotes);
-    return { sessions: visible, notes: visibleNotes, pullRequests, replyHistory,
+    return { sessions: visible, notes: visibleNotes, pullRequests, replyHistory, ...(clarifications.length ? { clarifications } : {}),
       projects: [...choices.values()].map(p => ({ ...p, selected: selected.has(p.id) })), coordinator: latest.coordinator };
   }
   async function buildSessionView(paseo: Sdk, catalog: Awaited<ReturnType<Sdk["projects"]["list"]>>,
@@ -110,6 +118,25 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       const observed = await reader.read(paseo, coordinatorRow).catch(() => null);
       if (observed) evidence.set(coordinatorRow.id, observed);
     }
+    const clarifying = new Set(Object.values(scope.clarifications).flatMap(entry => {
+      if (entry.status === "pending" && (entry.card.projectId === null ? scope.projects.length : scope.projects.includes(entry.card.projectId))) {
+        return [entry.recipientId];
+      }
+      const original = sourceQuestion(entry.card);
+      return original && entry.savedDecision && original.version !== scope.answers[original.sessionId]?.version
+        ? [entry.recipientId] : [];
+    }));
+    // A running recipient may already have accepted a clarification, even
+    // though the regular reader skips its timeline until the turn finishes.
+    for (const row of sessions) {
+      if (!clarifying.has(row.id) || evidence.has(row.id) || row.nativePending || row.status === "closed") continue;
+      try {
+        const page = await paseo.agents.ref(row.id).timeline.refetch({ direction: "tail", projection: "projected", limit: 48 });
+        evidence.set(row.id, excerpt(page));
+      } catch {
+        // Fall back to Orca's current state when the transcript is unavailable.
+      }
+    }
     return { choices, sessions, evidence, coordinatorRow };
   }
   const reads = new SnapshotReads<Awaited<ReturnType<typeof buildSnapshot>>>(() => {
@@ -117,6 +144,26 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     return JSON.stringify([projects, sessionLinks, coordinator, projectRepositories]);
   }, decisionCount);
   const invalidateCount = () => reads.invalidate();
+  server.handle(sendDecision, async (input, { paseo }) => {
+    const result = await decisions.send(paseo, input);
+    invalidateCount();
+    return result;
+  });
+  const clarifications = new ClarificationSender(prefs, fleet, (sdk, card) => buildSnapshot(sdk, card.kind === "pull"), (card, view) => {
+    const original = sourceQuestion(card);
+    if (original) {
+      const latest = notes.visible(new Set([original.sessionId]))[original.sessionId];
+      if (latest?.revision !== view.notes[original.sessionId]?.revision) return false;
+    }
+    return card.kind !== "tracked";
+  });
+  server.handle(askClarification, async (input, { paseo }) => {
+    try {
+      return await clarifications.send(paseo, input);
+    } finally {
+      invalidateCount();
+    }
+  });
   server.handle(boardSnapshot, (input, { paseo }) => {
     if (input.fresh) fleet.invalidate();
     return reads.read(() => buildSnapshot(paseo), input.fresh);

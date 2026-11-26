@@ -75,8 +75,32 @@ function fingerprint(world: World): string {
 
 const openSession = z.object({ sessionId: z.string().min(1).max(256) })
 
+// A multi-line text typed as is would submit at its first line; agent TUIs take a bracketed paste whole,
+// as orca terminal send does for them.
+const PASTE_START = '\x1b[200~'
+const PASTE_END = '\x1b[201~'
+const FOCUS_TRIES = 20
+const FOCUS_WAIT_MS = 100
+
 export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void {
-  const fleet: Fleet = createFleet(deps.cli)
+  // Orca types only into terminals of the focused workspace. Only a person pressing send gets here
+  // (fleet.deliver checks), and the window moves to the session they answered: v0.1's behavior.
+  async function focusAndType(terminalId: string, text: string): Promise<boolean> {
+    const inFocus = async () => {
+      const context = await orca.host.call('workspace.readContext', {}).catch(() => null)
+      return !!context?.terminals.some((terminal) => terminal.id === terminalId)
+    }
+    if (!(await inFocus())) {
+      const moved = await orca.host.call('terminal.focus', { terminalId }).catch(() => ({ focused: false }))
+      if (!moved.focused) return false
+      let shown = false
+      for (let tries = 0; tries < FOCUS_TRIES && !(shown = await inFocus()); tries += 1) await new Promise((done) => setTimeout(done, FOCUS_WAIT_MS))
+      if (!shown) return false
+    }
+    const typed = text.includes('\n') ? PASTE_START + text + PASTE_END : text
+    return (await orca.host.call('terminal.sendText', { terminalId, text: typed, enter: true })).accepted
+  }
+  const fleet: Fleet = createFleet(deps.cli, Date.now, { dataDir: deps.dataDir, focusAndType })
   const board = contribute(rpcServer((name, handler) => orca.panels.handle(name, handler), fleet.paseo), fleet, deps.dataDir, deps.pulls)
   let locale = 'en'
   let stopped = false
