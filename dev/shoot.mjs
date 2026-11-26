@@ -125,6 +125,16 @@ const shots = [
   ["ledger-progress-dark-narrow", "theme=dark&ledger=1&coord=1" + press("진행"), 520, 2400],
   ["ledger-settings-light-wide", "theme=light&ledger=1&coord=1" + press("설정", "프로젝트별 GitHub"), 1280, 1700],
   ["ledger-settings-dark-narrow", "theme=dark&ledger=1&coord=1&repo=fail" + press("설정", "프로젝트별 GitHub", "자동 답장 꺼짐", "저장소 연결"), 520, 2200],
+  ["ops-settings-light-wide", "theme=light&coord=1" + press("설정"), 1280, 3000],
+  ["ops-settings-dark-wide", "theme=dark&coord=1" + press("설정"), 1280, 3000],
+  ["ops-settings-light-narrow", "theme=light&coord=1" + press("설정"), 520, 4600],
+  ["ops-settings-dark-narrow", "theme=dark&coord=1" + press("설정"), 520, 4600],
+  ["ops-codex-mode-dark-wide", "theme=dark&coord=1" + press("설정", "#codex · 새 작업 세션 권한"), 1280, 3000],
+  ["ops-codex-restored-light-narrow", "theme=light&coord=1" + press("설정", "#codex · 새 작업 세션 권한", "권장 모드 복원"), 520, 4600],
+  ["ops-route-edit-light-wide", "theme=light&coord=1" + press("설정", "B · 높음", "claude / opus", "xhigh", "후보에 추가"), 1280, 3200],
+  ["ops-route-saved-dark-narrow", "theme=dark&coord=1" + press("설정", "B · 높음", "후보 제외", "배정표 저장"), 520, 4600],
+  ["ops-conflict-dark-wide", "theme=dark&coord=1&ops=conflict" + press("설정", "사용량 기반 자동 배정"), 1280, 3000],
+  ["ops-settings-en-light-wide", "theme=light&coord=1&lang=en" + press("Settings"), 1280, 3000],
   ["ledger-merge-preview-en-dark-wide", "theme=dark&ledger=1&coord=1&lang=en" + press("설치 안내 이동", "Merge on board"), 1280, 1000],
 ];
 const only = process.argv[2] ? new RegExp(process.argv[2]) : null;

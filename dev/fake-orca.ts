@@ -5,7 +5,8 @@
 // coord=1 starts with a coordinator; fail=1 makes coordinator requests and setup fail.
 // ledger=1 adds the phase 5 ledger records; resolve=<status> answers every ledger reply with that status,
 // merge=<blocked|unconfirmed|changed> answers the merge preview or confirm that way, pull=<OPEN|CLOSED|MERGED|UNKNOWN>
-// is the lifecycle a merge record reads, repo=fail makes repository settings fail.
+// is the lifecycle a merge record reads, repo=fail makes repository settings fail, ops=conflict makes every
+// provider, usage and routing save fail with a revision conflict.
 import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
@@ -13,7 +14,8 @@ import { boardSnapshot } from "../src/paseo/shared/contract";
 import { confirmPullRequestMerge, previewPullRequestMerge, readPullLifecycle, setProjectRepository } from "../src/paseo/shared/prs";
 import { cancelQueuedReply, resolveTrackedDecision } from "../src/paseo/shared/tracked-decisions";
 import { sendDecision } from "../src/paseo/shared/decision-actions";
-import { askDigest, requestWork } from "../src/paseo/shared/operations";
+import { askDigest, requestWork, setProviderInclusion, setWorkerMode, updateRouting } from "../src/paseo/shared/operations";
+import { setUsageRouting } from "../src/paseo/shared/usage-routing";
 import { requestRecommendation } from "../src/paseo/shared/recommendation";
 import { startCoordinator } from "../src/dashboard/rpc";
 import { coordinatorSession, fixtureLedger, fixtureOperations, fixtureSnapshot } from "./fixture";
@@ -48,6 +50,8 @@ if (params.get("ledger")) {
 const resolveAs = params.get("resolve");
 const mergeAs = params.get("merge");
 let factReplies = false;
+const ops = fixtureOperations();
+const stale = (expected: number) => { if (params.get("ops") === "conflict" || expected !== ops.revision) throw new Error("revision_conflict: 다른 곳에서 설정이 바뀌었습니다. 새로 고친 뒤 다시 저장해 주세요."); ops.revision++; };
 const sha = (seed: string) => seed.repeat(40).slice(0, 40);
 const failing = !!params.get("fail");
 const refuse = () => { throw Object.assign(new Error("delivery_uncertain: 코디네이터 세션이 작업 중이라 보내지 않았습니다."), { code: "delivery_uncertain" }); };
@@ -72,7 +76,38 @@ const handlers: Record<string, (input: any) => unknown> = {
     }
     return { ok: true };
   },
-  "board.operations": () => fixtureOperations(),
+  "board.operations": () => structuredClone(ops),
+  "board.set-worker-mode": async (raw: unknown) => {
+    const input = setWorkerMode.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    if (input.modeId === null) delete ops.workerModeOverrides[input.provider];
+    else ops.workerModeOverrides[input.provider] = input.modeId;
+    return { ok: true };
+  },
+  "board.set-provider-inclusion": async (raw: unknown) => {
+    const input = setProviderInclusion.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    const provider = ops.providers.find(row => row.id === input.provider);
+    if (provider) provider.included = input.included;
+    return { ok: true };
+  },
+  "board.set-usage-routing": async (raw: unknown) => {
+    const input = setUsageRouting.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    ops.usageRouting = input.enabled;
+    return { ok: true };
+  },
+  "board.update-routing": async (raw: unknown) => {
+    const input = updateRouting.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    if (input.candidates.length) ops.routing[input.grade] = input.candidates;
+    else delete ops.routing[input.grade];
+    return { ok: true };
+  },
   "board.setup-coordinator": async (raw: unknown) => {
     const input = startCoordinator.input.parse(raw);
     await settle();

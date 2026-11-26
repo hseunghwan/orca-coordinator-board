@@ -1,23 +1,27 @@
 /** @jsxImportSource react */
 // Paseo's OperationsPanel (client/operations.tsx) on Orca. Normal mode is the coordinator composer, or the
-// setup screen while the board has no coordinator; settings mode holds what Orca can change about it.
-// Photos arrive in phase 6. Providers, usage
-// and model routing have no settings page on Orca yet; the setup line still shows the route the worker picks.
+// setup screen while the board has no coordinator; settings mode holds providers, usage, routing and the
+// coordinator replacement.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { z } from "zod";
 import { explainEmptyRoute } from "../paseo/client/route-options";
 import { resolveRoute, type RouteChoice } from "../paseo/shared/dispatch";
-import { askDigest, requestWork } from "../paseo/shared/operations";
+import { askDigest, requestWork, setProviderInclusion, setWorkerMode, updateRouting } from "../paseo/shared/operations";
+import { setUsageRouting } from "../paseo/shared/usage-routing";
 import type { Translate } from "../paseo/view-types";
 import { noRetry, retryKey, type RetryKey } from "./request-key";
 import { FactReplyControls } from "./fact-reply-controls";
+import { ProviderSettings } from "./providers";
+import { RouteEditor } from "./route-editor";
+import { UsageRouting } from "./usage-routing";
 import { call, operations, startCoordinator } from "./rpc";
 import { SendButton, SendTextInput } from "./send-input";
 import { Button, column, row, SessionChip, space } from "./ui/controls";
 import { useBoardLanguage } from "./ui/language";
 
 type Operations = z.output<typeof operations.output>;
-type Feedback = { tone: "ok" | "danger"; text: string } | null;
+type Feedback = { tone: "ok" | "danger"; text: string; area: Area } | null;
+type Area = "provider" | "usage" | "routing" | "coordinator";
 type Delivery = "work" | "digest";
 
 export type OperationsPanelProps = {
@@ -55,17 +59,17 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
   const generation = useRef(0);
   const delivery = useRef<Record<Delivery, RetryKey>>({ work: noRetry, digest: noRetry });
 
-  const refresh = useCallback(async (setup: boolean) => {
+  const refresh = useCallback(async (setup: boolean, clearError = true) => {
     const token = ++generation.current;
     setLoading(true);
     try {
       const next = await call(operations, setup ? { view: "setup" } : {});
       if (live.current && token === generation.current) {
         setData(next);
-        setFeedback(prior => prior?.tone === "danger" ? null : prior);
+        if (clearError) setFeedback(prior => prior?.tone === "danger" ? null : prior);
       }
     } catch (e) {
-      if (live.current && token === generation.current) setFeedback({ tone: "danger", text: message(e) });
+      if (live.current && token === generation.current) setFeedback({ tone: "danger", text: message(e), area: "provider" });
     } finally {
       if (live.current && token === generation.current) setLoading(false);
     }
@@ -82,17 +86,17 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
   }, [coordinator]);
   useEffect(() => { setConfirm(false); setFeedback(null); }, [settings, language]);
 
-  async function act<T>(run: () => Promise<T>, done: string): Promise<T | null> {
+  async function act<T>(run: () => Promise<T>, done: string, area: Area = "coordinator"): Promise<T | null> {
     if (pending.current) return null;
     pending.current = true;
     setBusy(true);
     setFeedback(null);
     try {
       const value = await run();
-      if (live.current) { refreshBoard(); setFeedback({ tone: "ok", text: done }); }
+      if (live.current) { refreshBoard(); setFeedback({ tone: "ok", text: done, area }); }
       return value;
     } catch (e) {
-      if (live.current) setFeedback({ tone: "danger", text: message(e) });
+      if (live.current) setFeedback({ tone: "danger", text: message(e), area });
       return null;
     } finally {
       pending.current = false;
@@ -140,6 +144,12 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
   }
 
   const feedbackNode = feedback && <p role="status" className={feedback.tone} style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{feedback.text}</p>;
+  const feedbackIn = (area: Area) => feedback?.area === area && feedbackNode;
+  async function saveThen(run: () => Promise<unknown>, done: string, area: Area) {
+    const result = await act(run, done, area);
+    if (live.current) await refresh(false, !!result);
+    return !!result;
+  }
   const startPicker = startIn && <label style={{ ...row, flexWrap: "nowrap", gap: space[2], minWidth: 0 }}>
     <span className="muted" style={{ whiteSpace: "nowrap" }}>{t("시작할 워크스페이스", "Start in")}</span>
     <select className="select" value={startIn.id} disabled={busy || loading} onChange={event => setChosenWorkspace(event.target.value)}>
@@ -157,6 +167,30 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
     <Section title={t("사이드바 고정", "Sidebar pinning")}>
       <p className="muted">{t("Orca는 플러그인이 워크스페이스를 사이드바에 고정하게 하지 않아 이 설정이 없습니다.", "Orca does not let plugins pin workspaces in the sidebar, so this setting is unavailable.")}</p>
     </Section>
+    <Section title={t("실행기", "Providers")} aside={<span style={{ marginLeft: "auto" }}>
+      <Button size="sm" label={loading ? t("실행기 조회 중…", "Loading providers…") : t("실행기·모델 새로 고침", "Refresh providers and models")} disabled={loading || busy} onPress={() => void refresh(false)} />
+    </span>}>
+      <p className="muted">{t("새로 발견한 실행기는 기본으로 포함됩니다. 연결된 모델이 있는 실행기에 작업을 배정합니다.", "New providers are included by default. Providers with available models can receive assignments.")}</p>
+      <p className="muted sm">{t("모델 목록은 제안입니다. Orca는 플러그인에 실행기의 모델 목록을 알려 주지 않아, 실행기가 실제로 받는 모델과 다를 수 있습니다.", "Model lists are suggestions. Orca does not give plugins a provider's model list, so a provider may accept different models.")}</p>
+      {data && <ProviderSettings providers={data.providers} catalog={data.catalog} busy={busy || loading} overrides={data.workerModeOverrides}
+        setMode={(provider, modeId) => void saveThen(() => call(setWorkerMode, { provider, modeId, expectedRevision: data.revision }),
+          t("다음 작업 세션의 권한을 저장했습니다.", "Saved permissions for new worker sessions."), "provider")}
+        change={(provider, included) => void saveThen(() => call(setProviderInclusion, { provider, included, expectedRevision: data.revision }),
+          included ? t("이 실행기를 새 작업 배정에 포함했습니다.", "Provider included in new assignments.") : t("이 실행기를 새 작업 배정에서 제외했습니다.", "Provider excluded from new assignments."), "provider")} />}
+      {feedbackIn("provider")}
+    </Section>
+    {data && <Section title={t("계정별 남은 사용량", "Remaining account usage")}>
+      <UsageRouting providers={data.providers} reports={data.usage ?? []} supplemental={data.displayUsage} enabled={data.usageRouting ?? false} busy={busy || loading || !data.usage}
+        onToggle={() => void saveThen(() => call(setUsageRouting, { enabled: !data.usageRouting, expectedRevision: data.revision }),
+          t("사용량 기반 배정 설정을 저장했습니다.", "Saved the usage routing preference."), "usage")} />
+      {feedbackIn("usage")}
+    </Section>}
+    <Section title={t("모델 배정", "Model routing")}>
+      <p className="muted">{t("추천 설정은 연결된 실행기에서 사용할 수 있는 모델을 고릅니다. 직접 정하려면 후보를 원하는 순서대로 저장하세요.", "Recommended settings use available models from connected providers. To customize a grade, save its models in order of preference.")}</p>
+      {data && <RouteEditor data={data} busy={busy || loading} save={(grade, candidates, expectedRevision) => saveThen(() => call(updateRouting, { grade, candidates, expectedRevision }),
+        grade === "M" ? t("운영 세션 모델을 저장했습니다. 다음 생성 또는 교체부터 적용됩니다.", "Coordinator model saved for the next creation or replacement.") : t("배정표를 저장했습니다. 다음 배정부터 적용됩니다.", "Routing saved for the next assignment."), "routing")} />}
+      {feedbackIn("routing")}
+    </Section>
     {configured && coordinator && <Section title={t("운영 세션 교체", "Replace coordinator")}>
       <p className="muted">{t("새 코디네이터를 만들 때 쓸 모델", "Model for the next coordinator")} · {loading ? t("조회 중…", "Loading…") : routeName(model, t)}</p>
       {!loading && model && <p className="muted">{modeText}</p>}
@@ -168,7 +202,7 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
           disabled={busy || (!confirm && (loading || !model || !mode))} onPress={() => setConfirm(!confirm)} />
         {confirm && <Button label={t("새 세션으로 교체", "Switch to new session")} disabled={busy || loading || !model || !mode} onPress={connect} />}
       </div>
-      {feedbackNode}
+      {feedbackIn("coordinator")}
     </Section>}
   </div>;
 

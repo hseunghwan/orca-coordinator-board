@@ -132,11 +132,42 @@ export function fixtureLedger() {
 export const coordinatorSession = { ...base("s-coord", "billing", "코디네이터"), lane: "idle" as const, status: "idle", activityAt: minutes(2), detail: "다음 요청 대기" };
 
 export function fixtureOperations() {
+  const later = (n: number) => new Date(Date.now() + n * 60_000).toISOString();
+  const auto = { id: "auto", label: "자동 승인" };
   return {
-    catalog: [{ provider: "claude", model: "opus", label: "Claude Opus", efforts: ["high", "xhigh"], isDefault: true, coordinatorMode: { id: "auto", label: "자동 승인" } }],
-    providers: [{ id: "claude", label: "Claude Code", available: true, included: true, status: "ready", modelCount: 1 }],
-    coordinatorMode: { id: "auto", label: "자동 승인" },
-    routing: {},
+    catalog: [
+      { provider: "claude", model: "opus", label: "Claude Opus", efforts: ["high", "xhigh"], isDefault: true, coordinatorMode: auto },
+      { provider: "claude", model: "sonnet", label: "Claude Sonnet", efforts: ["medium", "high"], isDefault: false, coordinatorMode: auto },
+      { provider: "claude", model: "haiku", label: "Claude Haiku", efforts: [], isDefault: false, coordinatorMode: auto },
+      { provider: "codex", model: "gpt-5.5", label: "GPT-5.5", efforts: ["low", "medium", "high"], isDefault: true, coordinatorMode: { id: "auto-review", label: "자동 검토" } },
+      { provider: "codex", model: "gpt-5.5-mini", label: "GPT-5.5 mini", efforts: ["low", "medium"], isDefault: false, coordinatorMode: { id: "auto-review", label: "자동 검토" } },
+      { provider: "opencode", model: "qwen-coder", label: "Qwen Coder", efforts: [], isDefault: true, coordinatorMode: null },
+    ],
+    providers: [
+      { id: "claude", label: "Claude Code", available: true, included: true, status: "ready", modelCount: 3,
+        workerModes: [{ id: "default", label: "기본" }, { id: "auto", label: "자동 승인" }, { id: "bypassPermissions", label: "권한 건너뛰기" }] },
+      { id: "codex", label: "Codex", available: true, included: true, status: "ready", modelCount: 2,
+        workerModes: [{ id: "read-only", label: "읽기 전용" }, { id: "auto-review", label: "자동 검토" }, { id: "full-access", label: "Full Access" }] },
+      { id: "opencode", label: "OpenCode", available: true, included: false, status: "ready", modelCount: null },
+      { id: "gemini", label: "Gemini CLI", available: false, included: true, status: "unavailable", modelCount: null },
+    ],
+    workerModeOverrides: { codex: "full-access" } as Record<string, string>,
+    usage: [
+      { providerId: "claude", label: "Claude Code", plan: "Max", fetchedAt: minutes(3), status: "available",
+        windows: [{ id: "5h", label: "5시간 한도", remainingPct: 62, resetsAt: later(140), summary: true },
+          { id: "week", label: "주간 한도", remainingPct: 8, resetsAt: later(60 * 50), summary: false }], balances: [] },
+      { providerId: "codex", label: "Codex", plan: "Pro", fetchedAt: minutes(120), status: "available",
+        windows: [{ id: "5h", label: "5시간 한도", remainingPct: 40, resetsAt: minutes(10), summary: true },
+          { id: "week", label: "주간 한도", remainingPct: 71, resetsAt: later(60 * 90), summary: false }], balances: [] },
+      { providerId: "gemini", label: "Gemini CLI", plan: null, fetchedAt: null, status: "error", issue: "login", windows: [], balances: [] },
+    ],
+    displayUsage: [
+      { providerId: "opencode", label: "OpenCode", plan: null, fetchedAt: minutes(5), status: "available", windows: [],
+        balances: [{ id: "credit", label: "크레딧", remaining: 18.5, limit: 50, unit: "USD", resetsAt: null }] },
+    ],
+    usageRouting: true,
+    coordinatorMode: auto,
+    routing: { B: [{ provider: "claude", model: "sonnet", effort: "high" }, { provider: "codex", model: "gpt-5.5", effort: "medium" }, { provider: "gemini", model: "pro", effort: null }] } as Record<string, { provider: string; model: string; effort: string | null }[]>,
     revision: 1,
     workspaces: [
       { id: "w-billing-main", projectId: "billing", title: "main", focused: true },
