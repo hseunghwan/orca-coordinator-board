@@ -160,6 +160,10 @@ const shots = [
   ["links-more-dark-wide", "theme=dark" + press("설정", "다른 프로젝트의 세션", "세션 더 보기"), 1280, 1800],
   ["links-fail-light-wide", "theme=light&links=fail" + press("설정", "다른 프로젝트의 세션"), 1280, 1000],
   ["links-conflict-dark-wide", "theme=dark&links=conflict" + press("설정", "다른 프로젝트의 세션", "#오프라인 동기화", "#billing-api", "이 프로젝트에 연결"), 1280, 1500],
+  ["hosts-light-wide", "theme=light&hosts=1" + press("설정"), 1280, 1100],
+  ["hosts-dark-narrow", "theme=dark&hosts=1" + press("설정"), 520, 1400],
+  ["hosts-fail-light-narrow", "theme=light&hosts=fail" + press("설정"), 520, 1400],
+  ["hosts-unknown-dark-wide", "theme=dark" + press("설정"), 1280, 1100],
   ["ledger-merge-preview-en-dark-wide", "theme=dark&ledger=1&coord=1&lang=en" + press("설치 안내 이동", "Merge on board"), 1280, 1000],
 ];
 const only = process.argv[2] ? new RegExp(process.argv[2]) : null;

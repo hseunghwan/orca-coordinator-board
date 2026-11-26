@@ -7,7 +7,8 @@
 // merge=<blocked|unconfirmed|changed> answers the merge preview or confirm that way, pull=<OPEN|CLOSED|MERGED|UNKNOWN>
 // is the lifecycle a merge record reads, repo=fail makes repository settings fail, ops=conflict makes every
 // provider, usage and routing save fail with a revision conflict, photo=fail makes stored reply photos unreadable,
-// links=fail makes the session link list fail and links=conflict makes every link change fail.
+// links=fail makes the session link list fail and links=conflict makes every link change fail. hosts=1 answers
+// board.hosts with three hosts and hosts=fail fails it; without it the method is unknown, like an older worker.
 import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
@@ -221,6 +222,15 @@ const handlers: Record<string, (input: any) => unknown> = {
     entry.targetProjectId = input.targetProjectId;
     return { ok: true };
   },
+  ...(params.get("hosts") && { "board.hosts": async () => {
+    await settle();
+    if (params.get("hosts") === "fail") throw new Error("unavailable");
+    return { hosts: [
+      { id: "local", label: "작업용 데스크톱", status: "online", current: true },
+      { id: "laptop", label: "노트북", status: "offline", current: false },
+      { id: "build", label: "빌드 서버", status: "connecting", current: false },
+    ] };
+  } }),
   "board.fact-reply-settings": (raw: unknown) => { factReplySettings.input.parse(raw); return { enabled: factReplies }; },
   "board.set-fact-auto-reply": async (raw: unknown) => {
     factReplies = setFactAutoReply.input.parse(raw).enabled;

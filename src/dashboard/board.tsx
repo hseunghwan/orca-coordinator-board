@@ -33,6 +33,7 @@ import { SessionProgress } from "./session-progress";
 import { Button, column, Disclosure, fontSize, row, space } from "./ui/controls";
 import { BoardLanguageSetting, useBoardLanguage } from "./ui/language";
 import { BoardViewSetting, BoardViewSwitch, useBoardViewMode } from "./ui/view-mode-setting";
+import { BoardHosts } from "./hosts";
 import { InboxView } from "./view-inbox";
 import { FocusView } from "./view-focus";
 import { MatrixView } from "./view-matrix";
@@ -309,6 +310,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
       {settings && snapshot && !!configured && <SessionLinks projects={snapshot.projects} onChange={onRefresh} />}
       {settings && snapshot?.pullRequests && !!configured && <PullRequestSettings view={snapshot.pullRequests}
         names={new Map(snapshot.projects.map(project => [project.id, project.title]))} refresh={onRefresh} />}
+      {settings && <BoardHosts />}
       {operationsNode}
       {settings && snapshot && <div style={{ ...column, gap: space[2], alignItems: "flex-start" }}>
         <Button label={pickSession ? t("기존 세션 목록 닫기", "Close session list") : t("기존 세션에서 코디네이터 지정", "Choose an existing coordinator session")}
