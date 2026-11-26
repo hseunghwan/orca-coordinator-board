@@ -84,6 +84,50 @@ export function fixtureSnapshot() {
   };
 }
 
+// Phase 5 ledger records, added when a harness page asks with ledger=1: questions, a queued reply, merge
+// records, a personal check, a reply template and a ledger owned by a coordinator this board does not list.
+export function fixtureLedger() {
+  const record = (id: string, seed: string, fields: Record<string, unknown>) =>
+    ({ source: "coordinator", id, key: id, fingerprint: fingerprint(seed), matchedSessionId: null, matchedPull: null, since: minutes(90), ...fields });
+  return {
+    records: [
+      record("r-cache", "c", { projectId: "editor", projectTitle: "editor-app", title: "미리보기 캐시 정책을 정해 주세요", kind: "answer", where: "manager", urgency: "today",
+        ask: ["미리보기 캐시가 하루 3GB씩 늘어납니다."], why: ["지난주 디스크 경보가 두 번 울렸습니다."], risk: ["캐시를 줄이면 첫 미리보기가 2초 느려집니다."], steps: ["정책 결정", "설정 반영", "하루 지켜보기"],
+        qa: [{ q: "지금 캐시 크기는 얼마인가요?", a: "41GB입니다.", askedAt: minutes(80), answeredAt: minutes(75) }],
+        questions: [
+          { id: "q1", text: "캐시 보관 기간을 어떻게 할까요?", options: [
+            { key: "A", text: "7일", recommended: true, note: "대부분의 문서는 사흘 안에 다시 열립니다.", does: "7일 지난 미리보기를 지웁니다.", pros: "디스크가 일정하게 유지됩니다.", cons: "오래된 문서는 처음 열 때 느립니다." },
+            { key: "B", text: "30일", does: "30일 지난 미리보기를 지웁니다.", pros: "다시 만들 일이 거의 없습니다.", cons: "디스크 경보가 계속 날 수 있습니다." },
+          ] },
+          { id: "q2", text: "캐시에서 뺄 형식을 골라 주세요", multi: true, options: [
+            { key: "pdf", text: "PDF" }, { key: "video", text: "동영상", recommended: true }, { key: "raw", text: "RAW 사진" },
+          ] },
+        ] }),
+      record("r-queued", "d", { projectId: "editor", projectTitle: "editor-app", title: "번들 분석 결과를 어디에 남길까요?", kind: "answer", where: "session", sessionId: "s-bundle", urgency: "week",
+        queuedReply: { messageId: "00000000-0000-4000-8000-000000000011", recipientId: "s-bundle", answer: "분석 결과는 PR 설명에 표로 남겨 주세요.", imageCount: 0, stopped: false } }),
+      record("r-stopped", "e", { projectId: "docs", projectTitle: "docs-site", title: "검색 색인 로그를 지울까요?", kind: "cleanup", where: "session", sessionId: "s-search",
+        queuedReply: { messageId: "00000000-0000-4000-8000-000000000012", recipientId: "s-search", answer: "30일 지난 로그만 지워 주세요.", imageCount: 0, stopped: true } }),
+      record("r-merge", "f", { projectId: "docs", projectTitle: "docs-site", title: "설치 안내 이동 PR을 병합할까요?", kind: "merge", where: "human", urgency: "now",
+        mergeTarget: { repo: "acme/docs-site", number: 142 }, matchedPull: { repo: "acme/docs-site", number: 142 },
+        ask: ["https://github.com/acme/docs-site/pull/142 을 병합해 주세요."], recommend: ["squash로 병합하고 배포 확인을 맡깁니다."], why: ["검사 4건이 모두 통과했습니다."] }),
+      record("r-lifecycle", "0", { projectId: "billing", projectTitle: "billing-api", title: "결제 재시도 PR 병합 확인", kind: "merge", where: "manager",
+        mergeTarget: { repo: "acme/billing-api", number: 77 }, ask: ["보안 게이트를 통과하면 병합해 주세요."] }),
+      record("r-check", "1", { projectId: "docs", projectTitle: "docs-site", title: "배포된 문서 첫 화면을 직접 확인해 주세요", kind: "check", where: "human",
+        ask: ["모바일에서 메뉴가 겹치지 않는지 봐 주세요."] }),
+      record("r-template", "2", { projectId: "billing", projectTitle: "billing-api", title: "정산 배치 시간을 알려 주세요", kind: "other", where: "human",
+        howToAnswer: "정산 배치는 <시각>에 돌려 주세요." }),
+      record("r-owner", "3", { projectId: "billing", projectTitle: "billing-api", title: "환불 한도 상향 승인", kind: "approve", where: "manager", sourceCoordinatorId: "s-old-coord",
+        ask: ["한도를 건당 50만 원으로 올릴지 정해 주세요."] }),
+    ],
+    repositories: [
+      { projectId: "billing", repo: "acme/billing-api", mode: "manual", status: "unavailable" },
+      { projectId: "editor", repo: null, mode: "auto", status: "unmapped" },
+    ],
+    history: { key: "h-merge", status: "sent", title: "검색 결과 강조 색 바꾸기", projectId: "docs", at: minutes(20), recipientId: "s-coord",
+      pullMerge: { repo: "acme/docs-site", number: 139, status: "merged", mergeSha: "0123456789abcdef0123456789abcdef01234567", notification: { status: "queued", recipientId: "s-coord" } } },
+  };
+}
+
 // The coordinator joins the board only when a harness page asks for one.
 export const coordinatorSession = { ...base("s-coord", "billing", "코디네이터"), lane: "idle" as const, status: "idle", activityAt: minutes(2), detail: "다음 요청 대기" };
 
