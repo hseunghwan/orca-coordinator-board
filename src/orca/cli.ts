@@ -5,10 +5,24 @@ import { existsSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 import { z } from 'zod'
 
-/** Only reads for now. A write must never share a run, be cached or be retried, so it gets its own method later. */
 export type ReadVerb = 'worktree ps' | 'repo list' | 'agent read'
+/** Commands that send something. A write never shares a run, is never cached and never retried. */
+export type WriteVerb = 'terminal send' | 'orchestration send'
 
-const TIMEOUT_MS: Readonly<Record<ReadVerb, number>> = { 'worktree ps': 10_000, 'repo list': 10_000, 'agent read': 10_000 }
+// terminal send waits up to 10 s for the prompt to start a turn.
+const TIMEOUT_MS: Readonly<Record<ReadVerb | WriteVerb, number>> = {
+  'worktree ps': 10_000, 'repo list': 10_000, 'agent read': 10_000, 'terminal send': 30_000, 'orchestration send': 20_000
+}
+
+/**
+ * ok: Orca took it. refused: Orca answered with an error and offered no retry id, so nothing went out.
+ * ambiguous: the process timed out, died or printed no envelope, or Orca named a --retry-request id;
+ * the text may have landed.
+ */
+export type WriteResult =
+  | { kind: 'ok'; result: unknown }
+  | { kind: 'refused'; code: string | null; message: string }
+  | { kind: 'ambiguous'; message: string; retryRequest: string | null }
 export const MAX_PROCESSES = 4
 
 export class CliError extends Error {
@@ -99,7 +113,9 @@ export function execRunner(exe: string, env: Record<string, string>): Runner {
       (error, stdout) => {
         if (error && (error as { killed?: boolean }).killed) return reject(new CliError('orca did not answer in time', 'timeout'))
         if (stdout || !error) return resolve(stdout)
-        reject(new CliError(error.message, 'spawn_failed'))
+        const errno = (error as { code?: unknown }).code
+        // ENOENT and EACCES mean the process never started; anything else may have run part way.
+        reject(new CliError(error.message, errno === 'ENOENT' || errno === 'EACCES' ? 'spawn_failed' : 'exec_failed'))
       })
   })
 }
@@ -109,10 +125,31 @@ export interface OrcaCli {
   read<T>(verb: ReadVerb, args: readonly string[], parse: (result: unknown) => T, options?: { ttlMs?: number }): Promise<T>
   /** Drops cached values; runs in flight still finish. */
   forget(verb?: ReadVerb): void
+  /** Runs once, uncached and unshared. Never throws. */
+  write(verb: WriteVerb, args: readonly string[]): Promise<WriteResult>
+}
+
+export function writeOutcome(stdout: string): WriteResult {
+  try {
+    return { kind: 'ok', result: parseEnvelope(stdout) }
+  } catch (error) {
+    const { message, code } = error as CliError
+    if (code === 'unparseable') return { kind: 'ambiguous', message, retryRequest: null }
+    const retry = /--retry-request\s+([A-Za-z0-9_-]+)/.exec(message)
+    return retry ? { kind: 'ambiguous', message, retryRequest: retry[1] } : { kind: 'refused', code, message }
+  }
 }
 
 export function createCli(run: Runner | null, now: () => number = Date.now, maxProcesses = MAX_PROCESSES): OrcaCli {
   const cache = new Map<string, { verb: ReadVerb; expires: number; value: Promise<unknown> }>()
+  // Two callers may parse the same output into different shapes; they share a run only when they share a parser.
+  const parsers = new WeakMap<object, number>()
+  let parserCount = 0
+  const parserId = (parse: object) => {
+    let id = parsers.get(parse)
+    if (id === undefined) parsers.set(parse, (id = ++parserCount))
+    return id
+  }
   const queue: (() => void)[] = []
   let running = 0
 
@@ -132,7 +169,7 @@ export function createCli(run: Runner | null, now: () => number = Date.now, maxP
     read<T>(verb: ReadVerb, args: readonly string[], parse: (result: unknown) => T, options: { ttlMs?: number } = {}): Promise<T> {
       if (!run) return Promise.reject(new CliError('orca CLI not found', 'cli_unavailable'))
       const argv = [...verb.split(' '), ...args, '--json']
-      const key = JSON.stringify(argv)
+      const key = JSON.stringify(argv) + '#' + parserId(parse)
       const hit = cache.get(key)
       if (hit && hit.expires > now()) return hit.value as Promise<T>
       const entry = { verb, expires: Infinity, value: limited(() => run(argv, TIMEOUT_MS[verb])).then((stdout) => parse(parseEnvelope(stdout))) }
@@ -147,6 +184,15 @@ export function createCli(run: Runner | null, now: () => number = Date.now, maxP
     },
     forget(verb) {
       for (const [key, entry] of cache) if ((!verb || entry.verb === verb) && entry.expires !== Infinity) cache.delete(key)
+    },
+    async write(verb, args) {
+      if (!run) return { kind: 'refused', code: 'cli_unavailable', message: 'orca CLI not found' }
+      try {
+        return writeOutcome(await limited(() => run([...verb.split(' '), ...args, '--json'], TIMEOUT_MS[verb])))
+      } catch (error) {
+        const { message, code } = error as CliError
+        return code === 'spawn_failed' ? { kind: 'refused', code, message } : { kind: 'ambiguous', message, retryRequest: null }
+      }
     }
   }
 }
