@@ -1,32 +1,10 @@
 import { assert } from 'orca/testing'
 import { test } from 'vitest'
 import { translator } from './i18n'
-import type { AgentState, BoardView, SessionRow } from './model'
-import { ago, laneGroups, statusItem, waitingCounts, withExcludeLine, focusedWorkspace } from './summary'
+import { statusItem, withExcludeLine, focusedWorkspace } from './summary'
 
 const en = translator('en')
 const ko = translator('ko')
-const agent = (terminalId: string, state: AgentState, since: number): SessionRow =>
-  ({ key: terminalId + '@' + since, terminalId, workspaceId: 'w1', workspaceName: 'main', branch: 'main', agent: 'claude', title: terminalId, state, since })
-
-function board(sessions: SessionRow[]): BoardView {
-  const kind = { blocked: 'permission', waiting: 'reply' } as const
-  return {
-    at: 1000,
-    selected: ['p1'],
-    projects: [{ projectId: 'p1', name: 'App', sessions, closed: [], repo: null, pullStatus: 'ok', pulls: [] }],
-    decisions: sessions.flatMap((session) => session.state === 'blocked' || session.state === 'waiting'
-      ? [{ key: session.key, kind: kind[session.state], projectName: 'App', since: session.since, session }] : []),
-    replies: [],
-    truncated: false
-  }
-}
-
-test('counts permission and reply waits; working sessions are counted apart', () => {
-  const view = board([agent('a', 'blocked', 1), agent('b', 'waiting', 2), agent('c', 'working', 3), agent('d', 'done', 4)])
-  assert.deepEqual(waitingCounts(view), { permission: 1, reply: 1, review: 0, working: 1 })
-})
-
 test('the status bar shows the decision count, a quiet board, no projects chosen, and a failed read', () => {
   assert.deepEqual([statusItem(en, 2).text, statusItem(en, 2).tone], ['2 to decide', 'accent'])
   assert.equal(statusItem(ko, 2).text, '내 결정 2')
@@ -35,27 +13,12 @@ test('the status bar shows the decision count, a quiet board, no projects chosen
   assert.equal(statusItem(en, null, true).tone, 'warning')
 })
 
-test('a project card lists sessions that need someone first and keeps finished ones apart', () => {
-  const [lane] = board([agent('w', 'working', 50), agent('d', 'done', 90), agent('b', 'blocked', 10), agent('r', 'waiting', 20)]).projects
-  const groups = laneGroups(lane)
-  assert.deepEqual(groups.active.map((s) => s.terminalId), ['b', 'r', 'w'])
-  assert.deepEqual(groups.done.map((s) => s.terminalId), ['d'])
-  assert.deepEqual(groups.counts, { blocked: 1, waiting: 1, working: 1, done: 1 })
-})
-
 test('adds the dashboard folder to the exclude file once', () => {
   const added = withExcludeLine('# git ls-files --others\n*.log')
   assert.equal(added, '# git ls-files --others\n*.log\n# Coordinator Board (Orca plugin): the dashboard key file\n/.coordinator-board/\n')
   assert.equal(withExcludeLine(added!), null)
   assert.equal(withExcludeLine('.coordinator-board/\r\n'), null)
   assert.equal(withExcludeLine(''), '# Coordinator Board (Orca plugin): the dashboard key file\n/.coordinator-board/\n')
-})
-
-test('says how long ago in both languages', () => {
-  assert.equal(ago(en, 100_000, 90_000), 'just now')
-  assert.equal(ago(ko, 10 * 60_000, 0), '10분 전')
-  assert.equal(ago(en, 3 * 3_600_000, 0), '3h ago')
-  assert.equal(ago(ko, 2 * 86_400_000, 0), '2일 전')
 })
 
 test('finds the focused workspace by id, by the path in a project::path id, or by a unique name', () => {

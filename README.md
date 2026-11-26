@@ -54,6 +54,8 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - git checkout이면 `.git/info/exclude`에 `/.coordinator-board/` 한 줄을 더해 git에 잡히지 않게 한다. `.gitignore`는 만들지 않는다.
 - 다른 호스트(SSH 등)의 워크스페이스에서는 열지 않는다.
 - 세션을 누르면 그 세션의 워크스페이스로 화면이 바뀐다. 대시보드 탭은 처음 연 워크스페이스에 남는다.
+- 화면 배치는 Paseo판 보드와 같다. 보기는 인박스(기본), 집중, 매트릭스, 기존 가운데 고르고, 보기와 보드 언어(한국어 기본, English)는 이 기기에 저장된다.
+- 지금 대시보드는 읽기 전용이다. 결정 카드는 질문, 근거, 담당 세션 열기까지 보여 주고, 답장 칸은 다음 단계에서 붙는다. 집중과 매트릭스 보기도 다음 단계에서 채운다.
 
 ## 전송 규칙
 
@@ -103,6 +105,8 @@ npm run typecheck       # npx tsc -p .
 orca plugin test .      # 테스트 (vitest)
 orca plugin check .     # 패널을 시나리오별로 그려 보고 대시보드를 정적 검사한다 (src/panel.check.ts)
 orca plugin validate .
+node dev/build.mjs      # 가짜 window.orca와 예시 보드로 대시보드를 dev/out/index.html에 묶는다
+node dev/shoot.mjs      # 로컬 Chrome이나 Edge 헤드리스로 dev/shots/에 화면을 찍는다
 ```
 
 `dist/`는 저장소에 함께 올린다. git으로 설치하면 빌드 없이 돈다. `src/`를 고쳤으면 `npm run build` 결과도 같이 커밋한다. `src/paseo/`는 Paseo판 코드를 import 경로만 바꿔 옮긴 폴더다([src/paseo/UPSTREAM.md](src/paseo/UPSTREAM.md)).
