@@ -172,3 +172,32 @@ test('a reply to a terminal outside the focused workspace is typed after showing
   assert.equal(orca.writes.length, 1)
   await mounted.deactivate()
 })
+
+test('a reply to a chat is mailed from one board terminal, opened once in the focused workspace and reused', async () => {
+  const orca = fakeOrca([{ id: 'writer', surface: 'chat', state: 'done', updatedAt: 1, title: 'Writer', project: 'studio' }])
+  orca.say('writer', 'assistant', '제목을 골라 주실 수 있나요? 할까요?')
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en' }, results: {
+    'workspace.readContext': { workspaceId: 'w-dash', branch: 'main', displayName: 'studio', terminals: [] },
+    'terminal.create': { terminalId: 'term_board' },
+    'terminal.list': { terminals: [{ id: 'term_board' }], truncated: false },
+    'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false }
+  } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  const card = async () => ((await mounted.request('board.snapshot', { fresh: true })) as { sessions: { id: string; decision?: { version: string } }[] })
+    .sessions.find((s) => s.id === 'writer')!.decision!
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: (await card()).version,
+    action: 'question', text: 'Which title is shorter?', requestKey: 'worker-question-0001' })
+  orca.say('writer', 'assistant', '두 번째가 짧습니다. 어느 쪽으로 할까요?')
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: (await card()).version,
+    action: 'reply', text: 'Use the second.', requestKey: 'worker-reply-000002' })
+  assert.deepEqual(h.callsOf('terminal.create'), [{ workspaceId: 'w-dash', title: 'Coordinator Board mail' }])
+  assert.deepEqual(orca.writes.map((w) => w[w.indexOf('--from') + 1]), ['term_board', 'term_board'])
+  await mounted.deactivate()
+})

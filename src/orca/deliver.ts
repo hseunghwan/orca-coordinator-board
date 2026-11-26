@@ -31,7 +31,7 @@ export type Route = 'terminal-input' | 'mail'
 
 export type RefuseReason =
   | 'gone' | 'blocked' | 'waiting' | 'working' | 'changed' | 'asleep' | 'other-host'
-  | 'too-long' | 'needs-focus' | 'rejected' | 'content-changed'
+  | 'too-long' | 'needs-focus' | 'no-board-sender' | 'rejected' | 'content-changed'
 
 export type DeliveryOutcome =
   | { status: 'delivered'; route: Route; proof: 'cli' | 'mail-id' | 'transcript' | 'host-accepted' }
@@ -71,6 +71,9 @@ export function isSameMessage(entry: string, messageId: string, stamped: string)
  *  | terminal without a live handle       | asleep          |
  *  | terminal                             | terminal-input  |
  *  | chat                                 | mail            |
+ *
+ * Mail needs a sender terminal: from a process outside every Orca terminal, orchestration send
+ * refuses without --from (observed 2026-11-26), so the board mails from its own terminal.
  */
 export function chooseRoute(session: SessionRecord, workspace: WorkspaceRecord | undefined, _from: Sender): Route | RefuseReason {
   if (workspace?.hostId && workspace.hostId !== 'local') return 'other-host'
@@ -142,6 +145,8 @@ export interface DeliverDeps {
    * send uses it, because it moves the window. Resolves whether the host accepted the text.
    */
   focusAndType?: (handle: TerminalHandle, text: string) => Promise<boolean>
+  /** The board's own terminal to mail from (--from); null when there is none to use. */
+  mailSender?: () => Promise<string | null>
   sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
@@ -171,7 +176,7 @@ export function createDeliver(deps: DeliverDeps) {
     return { status: 'unconfirmed', route: record.route }
   }
 
-  async function send(d: Delivery, route: Route, session: SessionRecord, text: string): Promise<WriteResult> {
+  async function send(d: Delivery, route: Route, session: SessionRecord, text: string, from: string | null): Promise<WriteResult> {
     if (route === 'terminal-input') {
       return deps.cli.write('terminal send', ['--terminal', session.handle!, '--text', text, '--enter', '--wait-submit', '10'])
     }
@@ -181,7 +186,7 @@ export function createDeliver(deps: DeliverDeps) {
     writeFileSync(body, text, { mode: 0o600 })
     try {
       return await deps.cli.write('orchestration send', [
-        '--to', 'orca_session_id:' + d.to, '--type', 'question', '--subject', d.subject.replace(/\s+/g, ' ').slice(0, 120), '--body-file', body
+        '--to', 'orca_session_id:' + d.to, ...(from ? ['--from', from] : []), '--type', 'question', '--subject', d.subject.replace(/\s+/g, ' ').slice(0, 120), '--body-file', body
       ])
     } finally {
       rmSync(body, { force: true })
@@ -206,10 +211,12 @@ export function createDeliver(deps: DeliverDeps) {
     const route = chooseRoute(session, world.workspaces.get(session.worktree), d.from)
     if (route !== 'terminal-input' && route !== 'mail') return { status: 'refused', reason: route }
     if (route === 'terminal-input' && text.length > MAX_TERMINAL_TEXT) return { status: 'refused', reason: 'too-long' }
+    const from = route === 'mail' ? await deps.mailSender?.().catch(() => null) ?? null : null
+    if (route === 'mail' && !from) return { status: 'refused', reason: 'no-board-sender' }
 
     const record: OutboxRecord = { messageId: d.messageId, to: d.to, route, digest, text, state: 'attempting', at: now() }
     outbox.change((records) => { records[d.messageId] = record })
-    const result = await send(d, route, session, text)
+    const result = await send(d, route, session, text, from)
     if (result.kind === 'ok') {
       const mailId = (result.result as { messageId?: unknown } | null)?.messageId
       const proof = typeof mailId === 'string' ? 'mail-id' : 'cli'

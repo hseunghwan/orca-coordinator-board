@@ -31,7 +31,7 @@ async function fixture() {
     { id: 'other', surface: 'chat', state: 'done', updatedAt: 1, title: 'other', project: 'unmanaged' }
   ])
   orca.say('worker', 'assistant', '자막을 한 줄로 할까요?')
-  const fleetOn = () => createFleet(createCli(orca.runner), Date.now, { dataDir: root, sleep: async () => {} })
+  const fleetOn = () => createFleet(createCli(orca.runner), Date.now, { dataDir: root, sleep: async () => {}, mailSender: async () => 'term_board' })
   const fleet = fleetOn()
   const reader = new ConversationReader()
   const sender = new DecisionSender(prefs, notes, reader, fleet)

@@ -95,9 +95,11 @@ export function fakeOrca(sessions: FakeSession[]) {
     if (verb === 'orchestration send') {
       const id = flag('--to').replace('orca_session_id:', '')
       if (!find(id)) return fail('not_found', 'no such agent')
+      // What Orca answers a process outside every Orca terminal (observed 2026-11-26).
+      if (!args.includes('--from')) return fail('invalid_argument', 'Could not determine the calling terminal for this orchestration command. Pass --from with your own terminal\'s handle.')
       const body = readFileSync(flag('--body-file'), 'utf8')
       const mail = 'msg_' + String(++mails).padStart(12, '0')
-      if (!behavior.dropText) say(id, 'user', [`──── From: BOARD (${flag('--type')}) ────`, 'Subject: ' + flag('--subject'), body,
+      if (!behavior.dropText) say(id, 'user', [`──── From: ${flag('--from').toUpperCase()} (${flag('--from')}) (${flag('--type')}) ────`, 'Subject: ' + flag('--subject'), body,
         `[Reply: orca orchestration reply --id ${mail} --body "..."]`, '─'.repeat(60)].join('\n'))
       return behavior.loseAnswer ? 'Error: lost' : ok({ messageId: mail })
     }

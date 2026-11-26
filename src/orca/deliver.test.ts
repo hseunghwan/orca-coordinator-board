@@ -24,7 +24,7 @@ function setup(extra: FakeSession[] = [], focusAndType?: (handle: string, text: 
   ])
   const dataDir = mkdtempSync(join(tmpdir(), 'board-deliver-'))
   dirs.push(dataDir)
-  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir, sleep: async () => {}, focusAndType })
+  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir, sleep: async () => {}, focusAndType, mailSender: async () => 'term_board' })
   const send = (to: string, text: string, n = 1, more: Partial<Delivery> = {}) =>
     fleet.deliver({ messageId: ID(n), to: to as SessionId, text, subject: 'Pick a layout', from: { kind: 'person' }, whenWorking: 'refuse', ...more })
   const outbox = () => JSON.parse(readFileSync(join(dataDir, 'outbox.json'), 'utf8')).records
@@ -35,12 +35,21 @@ test('a chat gets mail whose body starts with the marker, and the transcript ent
   const f = setup()
   expect(await f.send(CHAT, 'Use the grid.')).toEqual({ status: 'delivered', route: 'mail', proof: 'mail-id' })
   const args = f.orca.writes[0]
-  expect(args.slice(0, 6)).toEqual(['orchestration', 'send', '--to', 'orca_session_id:' + CHAT, '--type', 'question'])
-  expect(args).not.toContain('--from')
+  expect(args.slice(0, 8)).toEqual(['orchestration', 'send', '--to', 'orca_session_id:' + CHAT, '--from', 'term_board', '--type', 'question'])
   const entry = f.orca.transcripts.get(CHAT)!.at(-1)!.text
   expect(entry.split('\n')[0]).toMatch(/^──── From: /)
   expect(unframe(entry)).toBe(stamp('Use the grid.', ID(1)))
   expect(readMarked(entry)).toEqual({ messageId: ID(1), body: 'Use the grid.', cut: false })
+})
+
+test('without a board terminal to mail from, a chat send is refused before anything is written', async () => {
+  const f = setup()
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-deliver-'))
+  dirs.push(dataDir)
+  const bare = createFleet(createCli(f.orca.runner), Date.now, { dataDir, sleep: async () => {}, mailSender: async () => null })
+  expect(await bare.deliver({ messageId: ID(1), to: CHAT, text: 'x', subject: 's', from: { kind: 'person' }, whenWorking: 'refuse' }))
+    .toEqual({ status: 'refused', reason: 'no-board-sender' })
+  expect(f.orca.writes).toEqual([])
 })
 
 test('a repeated messageId never sends again: delivered stays delivered, a changed text is refused', async () => {

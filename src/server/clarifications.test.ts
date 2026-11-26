@@ -35,7 +35,7 @@ function fixture() {
   const worker = { id: 'worker', title: 'Writer', projectId: 'book', activityAt: iso(1), status: 'idle', lane: 'human',
     decision: { source: 'conversation', question: 'Release the book?', version: 'r1' } } as SessionRow
   const view = { sessions: [worker, { ...worker, id: 'coordinator' }], notes: {}, coordinator: 'coordinator' }
-  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir: dir, sleep: async () => {} })
+  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir: dir, sleep: async () => {}, mailSender: async () => 'term_board' })
   const sdk = fleet.paseo
   const calls = () => [...orca.transcripts].flatMap(([id, entries]) => entries.flatMap(e => {
     const marked = e.role === 'user' ? readMarked(e.text) : null
@@ -137,7 +137,7 @@ test('through the board RPCs: a question keeps the card open, its answer shows, 
   scratch.push(dir)
   const orca = fakeOrca([{ id: 'editor', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_e', title: 'Studio editor', project: 'studio' }])
   orca.say('editor', 'assistant', '패딩을 몇 초로 할까요?')
-  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir: dir, sleep: async () => {} })
+  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir: dir, sleep: async () => {}, mailSender: async () => 'term_board' })
   const handlers = new Map<string, (input: unknown) => Promise<unknown>>()
   contribute(rpcServer((name, fn) => handlers.set(name, fn), fleet.paseo), fleet, dir, fixturePulls)
   const rpc = async <T>(def: { name: string; output: { parse(v: unknown): T } }, input: unknown) => def.output.parse(await handlers.get(def.name)!(input))
