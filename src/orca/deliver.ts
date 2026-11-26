@@ -31,7 +31,7 @@ export type Route = 'terminal-input' | 'mail'
 
 export type RefuseReason =
   | 'gone' | 'blocked' | 'waiting' | 'working' | 'changed' | 'asleep' | 'other-host'
-  | 'too-long' | 'needs-focus' | 'no-board-sender' | 'rejected' | 'content-changed'
+  | 'too-long' | 'no-board-sender' | 'rejected' | 'content-changed'
 
 export type DeliveryOutcome =
   | { status: 'delivered'; route: Route; proof: 'cli' | 'mail-id' | 'transcript' | 'host-accepted' }
@@ -95,6 +95,7 @@ const outboxRecord = z.object({
   text: z.string(),
   state: z.enum(['attempting', 'delivered', 'unconfirmed']),
   at: z.number(),
+  // 'host-accepted': records written by version 0.2.0's focus-and-type path.
   proof: z.enum(['cli', 'mail-id', 'transcript', 'host-accepted']).optional(),
   mailId: z.string().optional(),
   /** Orca's id for an ambiguous write; kept for diagnosis, never used to send again. */
@@ -132,19 +133,11 @@ export class Outbox {
   }
 }
 
-/** Orca refuses to type into a terminal outside the focused workspace. */
-const OUTSIDE_FOCUS = /outside (?:the )?active (?:worktree|workspace)|not (?:in )?(?:the )?focused workspace/i
-
 export interface DeliverDeps {
   cli: OrcaCli
   view(options: { maxAgeMs: number }): Promise<World>
   /** The board's data folder: outbox.json and the mail body files. */
   dataDir: string
-  /**
-   * v0.1's path for a terminal outside the focused workspace: show it, then type. Only a person's
-   * send uses it, because it moves the window. Resolves whether the host accepted the text.
-   */
-  focusAndType?: (handle: TerminalHandle, text: string) => Promise<boolean>
   /** The board's own terminal to mail from (--from); null when there is none to use. */
   mailSender?: () => Promise<string | null>
   sleep?: (ms: number) => Promise<void>
@@ -224,23 +217,8 @@ export function createDeliver(deps: DeliverDeps) {
       return { status: 'delivered', route, proof }
     }
     if (result.kind === 'refused') {
-      if (route === 'terminal-input' && d.from.kind === 'person' && deps.focusAndType && OUTSIDE_FOCUS.test(result.message)) {
-        let accepted: boolean
-        try {
-          accepted = await deps.focusAndType(session.handle!, text)
-        } catch {
-          settle(d.messageId, { state: 'unconfirmed' })
-          return { status: 'unconfirmed', route }
-        }
-        if (accepted) {
-          settle(d.messageId, { state: 'delivered', proof: 'host-accepted' })
-          return { status: 'delivered', route, proof: 'host-accepted' }
-        }
-        outbox.change((records) => { delete records[d.messageId] })
-        return { status: 'refused', reason: 'needs-focus' }
-      }
       outbox.change((records) => { delete records[d.messageId] })
-      return { status: 'refused', reason: OUTSIDE_FOCUS.test(result.message) ? 'needs-focus' : 'rejected', detail: result.message }
+      return { status: 'refused', reason: 'rejected', detail: result.message }
     }
     settle(d.messageId, { state: 'unconfirmed', ...(result.retryRequest ? { retryRequest: result.retryRequest } : {}) })
     await sleep(RECONCILE_DELAY_MS)

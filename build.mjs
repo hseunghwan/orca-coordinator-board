@@ -1,4 +1,4 @@
-// Bundles the worker and the dashboard frame into dist/. Orca plugins get no node_modules, so
+// Bundles the worker, the dashboard frame and the coordinator-board CLI into dist/. Orca plugins get no node_modules, so
 // everything they import from npm has to be inside these files.
 import { writeFileSync } from "node:fs";
 import { build, context } from "esbuild";
@@ -7,6 +7,7 @@ const watch = process.argv.includes("--watch");
 const common = { bundle: true, logLevel: "info", sourcemap: false, minify: !watch };
 const targets = [
   { ...common, entryPoints: ["src/worker.ts"], outfile: "dist/worker.mjs", platform: "node", format: "esm", target: "node20" },
+  { ...common, entryPoints: ["src/cli/main.ts"], outfile: "dist/cli.cjs", platform: "node", format: "cjs", target: "node20" },
   {
     ...common, entryPoints: ["src/dashboard/main.tsx"], outfile: "dist/dashboard.js", platform: "browser", format: "esm", target: "es2022",
     jsx: "automatic", jsxImportSource: "react", define: { "process.env.NODE_ENV": '"production"' },

@@ -18,6 +18,12 @@ import { decorateDecision, DecisionSender } from "./decisions";
 import { ClarificationSender, clarificationHistory, restoreClarifiedDecision } from "./clarifications";
 import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } from "./session-links";
 import { ProjectPullRequests } from "./prs";
+import type { Command } from "../channel/names";
+import { coordinatorCommands, runCommand } from "./coordinator";
+import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operations";
+import { translator } from "../i18n";
+import { createHash } from "node:crypto";
+import type { SessionId } from "../orca";
 
 type Sdk = PluginHandlerContext["paseo"];
 
@@ -30,12 +36,30 @@ function previewTitles(sessions: SessionRow[], notes: Record<string, Note>) {
 
 export type PullDeps = ConstructorParameters<typeof ProjectPullRequests>[1];
 
-export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: string, pulls?: PullDeps) {
+const NO_HOST: OperationDeps = { t: () => translator("en"), bin: "", focusedWorkspace: async () => null };
+
+export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: string, pulls?: PullDeps, host: OperationDeps = NO_HOST) {
   const notes = new NoteStore(join(dataDir, "notes.json"));
   const prefs = new PreferenceStore(join(dataDir, "scope.json"));
   const reader = new ConversationReader();
   const prs = new ProjectPullRequests(prefs, pulls);
   const decisions = new DecisionSender(prefs, notes, reader, fleet);
+  const commands = coordinatorCommands(prefs, reader, notes);
+  const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host);
+  // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
+  async function introduceChatCoordinator(sessionId: string) {
+    const session = (await fleet.view({ maxAgeMs: 0 })).sessions.get(sessionId as SessionId);
+    if (session?.surface !== "chat") return;
+    const t = host.t();
+    const cli = host.bin ? host.bin.replace(/[\\/]$/, "") + (process.platform === "win32" ? "\\coordinator-board.cmd" : "/coordinator-board") : "coordinator-board";
+    const text = BOARD_PREFIX + "\n" + t(
+      "이 채팅이 Coordinator Board의 코디네이터로 지정되었습니다. 채팅에서는 보드 명령 가운데 report만 쓸 수 있습니다. 사람이 결정할 일이나 확인할 결과는 셸에서 다음처럼 보고하세요. 글은 표준 입력으로 넘깁니다.\n",
+      "This chat is now the Coordinator Board's coordinator. From a chat only the report command works. Report a decision for the person, or a result to check, from a shell like this, with the text on standard input:\n",
+    ) + JSON.stringify(cli) + " report --as " + sessionId + " --kind question --text-file -";
+    const messageId = createHash("sha256").update("coordinator-board/chat-coordinator/" + sessionId).digest("hex");
+    const id = [messageId.slice(0, 8), messageId.slice(8, 12), "4" + messageId.slice(13, 16), "8" + messageId.slice(17, 20), messageId.slice(20, 32)].join("-");
+    await fleet.deliver({ messageId: id, to: sessionId as SessionId, text, subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse" });
+  }
   let decisionTitles: string[] = [];
 
   server.handle(boardReadiness, async () => {
@@ -196,6 +220,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
         if (change.sessionId && !managedSessions(rows, scope).some(r => r.id === change.sessionId)) throw new Error("관리할 프로젝트의 세션을 선택해 주세요.");
         setCoordinator(scope, change.sessionId);
       });
+      if (change.sessionId) await introduceChatCoordinator(change.sessionId).catch(() => undefined);
     }
     invalidateCount();
     return { ok: true };
@@ -205,6 +230,19 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     invalidate() { fleet.invalidate(); invalidateCount(); },
     count: () => reads.count(() => buildSnapshot(fleet.paseo)),
     configured: () => prefs.read().projects.length > 0,
+    coordinator: () => prefs.read().coordinator,
+    /** The coordinator launch the agent.launch.before hook should give its permission mode. */
+    pendingLaunch: () => lifecycle.pendingLaunch(),
+    /** Names the started coordinator once its terminal reports a session. */
+    adoptCoordinator: () => lifecycle.adopt(),
+    /** Who may run a coordinator-board command: only the designated coordinator, or any session on the board. */
+    audience: (command: Command) => commands[command].audience,
+    /** A coordinator-board command from the session the channel verified. */
+    async command(command: Command, input: unknown, agentId: string) {
+      const result = await runCommand(commands, command, input, { paseo: fleet.paseo, agent: { id: agentId } });
+      if (command !== "read") invalidateCount();
+      return result;
+    },
     /** Version 0.1 kept the chosen projects in plugin storage. Take them once, only into an empty choice. */
     adoptLegacySelection(projectIds: readonly unknown[]): boolean {
       const ids = [...new Set(projectIds.filter((id): id is string => typeof id === "string" && id.length > 0))];

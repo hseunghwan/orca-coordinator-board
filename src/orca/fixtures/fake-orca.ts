@@ -27,8 +27,8 @@ export function fakeOrca(sessions: FakeSession[]) {
   const transcripts = new Map<string, Entry[]>(sessions.map((s) => [s.id, []]))
   const writes: string[][] = []
   const behavior = {
-    /** Orca's answer to a terminal send outside the focused workspace. */
-    outsideFocus: false,
+    /** Orca answers a write with this error and sends nothing. */
+    refuseWith: null as string | null,
     /** The text lands but the answer is lost, as when the process times out. */
     loseAnswer: false,
     /** The text never lands. */
@@ -36,8 +36,15 @@ export function fakeOrca(sessions: FakeSession[]) {
     /** Called before each worktree ps answer, as Orca's state can change between two reads. */
     beforePs: () => {},
     /** Called as the write starts, before the text lands. */
-    onWrite: (_args: readonly string[]) => {}
+    onWrite: (_args: readonly string[]) => {},
+    /** agent launch: start a terminal agent, refuse, or start one and lose the answer (with or without Orca's retry id). */
+    launch: 'start' as 'start' | 'refuse' | 'lose' | 'lose-with-id',
+    /** How many worktree ps reads a launched agent stays without a session id. */
+    reportAfterPs: 0,
+    agents: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'grok', name: 'Grok' }],
+    rateLimits: {} as Record<string, unknown>
   }
+  const launches: { operationId: string; session: FakeSession; hiddenFor: number }[] = []
   let mails = 0
   const find = (id: string) => sessions.find((s) => s.id === id)
   const bump = (s: FakeSession) => { s.updatedAt += 1 }
@@ -71,8 +78,11 @@ export function fakeOrca(sessions: FakeSession[]) {
     const flag = (name: string) => args[args.indexOf(name) + 1]
     if (verb === 'worktree ps') {
       behavior.beforePs()
+      for (const l of launches) if (l.hiddenFor-- === 0) { sessions.push(l.session); transcripts.set(l.session.id, []) }
       return ps()
     }
+    if (verb === 'agent installed') return ok({ agents: behavior.agents.map((a) => ({ ...a, default: false })) })
+    if (verb === 'account list') return ok({ rateLimits: behavior.rateLimits })
     if (verb === 'repo list') return ok({ repos: [...new Set(sessions.map((s) => s.project ?? 'acme'))].map((id) => ({ id, path: '/w/' + id, displayName: id })) })
     if (verb === 'agent read') {
       const id = args[2].replace('orca_session_id:', '')
@@ -85,12 +95,25 @@ export function fakeOrca(sessions: FakeSession[]) {
     }
     writes.push([...args])
     behavior.onWrite(args)
+    if (behavior.refuseWith) return fail('invalid_argument', behavior.refuseWith)
     if (verb === 'terminal send') {
       const s = sessions.find((x) => x.handle === flag('--terminal'))
       if (!s) return fail('not_found', 'no such terminal')
-      if (behavior.outsideFocus) return fail('invalid_argument', 'terminal is outside the active worktree')
       if (!behavior.dropText) say(s.id, 'user', flag('--text'))
       return behavior.loseAnswer ? 'Error: lost' : ok({ accepted: true, submitted: true })
+    }
+    if (verb === 'agent launch') {
+      const retry = args.includes('--retry-launch') ? flag('--retry-launch') : null
+      const earlier = launches.find((l) => l.operationId === retry)
+      if (earlier) return ok({ outcome: { kind: 'terminal', handle: earlier.session.handle }, operationId: earlier.operationId })
+      if (behavior.launch === 'refuse') return fail('invalid_argument', 'agent not installed')
+      const n = launches.length + 1
+      const project = flag('--worktree').replace(/^id:/, '').split('::')[0]
+      const session: FakeSession = { id: 'launched-' + n, surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_launch_' + n, title: 'Coordinator', project }
+      launches.push({ operationId: 'op-' + n, session, hiddenFor: behavior.reportAfterPs })
+      if (behavior.launch === 'lose') return 'Error: lost'
+      if (behavior.launch === 'lose-with-id') return fail('timeout', 'launch reply lost; re-issue with --retry-launch op-' + n)
+      return ok({ outcome: { kind: 'terminal', handle: session.handle }, operationId: 'op-' + n })
     }
     if (verb === 'orchestration send') {
       const id = flag('--to').replace('orca_session_id:', '')
@@ -105,5 +128,5 @@ export function fakeOrca(sessions: FakeSession[]) {
     }
     return fail('unknown', 'not faked: ' + verb)
   }
-  return { runner, sessions, transcripts, writes, behavior, say, find }
+  return { runner, sessions, transcripts, writes, behavior, say, find, launches }
 }

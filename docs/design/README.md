@@ -40,8 +40,19 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 - 터미널 세션: 포커스 밖 워크스페이스의 터미널 에이전트에 `orca terminal send --terminal <term_…> --text … --enter --wait-submit 10`을 보내면 그대로 들어간다(`input_accepted`, `turn_started`). 어느 터미널에도 속하지 않은 프로세스(워커와 같은 경우)에서 보내도 된다. 메일과 달리 발신 터미널이 필요 없다. 포커스 제한은 host `terminal.sendText`에만 있다.
 - 터미널 기록의 user 항목도 1,214자에서 `… (truncated)`로 잘린다. 첫 줄의 표식은 남으므로 대조에 쓸 수 있다.
 
+## 실기 확인: 코디네이터 (2026-11-26, Orca 1.4.277)
+
+- `orca agent launch --agent claude --model haiku --worktree path:<경로> --surface terminal --prompt <글> --json`의 결과에는 `outcome.kind`(`terminal`), `outcome.handle`(`term_…`), `outcome.paneKey`, `worktreeId`, `operationId`가 온다. 짧은 답을 하는 세션은 1초 안에 `worktree ps`에 같은 주소와 `orcaSessionId`로 나왔다. 보드는 handle로 세션을 찾아 코디네이터로 지정한다.
+- 프롬프트 첫 줄의 표식 `[coordinator-board:<id>]`는 첫 user 항목에 그대로 남는다.
+- 실행 명령(`orca terminal list`의 `preview`)은 단어마다 POSIX 작은따옴표로 감싸고, 프롬프트 앞에 `'--'`를 둔다. 사람의 에이전트 설정에 따라 `'--dangerously-skip-permissions'`가 붙어 있었다. 그래서 훅은 코디네이터 실행에서 우회 인자를 빼고, 권한 인자(claude `--permission-mode auto`, codex `--approve-for-me`)를 `'--'` 앞에 넣는다. 인자 이름은 각 CLI의 `--help`에서 확인했다.
+- 백그라운드로 띄운 터미널은 `orca terminal list`에서 `orphaned: true`로 나온다. 이 터미널은 `orca terminal close --terminal <handle> --tab`이 `terminal_handle_stale`로 실패했고, `--tab` 없이는 닫혔다.
+- `orca agent installed --json`은 `{ agents: [{ id, name, default }] }`만 준다. 모델 목록은 없어서 보드는 Paseo 라우팅 표의 모델을 정적 추천으로 쓴다.
+- `orca account list --json`의 `rateLimits.<제공자>`에는 `session`, `weekly`, `monthly`와 모델 계열 창(예: `fableWeekly`)이 `usedPercent`, `resetsAt`(ms)와 함께 오고, `status`, `error`, `planType`, `updatedAt`이 붙는다. 보드는 `remainingPct = 100 - usedPercent`로 바꾸고, 모델 계열 창은 `weekly_model_<계열>`로 이름 붙여 그 모델에만 적용한다.
+- `orca plugin dev hook <폴더>`는 로드된 개발 플러그인에만 돈다. 이 작업 폴더는 로드되지 않아 `plugin_not_found`가 났다. 그래서 `scripts/probe-channel.mjs`로 실제 워커 코드(`activateWith`)의 훅을 부르고, 그 env로 `bin/coordinator-board.cmd`를 자식 프로세스로 실행했다. `CB_NODE`는 Orca 실행 파일(`ELECTRON_RUN_AS_NODE=1`)이다. 결과: 훅이 `CB_BIN CB_CALLER_TOKEN CB_NODE CB_PIPE CB_TERMINAL`을 넣고 `Path` 맨 앞에 bin을 붙였다. 코디네이터로 지정한 터미널의 `read`는 종료 코드 0(호출당 약 0.45초), 틀린 토큰은 4, `plan`은 1, 워커가 없는 pipe는 2였다.
+
 ## 확인할 것
 
 - host `terminal.create`가 돌려주는 `terminalId`를 CLI `--from`에 그대로 쓸 수 있는가, 지금 권한으로 열 수 있는가.
-- `agent.launch.before`의 `event.env`에 PATH가 들어오는가.
+- `agent.launch.before`의 `event.env`에 PATH가 들어오는가. 없으면 훅은 PATH를 두고 `CB_BIN`과 charter의 절대 경로로만 CLI를 알린다. 플러그인을 다시 승인한 뒤 실제 실행으로 확인한다.
+- 실제 훅의 `event.command`가 `orca terminal list`의 `preview`와 같은 모양인가.
 - 워커 env에서 `orca.exe`가 런타임을 찾는가.

@@ -16,7 +16,7 @@ const CHAT = 'c4a70000-0000-4000-8000-00000000000c' as SessionId
 const TERM = 'c4a70000-0000-4000-8000-00000000000d' as SessionId
 const ID = (n: number) => `0b0a0000-0000-4000-8000-${String(n).padStart(12, '0')}`
 
-function setup(extra: FakeSession[] = [], focusAndType?: (handle: string, text: string) => Promise<boolean>) {
+function setup(extra: FakeSession[] = []) {
   const orca = fakeOrca([
     { id: CHAT, surface: 'chat', state: 'done', updatedAt: 10, title: 'Pick a layout' },
     { id: TERM, surface: 'terminal', state: 'done', updatedAt: 20, handle: 'term_d', title: 'Tag the release' },
@@ -24,7 +24,7 @@ function setup(extra: FakeSession[] = [], focusAndType?: (handle: string, text: 
   ])
   const dataDir = mkdtempSync(join(tmpdir(), 'board-deliver-'))
   dirs.push(dataDir)
-  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir, sleep: async () => {}, focusAndType, mailSender: async () => 'term_board' })
+  const fleet = createFleet(createCli(orca.runner), Date.now, { dataDir, sleep: async () => {}, mailSender: async () => 'term_board' })
   const send = (to: string, text: string, n = 1, more: Partial<Delivery> = {}) =>
     fleet.deliver({ messageId: ID(n), to: to as SessionId, text, subject: 'Pick a layout', from: { kind: 'person' }, whenWorking: 'refuse', ...more })
   const outbox = () => JSON.parse(readFileSync(join(dataDir, 'outbox.json'), 'utf8')).records
@@ -117,21 +117,6 @@ test('blocked, waiting, working, changed, asleep, other-host and too-long are re
   expect(await f.send(CHAT, 'x', 1, { unchangedSince: 9 })).toEqual({ status: 'refused', reason: 'changed' })
   expect(f.orca.writes).toEqual([])
   expect(await f.send(CHAT, 'x', 1, { unchangedSince: 10 })).toMatchObject({ status: 'delivered' })
-})
-
-test('outside the focused workspace a person send falls back to focus and type; without it the refusal frees the id', async () => {
-  const typed: [string, string][] = []
-  const f = setup([], async (handle, text) => { typed.push([handle, text]); return true })
-  f.orca.behavior.outsideFocus = true
-  expect(await f.send(TERM, 'Tag 3.0.0.')).toEqual({ status: 'delivered', route: 'terminal-input', proof: 'host-accepted' })
-  expect(typed).toEqual([['term_d', stamp('Tag 3.0.0.', ID(1))]])
-
-  const g = setup()
-  g.orca.behavior.outsideFocus = true
-  expect(await g.send(TERM, 'Tag 3.0.0.')).toEqual({ status: 'refused', reason: 'needs-focus', detail: 'terminal is outside the active worktree' })
-  expect(g.outbox()[ID(1)]).toBeUndefined()
-  g.orca.behavior.outsideFocus = false
-  expect(await g.send(TERM, 'Tag 3.0.0.')).toMatchObject({ status: 'delivered' })
 })
 
 test('the board reads its own message back with its id, and a cut one whole from the outbox', async () => {

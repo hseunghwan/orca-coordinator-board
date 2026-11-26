@@ -1,10 +1,17 @@
 // The plugin's worker: serves the board's read requests from Orca's CLI with the ported Paseo
 // server code, keeps the status bar count, and opens the dashboard tab.
 import type { OrcaWorkerApi } from 'orca/worker'
+import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { dirname, isAbsolute, join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { delimiter, dirname, isAbsolute, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { identifyCaller } from './channel/caller'
+import { withChannel } from './channel/hook'
+import { channelPath } from './channel/path'
+import { EXIT, type ChannelReply, type ChannelRequest } from './channel/protocol'
+import { serveChannel } from './channel/server'
 import { run } from './github'
 import { translator } from './i18n'
 import { createFleet, workspaceKey, type Fleet, type SessionId, type World } from './orca'
@@ -27,6 +34,17 @@ export type WorkerDeps = {
   pollMs: number
   /** git and gh lookups for pull requests; the real ones when absent. */
   pulls?: PullDeps
+  /** The coordinator channel; null leaves it closed (tests that do not use it). */
+  channel: ChannelDeps | null
+}
+
+export type ChannelDeps = {
+  /** The pipe or socket to listen on. */
+  path: string
+  /** The plugin's bin folder. */
+  bin: string
+  /** The runtime the shims run the CLI with. */
+  node: string
 }
 
 const LOCALE = 'locale'
@@ -34,6 +52,8 @@ const LOCALE = 'locale'
 const MAILBOX = 'mailbox'
 const MAILBOX_TITLE = 'Coordinator Board mail'
 const LEGACY_SELECTION = 'selectedProjects'
+/** The HMAC key of the channel's caller tokens; made once. */
+const CHANNEL_SECRET = 'channelSecret'
 export const STATUS_ITEM = 'waiting'
 export const OPEN_DASHBOARD = 'open-dashboard'
 const POLL_MS = 30_000
@@ -78,55 +98,52 @@ function fingerprint(world: World): string {
 
 const openSession = z.object({ sessionId: z.string().min(1).max(256) })
 
-// A multi-line text typed as is would submit at its first line; agent TUIs take a bracketed paste whole,
-// as orca terminal send does for them.
-const PASTE_START = '\x1b[200~'
-const PASTE_END = '\x1b[201~'
-const FOCUS_TRIES = 20
-const FOCUS_WAIT_MS = 100
-
 export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void {
-  // Orca types only into terminals of the focused workspace. Only a person pressing send gets here
-  // (fleet.deliver checks), and the window moves to the session they answered: v0.1's behavior.
-  async function focusAndType(terminalId: string, text: string): Promise<boolean> {
-    const inFocus = async () => {
-      const context = await orca.host.call('workspace.readContext', {}).catch(() => null)
-      return !!context?.terminals.some((terminal) => terminal.id === terminalId)
-    }
-    if (!(await inFocus())) {
-      const moved = await orca.host.call('terminal.focus', { terminalId }).catch(() => ({ focused: false }))
-      if (!moved.focused) return false
-      let shown = false
-      for (let tries = 0; tries < FOCUS_TRIES && !(shown = await inFocus()); tries += 1) await new Promise((done) => setTimeout(done, FOCUS_WAIT_MS))
-      if (!shown) return false
-    }
-    const typed = text.includes('\n') ? PASTE_START + text + PASTE_END : text
-    return (await orca.host.call('terminal.sendText', { terminalId, text: typed, enter: true })).accepted
-  }
   // orchestration send from the worker, a process in no Orca terminal, needs --from. The board opens one
-  // quiet shell terminal of its own, in the workspace the person is looking at (where the dashboard
-  // opens), on the first chat send, and reuses it while it lives. Replies to its mail land in its mailbox.
+  // quiet shell terminal of its own and reuses it while it lives; replies to its mail land in its
+  // mailbox. It lives in the coordinator's workspace, and moves there when the coordinator does;
+  // before there is a coordinator, in the workspace the person is looking at (where the dashboard opens).
+  async function coordinatorWorkspace(): Promise<string | null> {
+    const id = board.coordinator()
+    if (!id) return null
+    const world = await fleet.view()
+    const session = world.sessions.get(id as SessionId)
+    const ws = session ? world.workspaces.get(session.worktree) : undefined
+    if (!ws || (ws.hostId && ws.hostId !== 'local')) return null
+    if (ws.listId) return ws.listId
+    const { workspaces } = await orca.host.call('workspace.list', {})
+    const key = workspaceKey(ws)
+    return workspaces.find((w) => key && workspaceKey(w) === key)?.id ?? null
+  }
   async function mailSender(): Promise<string | null> {
     const saved = await orca.storage.get(MAILBOX).catch(() => null) as { terminalId?: unknown; workspaceId?: unknown } | null
+    const home = await coordinatorWorkspace().catch(() => null)
+    let alive = false
     if (typeof saved?.terminalId === 'string' && typeof saved.workspaceId === 'string') {
       const listed = await orca.host.call('terminal.list', { workspaceId: saved.workspaceId }).catch(() => null)
-      if (listed?.terminals.some((terminal) => terminal.id === saved.terminalId)) return saved.terminalId
+      alive = !!listed?.terminals.some((terminal) => terminal.id === saved.terminalId)
+      if (alive && (!home || home === saved.workspaceId)) return saved.terminalId as string
+      if (alive) await orca.host.call('terminal.close', { terminalId: saved.terminalId as string }).catch(() => undefined)
     }
-    const context = await orca.host.call('workspace.readContext', {}).catch(() => null)
-    if (!context?.workspaceId) return null
+    const target = home ?? (await orca.host.call('workspace.readContext', {}).catch(() => null))?.workspaceId
+    if (!target) return null
     try {
-      const { terminalId } = await orca.host.call('terminal.create', { workspaceId: context.workspaceId, title: MAILBOX_TITLE })
-      await orca.storage.set(MAILBOX, { terminalId, workspaceId: context.workspaceId })
-      orca.log('opened the board mail terminal')
+      const { terminalId } = await orca.host.call('terminal.create', { workspaceId: target, title: MAILBOX_TITLE })
+      await orca.storage.set(MAILBOX, { terminalId, workspaceId: target })
+      orca.log(alive ? 'moved the board mail terminal to the coordinator\'s workspace' : 'opened the board mail terminal')
       return terminalId
     } catch (error) {
       orca.log(`board mail terminal failed: ${error instanceof Error ? error.message : String(error)}`)
       return null
     }
   }
-  const fleet: Fleet = createFleet(deps.cli, Date.now, { dataDir: deps.dataDir, focusAndType, mailSender })
-  const board = contribute(rpcServer((name, handler) => orca.panels.handle(name, handler), fleet.paseo), fleet, deps.dataDir, deps.pulls)
+  const fleet: Fleet = createFleet(deps.cli, Date.now, { dataDir: deps.dataDir, mailSender })
   let locale = 'en'
+  const board = contribute(rpcServer((name, handler) => orca.panels.handle(name, handler), fleet.paseo), fleet, deps.dataDir, deps.pulls, {
+    t: () => translator(locale),
+    bin: deps.channel?.bin ?? '',
+    focusedWorkspace: async () => (await orca.host.call('workspace.readContext', {}).catch(() => null))?.workspaceId ?? null
+  })
   let stopped = false
   void orca.storage.get(LEGACY_SELECTION).then(async (value) => {
     if (Array.isArray(value) && board.adoptLegacySelection(value)) {
@@ -165,6 +182,11 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       board.invalidate()
       orca.panels.post(BOARD_CHANGED, {})
       void updateStatus()
+      void board.adoptCoordinator().then((adopted) => {
+        if (!adopted || stopped) return
+        board.invalidate()
+        orca.panels.post(BOARD_CHANGED, {})
+      }, (error: unknown) => orca.log(`coordinator adoption failed: ${error instanceof Error ? error.message : String(error)}`))
     }, CHANGE_DEBOUNCE_MS)
   }
   orca.events.on('agent.status.changed', changed)
@@ -237,8 +259,44 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   orca.commands.register(OPEN_DASHBOARD, openDashboard)
   orca.panels.handle('board.open-dashboard', async () => ({ message: (await openDashboard()) ?? null }))
 
+  const secret: Promise<string> = orca.storage.get(CHANNEL_SECRET).then(async (value) => {
+    if (typeof value === 'string' && value.length >= 64) return value
+    const made = randomBytes(32).toString('hex')
+    await orca.storage.set(CHANNEL_SECRET, made)
+    return made
+  })
+  secret.catch((error: unknown) => orca.log(`channel secret failed: ${error instanceof Error ? error.message : String(error)}`))
+
+  async function answerChannel(request: ChannelRequest): Promise<ChannelReply> {
+    const world = await fleet.view({ maxAgeMs: 0 })
+    const caller = identifyCaller(request.caller, await secret, world)
+    if ('denied' in caller) return { exit: EXIT.denied, text: caller.denied }
+    if (board.audience(request.command) === 'coordinator' && (caller.via !== 'terminal' || board.coordinator() !== caller.sessionId)) {
+      return { exit: EXIT.denied, text: caller.via === 'chat' ? '채팅 세션은 report만 쓸 수 있습니다.' : '지금 지정된 코디네이터만 쓸 수 있는 명령입니다.' }
+    }
+    try {
+      const result = await board.command(request.command, request.input, caller.sessionId)
+      if (request.command !== 'read') changed()
+      return { exit: result.isError ? EXIT.error : EXIT.ok, text: result.text }
+    } catch (error) {
+      return { exit: EXIT.error, text: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  let channel: { close(): Promise<void> } | null = null
+  const channelDeps = deps.channel
+  if (channelDeps) {
+    serveChannel(channelDeps.path, answerChannel).then((server) => {
+      if (stopped) void server.close()
+      else channel = server
+    }, (error: unknown) => orca.log(`coordinator channel did not open: ${error instanceof Error ? error.message : String(error)}`))
+    orca.hooks.on('agent.launch.before', async (event, next) =>
+      next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter }, board.pendingLaunch())))
+  }
+
   return () => {
     stopped = true
+    void channel?.close()
     if (timer) clearInterval(timer)
     if (changeTimer) clearTimeout(changeTimer)
     localeWatch.dispose()
@@ -247,8 +305,14 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
 
 let stop: (() => void) | undefined
 
+/** The plugin folder: dist/worker.mjs sits one level below it. */
+const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
 export default function activate(orca: OrcaWorkerApi): void {
-  stop = activateWith(orca, { cli: hostCli(), dataDir: join(homedir(), '.orca-coordinator-board'), files: hostFiles, pollMs: POLL_MS })
+  stop = activateWith(orca, {
+    cli: hostCli(), dataDir: join(homedir(), '.orca-coordinator-board'), files: hostFiles, pollMs: POLL_MS,
+    channel: { path: channelPath(PLUGIN_ROOT, process.platform, tmpdir()), bin: join(PLUGIN_ROOT, 'bin'), node: process.execPath }
+  })
 }
 
 export function deactivate(): void {
