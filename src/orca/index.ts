@@ -119,7 +119,8 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
     // A transcript does not change while its session's updatedAt stays the same.
     const cached = reads.get(id as SessionId)
     if (session && cached && cached.updatedAt === session.updatedAt && cached.limit === n) return cached.page
-    const page = cli.read('agent read', ['orca_session_id:' + id, '--limit', String(n)], (result) => timelinePage(agentRead.parse(result), session, sentText))
+    const senderOf = (handle: string) => [...world.sessions.values()].find((s) => s.handle === handle && s.id !== id)?.id
+    const page = cli.read('agent read', ['orca_session_id:' + id, '--limit', String(n)], (result) => timelinePage(agentRead.parse(result), session, sentText, senderOf))
     if (session) reads.set(session.id, { updatedAt: session.updatedAt, limit: n, page })
     page.catch(() => {
       if (reads.get(id as SessionId)?.page === page) reads.delete(id as SessionId)
