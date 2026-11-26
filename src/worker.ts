@@ -102,10 +102,11 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   let changeTimer: ReturnType<typeof setTimeout> | undefined
   function changed(): void {
     if (stopped) return
-    board.invalidate()
     if (changeTimer) clearTimeout(changeTimer)
+    // Once per burst: invalidating per event would restart a snapshot still being built.
     changeTimer = setTimeout(() => {
       changeTimer = undefined
+      board.invalidate()
       orca.panels.post(BOARD_CHANGED, {})
       void updateStatus()
     }, CHANGE_DEBOUNCE_MS)
