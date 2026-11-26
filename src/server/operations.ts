@@ -17,6 +17,7 @@ import { includedCatalog, resolveRoute, sameRoute, validateCandidates } from "..
 import type { PluginServerContext } from "../orca";
 import type { PreferenceStore } from "../paseo/server/preferences";
 import { readAccountUsage, readDirectory } from "./catalog";
+import { readDisplayUsage } from "./display-usage";
 import type { DecisionSender } from "./decisions";
 import { CoordinatorLifecycle } from "./lifecycle";
 import type { BoardFacts } from "./board-facts";
@@ -133,7 +134,7 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
     const coordinator = resolveRoute("M", scope.routing, catalog, false, scope.usageRouting ? usage : []);
     return {
       usage, usageRouting: scope.usageRouting,
-      ...(settings && { workerModeOverrides: scope.workerModeOverrides, displayUsage: usage ?? [] }),
+      ...(settings && { workerModeOverrides: scope.workerModeOverrides, displayUsage: await readDisplayUsage(dataDir, directory.providers, usage ?? []) }),
       providers: directory.providers.map(p => ({ ...p, included: !scope.excludedProviders.includes(p.id) })),
       catalog, coordinatorMode: catalog.find(m => m.provider === coordinator?.provider)?.coordinatorMode ?? null,
       routing: scope.routing, revision: scope.routingRevision,
