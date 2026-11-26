@@ -6,11 +6,12 @@
 // ledger=1 adds the phase 5 ledger records; resolve=<status> answers every ledger reply with that status,
 // merge=<blocked|unconfirmed|changed> answers the merge preview or confirm that way, pull=<OPEN|CLOSED|MERGED|UNKNOWN>
 // is the lifecycle a merge record reads, repo=fail makes repository settings fail, ops=conflict makes every
-// provider, usage and routing save fail with a revision conflict.
+// provider, usage and routing save fail with a revision conflict, photo=fail makes stored reply photos unreadable.
 import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
 import { boardSnapshot } from "../src/paseo/shared/contract";
+import { readReplyPhoto } from "../src/paseo/shared/reply-history";
 import { confirmPullRequestMerge, previewPullRequestMerge, readPullLifecycle, setProjectRepository } from "../src/paseo/shared/prs";
 import { cancelQueuedReply, resolveTrackedDecision } from "../src/paseo/shared/tracked-decisions";
 import { sendDecision } from "../src/paseo/shared/decision-actions";
@@ -197,6 +198,13 @@ const handlers: Record<string, (input: any) => unknown> = {
     if (project) Object.assign(project, { mode: input.mode, repo: input.repo ?? (input.mode === "off" ? project.repo : null), status: input.mode === "off" ? "off" : "ok" });
     return { ok: true };
   },
+  "board.read-reply-photo": async (raw: unknown) => {
+    const input = readReplyPhoto.input.parse(raw);
+    await settle();
+    if (params.get("photo") === "fail") throw new Error("unavailable");
+    const data = (await photo(input.index + 1, 640, 360)).split(",")[1];
+    return { image: { mimeType: "image/png", data } };
+  },
   "board.fact-reply-settings": (raw: unknown) => { factReplySettings.input.parse(raw); return { enabled: factReplies }; },
   "board.set-fact-auto-reply": async (raw: unknown) => {
     factReplies = setFactAutoReply.input.parse(raw).enabled;
@@ -222,7 +230,7 @@ const handlers: Record<string, (input: any) => unknown> = {
     await settle();
     const messageId = crypto.randomUUID();
     snapshot.clarifications = [...snapshot.clarifications ?? [], { cardKey: clarificationKey(input.card), messageId, recipientId: input.recipientId,
-      question: input.question, at: new Date().toISOString(), status: "sent" }];
+      question: input.question, at: new Date().toISOString(), status: "sent", imageCount: input.images?.length || undefined }];
     return { ok: true, recipientId: input.recipientId, messageId };
   },
 };
@@ -250,6 +258,34 @@ const disposable = { dispose() {} };
   on: () => disposable,
 };
 
+async function photo(n: number, width = 320, height = 200) {
+  const canvas = Object.assign(document.createElement("canvas"), { width, height });
+  const context = canvas.getContext("2d")!;
+  const gradient = context.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, ["#4f46e5", "#0d9488", "#d97706", "#db2777"][n % 4]);
+  gradient.addColorStop(1, "#e5e7eb");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = "#fff";
+  context.font = `600 ${Math.round(height / 3)}px sans-serif`;
+  context.fillText(String(n), width / 2 - height / 10, height / 2 + height / 8);
+  return canvas.toDataURL("image/png");
+}
+// "+<n>" attaches n generated screenshots to the first visible attach button, "+<n>/<k>" to the k-th,
+// "+bad" attaches a text file.
+async function attach(spec: string) {
+  const [count, nth] = spec.split("/");
+  const input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))
+    .filter(field => (field.nextElementSibling?.querySelector("button") as HTMLElement | null)?.offsetParent !== null)[Number(nth ?? 1) - 1];
+  if (!input) return;
+  const files = count === "bad" ? [new File(["notes"], "메모.txt", { type: "text/plain" })]
+    : await Promise.all(Array.from({ length: Number(count) }, async (_, i) =>
+      new File([await (await fetch(await photo(i + 1))).blob()], `화면-${i + 1}.png`, { type: "image/png" })));
+  const transfer = new DataTransfer();
+  files.forEach(file => transfer.items.add(file));
+  input.files = transfer.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
 // Every card stays mounted while hidden, so a press goes to the first visible button or label with that text.
 const presses = params.get("press")?.split(",") ?? [];
 // "@<label>=<text>" types into the visible text box with that accessible label instead of pressing.
@@ -263,6 +299,7 @@ function type(label: string, text: string) {
 async function pressAll() {
   for (const label of presses) {
     await new Promise(resolve => setTimeout(resolve, 450));
+    if (label.startsWith("+")) { await attach(label.slice(1)); continue; }
     if (label.startsWith("@")) { const [name, ...text] = label.slice(1).split("="); type(name, text.join("=")); continue; }
     // "#<name>" matches the start of the accessible name, for buttons whose text starts with an icon.
     const named = label.startsWith("#") ? label.slice(1) : null;

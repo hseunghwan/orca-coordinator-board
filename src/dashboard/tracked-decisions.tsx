@@ -1,11 +1,12 @@
 /** @jsxImportSource react */
 // Paseo's TrackedDecisionCard (client/tracked-decisions.tsx): a ledger record with its questions, reply,
-// queued reply, evidence and result. Photos arrive in phase 6, so every answer is text only.
+// queued reply, evidence and result.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { z } from "zod";
 import { cancelQueuedReply, mentionsSecurityGate, resolveTrackedDecision, suggestedTrackedReply, trackedAnswerText, trackedPullTarget, usesSourceCoordinator, type TrackedDecision } from "../paseo/shared/tracked-decisions";
 import { useDecisionInteraction } from "./decision-editing";
 import { DecisionReplyInput } from "./decision-reply";
+import { PhotoComposer, usePhotoDraft } from "./photo-composer";
 import { TrackedPullStatus } from "./pull-requests";
 import { call } from "./rpc";
 import { SendButton } from "./send-input";
@@ -67,6 +68,7 @@ function DecisionRecord({ item, links, recipientId, onResolved, children, pull, 
   const [refreshFailed, setRefreshFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [hasQuestionDraft, setHasQuestionDraft] = useState(false);
+  const attachments = usePhotoDraft();
   const pending = useRef(false);
   const [kindKo, kindEn] = kinds[item.kind];
   const isMerge = item.kind === "merge";
@@ -89,7 +91,11 @@ function DecisionRecord({ item, links, recipientId, onResolved, children, pull, 
   const questionText = item.questions.map((question, index) => typed[index] ?? question.options
     .filter((_, choice) => selected[index]?.includes(choice))
     .map(option => option.key + " · " + option.text).join(", "));
-  const replies = questionText.map((value, index) => skipped[index] ? "" : value.trim());
+  const replies = questionText.map((value, index) => {
+    if (skipped[index]) return "";
+    const positions = attachments.photos.flatMap((photo, position) => photo.questionIndex === index ? [position + 1] : []);
+    return [value.trim(), positions.length ? t("첨부 사진 ", "Attached photos ") + positions.join(", ") : ""].filter(Boolean).join(" · ");
+  });
   const outstanding = replies.some((value, index) => !value && !skipped[index]);
   const answer = trackedAnswerText(item, replies, freeReply);
   const followupOnly = isMerge && item.questions.length > 0;
@@ -100,16 +106,17 @@ function DecisionRecord({ item, links, recipientId, onResolved, children, pull, 
     : item.where === "session"
     ? followupOnly ? t("담당 세션에 후속 답장 보내기", "Send follow-up reply to assigned session") : t("담당 세션에 답장 보내기", "Send reply to assigned session")
     : followupOnly ? t("코디네이터에 후속 답장 보내기", "Send follow-up reply to coordinator") : t("코디네이터에 답장 보내기", "Send reply to coordinator");
-  const hasAnswer = !!answer;
+  const hasPhotos = attachments.photos.length > 0;
+  const hasAnswer = !!answer || hasPhotos;
   const tooLong = answer.length > 4000;
   const humanCheck = item.kind === "check" && item.where === "human" && !item.questions.length && !item.matchedSessionId;
   // A suggestion is visible before the person edits. Checking a record sends no reply.
-  const hasDraft = hasQuestionDraft || !!editedReply?.trim() || questionText.some(value => !!value.trim());
-  const answerDisabled = busy || !hasAnswer || outstanding || tooLong;
+  const hasDraft = hasQuestionDraft || hasPhotos || !!editedReply?.trim() || questionText.some(value => !!value.trim());
+  const answerDisabled = busy || attachments.blocked || !hasAnswer || outstanding || tooLong;
   const sendReply = { disabled: !recipientId || !recordActions || answerDisabled || changedOwner, onPress: () => void acknowledge("send") };
   const inputFocus = useDecisionInteraction(!queue && !isClosed && !needsRefresh &&
     (hasDraft || editedReply !== null || Object.values(typed).some(value => value !== undefined) ||
-      busy || confirming || Object.values(skipped).some(Boolean)));
+      attachments.blocked || busy || confirming || Object.values(skipped).some(Boolean)));
   const checkLabel = t("확인했어요", "I checked this");
 
   function choose(index: number, choice: number, multi: boolean) {
@@ -147,16 +154,18 @@ function DecisionRecord({ item, links, recipientId, onResolved, children, pull, 
     const send = mode === "send";
     if (send && (!recipientId || changedOwner)) return;
     const text = mode === "review" ? "" : answer;
-    if (queue || pending.current || isClosed || needsRefresh || outstanding || (mode !== "review" && tooLong)) return;
-    if (mode === "review" ? hasDraft || item.matchedSessionId : !text) return;
+    if (queue || pending.current || attachments.blocksSubmit() || isClosed || needsRefresh || outstanding || (mode !== "review" && tooLong)) return;
+    if (mode === "review" ? hasDraft || attachments.latest.current.length > 0 || item.matchedSessionId : !text && !hasPhotos) return;
     pending.current = true; setBusy(true);
     let status: Resolution;
     try {
+      const images = attachments.latest.current.map(photo => photo.image);
       const response = await call(resolveTrackedDecision, { source: item.source, projectId: item.projectId, id: item.id, fingerprint: item.fingerprint,
-        ...(text ? { answer: text } : {}),
+        ...(text ? { answer: text } : {}), ...(images.length ? { images } : {}),
         ...(item.questions.length ? { questionIndexes: replies.flatMap((reply, index) => reply ? [index] : []) } : {}),
         ...(send && recipientId ? { recipientId } : {}) });
       status = response.status;
+      if (status === "sent" || status === "closed" || status === "already-closed") attachments.clear();
     } catch { status = send ? "unconfirmed" : "unavailable"; }
     setResult(status); setConfirming(false);
     try { await onResolved(status, mode, text.trim() || undefined); } catch { setRefreshFailed(true); }
@@ -204,18 +213,23 @@ function DecisionRecord({ item, links, recipientId, onResolved, children, pull, 
             </button>;
           })}
         </div>
-        {!skipped[index] && <DecisionReplyInput {...inputFocus} send={sendReply} value={questionText[index]} disabled={busy} maxLength={4000}
-          accessibilityLabel={item.title + " · " + question.text + " · " + t("답장 내용", "Reply text")}
-          onChangeText={text => { setConfirming(false); setTyped(previous => ({ ...previous, [index]: text })); setSelected(previous => ({ ...previous, [index]: [] })); }}
-          placeholder={question.options.length ? t("선택하거나 직접 답을 입력하세요", "Choose an option or write your reply") : t("내 답을 입력하세요", "Write your reply")} />}
+        {!skipped[index] && <PhotoComposer draft={attachments} disabled={busy} questionIndex={index}>
+          <DecisionReplyInput {...inputFocus} send={sendReply} value={questionText[index]} disabled={busy} maxLength={4000}
+            accessibilityLabel={item.title + " · " + question.text + " · " + t("답장 내용", "Reply text")}
+            onChangeText={text => { setConfirming(false); setTyped(previous => ({ ...previous, [index]: text })); setSelected(previous => ({ ...previous, [index]: [] })); }}
+            placeholder={question.options.length ? t("선택하거나 직접 답을 입력하세요", "Choose an option or write your reply") : t("내 답을 입력하세요", "Write your reply")} />
+        </PhotoComposer>}
         <div style={wrap}><Button size="sm" label={skipped[index] ? t("건너뛰기 취소", "Undo skip") : t("이 질문 건너뛰기", "Skip this question")}
           accessibilityLabel={item.title + " · " + question.text + " · " + t("건너뛰기", "Skip")} selected={!!skipped[index]}
-          disabled={busy} onPress={() => skip(index)} /></div>
+          disabled={busy || attachments.reading || attachments.errors.has(index) || attachments.photos.some(photo => photo.questionIndex === index)}
+          onPress={() => skip(index)} /></div>
       </div>)}
       {!item.questions.length && !item.matchedSessionId && <>
-        <DecisionReplyInput {...inputFocus} send={sendReply} accessibilityLabel={item.title + " · " + t("답장 내용", "Reply text")}
-          value={freeReply} disabled={busy} maxLength={4000} onChangeText={value => { setEditedReply(value); setConfirming(false); }}
-          placeholder={t("내 답을 입력하세요", "Write your reply")} />
+        <PhotoComposer draft={attachments} disabled={busy}>
+          <DecisionReplyInput {...inputFocus} send={sendReply} accessibilityLabel={item.title + " · " + t("답장 내용", "Reply text")}
+            value={freeReply} disabled={busy} maxLength={4000} onChangeText={value => { setEditedReply(value); setConfirming(false); }}
+            placeholder={t("내 답을 입력하세요", "Write your reply")} />
+        </PhotoComposer>
         {template && editedReply === null && <div style={wrap}><Button size="sm" disabled={busy} label={t("답장 양식 불러오기", "Load reply template")}
           onPress={() => { setEditedReply(suggested); setConfirming(false); }} /></div>}
       </>}

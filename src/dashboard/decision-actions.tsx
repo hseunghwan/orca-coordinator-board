@@ -1,7 +1,6 @@
 /** @jsxImportSource react */
 // Paseo's DecisionActions (client/decision-actions.tsx): the session decision card with its reply composer.
-// Photos arrive in phase 6, so the composer has no attach control. The recommendation and coordination
-// controls appear only once the board has a coordinator (phase 3).
+// The recommendation and coordination controls appear only once the board has a coordinator.
 import { useRef, useState, type ReactNode } from "react";
 import { sessionReplyDraft } from "../paseo/client/decision-reply-state";
 import { decisionSummary } from "../paseo/client/decision-summary";
@@ -11,6 +10,7 @@ import { requestRecommendation } from "../paseo/shared/recommendation";
 import type { OpenSession } from "./board-layout";
 import { useDecisionInteraction } from "./decision-editing";
 import { DecisionReplyInput } from "./decision-reply";
+import { PhotoComposer, usePhotoDraft, type PhotoDraft } from "./photo-composer";
 import { noRetry, retryKey } from "./request-key";
 import { call } from "./rpc";
 import { SendButton } from "./send-input";
@@ -49,6 +49,8 @@ export function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle
   const [selection, setSelection] = useState<number | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [coordination, setCoordination] = useState<CoordinationDraft | null>(null);
+  const replyPhotos = usePhotoDraft();
+  const editorPhotos = usePhotoDraft();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<[string, string] | null>(null);
   const pending = useRef(false);
@@ -56,10 +58,11 @@ export function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle
   const delivered = useRef("");
   const chosen = selection === null ? null : decision?.options?.[selection];
   const proposed = chosen?.reply || (decision?.needsInput ? undefined : decision?.recommendation);
-  const reply = sessionReplyDraft(proposed, draft, reviewedReply, false);
-  const sendReply = { disabled: busy || !reply.canSend, onPress: () => void submit("reply", reply.text, session.id) };
+  const reply = sessionReplyDraft(proposed, draft, reviewedReply, !!replyPhotos.photos.length);
+  const sendReply = { disabled: busy || replyPhotos.blocked || !reply.canSend, onPress: () => void submit("reply", reply.text, session.id, replyPhotos) };
   const inputFocus = useDecisionInteraction(!!coordination || (draft !== null && draft !== (proposed ?? "")) ||
-    selection !== null || !!reviewedReply || busy);
+    selection !== null || !!reviewedReply || busy || replyPhotos.blocked || !!replyPhotos.photos.length ||
+    editorPhotos.blocked || !!editorPhotos.photos.length);
   const { headline, formal, evidence } = decisionSummary(card, t);
   const marker = [session.projectTitle, session.title, hostLabel && t(`실행 호스트 · ${hostLabel}`, `Host · ${hostLabel}`), session.sourceProjectTitle && t(`원래 소속 ${session.sourceProjectTitle}`, `From ${session.sourceProjectTitle}`)].filter(Boolean).join(" · ");
   const named = (label: string) => ({ label, accessibilityLabel: `${session.title} · ${label}` });
@@ -67,22 +70,23 @@ export function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle
   function selectReply(index: number | null) {
     setSelection(index); setDraft(null); setReviewedReply(null); setShowMethods(false); setError(null);
   }
-  async function submit(action: Action, text: string, recipientId: string) {
-    if (!decision || formal || !text.trim() || pending.current) return;
+  async function submit(action: Action, text: string, recipientId: string, attachments: PhotoDraft) {
+    const photos = attachments.latest.current;
+    if (!decision || formal || (!text.trim() && !photos.length) || pending.current || attachments.blocksSubmit()) return;
     if (recipientId !== (action === "coordinate" ? coordinator : session.id)) {
       setError(["받는 세션이 바뀌었습니다. 대상을 다시 선택해 주세요.", "The recipient changed. Choose the recipient again."]); return;
     }
     const input = { projectId: session.projectId, sessionId: session.id, version: decision.version, action, recipientId, text };
-    const payload = JSON.stringify([input, []]);
+    const payload = JSON.stringify([input, photos.map(photo => photo.id)]);
     if (delivered.current === payload) { setError(["이 카드에서 같은 내용을 이미 보냈습니다.", "You already sent this message from this card."]); return; }
     retry.current = retryKey(retry.current, payload, "decision");
     pending.current = true; setBusy(true); setError(null);
     try {
-      const result = await call(sendDecision, { ...input, requestKey: retry.current.key });
+      const result = await call(sendDecision, { ...input, requestKey: retry.current.key, ...(photos.length ? { images: photos.map(photo => photo.image) } : {}) });
       if (!result.ok || result.recipientId !== recipientId) {
         setError(["영수증의 수신자를 확인할 수 없습니다. 원래 세션을 확인해 주세요.", "The receipt does not confirm the recipient. Check the original session."]); return;
       }
-      delivered.current = payload; setCoordination(null);
+      delivered.current = payload; attachments.clear(); setCoordination(null);
       if (action === "reply") setDraft("");
       onSent({ projectId: session.projectId, sessionId: session.id, version: decision.version, recipientId: result.recipientId,
         project: session.projectTitle, source: session.title, recipient: action === "coordinate" ? coordinatorTitle || recipientId : session.title, action, answer: text.trim() || undefined });
@@ -110,8 +114,8 @@ export function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle
 
   const targetChanged = !!coordination && coordination.recipientId !== coordinator;
   const sendCoordination = {
-    disabled: busy || targetChanged || !coordination?.text.trim(),
-    onPress: () => { if (coordination) void submit("coordinate", coordination.text, coordination.recipientId); },
+    disabled: busy || editorPhotos.blocked || targetChanged || (!coordination?.text.trim() && !editorPhotos.photos.length),
+    onPress: () => { if (coordination) void submit("coordinate", coordination.text, coordination.recipientId, editorPhotos); },
   };
   const canCoordinate = !!coordinator && coordinator !== session.id;
   const canRestore = !!decision?.recommendation && !decision.needsInput && (selection !== null || draft !== null);
@@ -135,10 +139,12 @@ export function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle
           <Button key={index} label={option.label} selected={selection === index}
             accessibilityLabel={named(t("선택", "Choose") + " · " + option.label).accessibilityLabel} disabled={busy}
             onPress={() => selectReply(index)} />)}</div>}
-        <DecisionReplyInput {...inputFocus} send={sendReply} value={reply.text} onChangeText={setDraft}
-          accessibilityLabel={named(t("답장 내용", "Reply text")).accessibilityLabel}
-          placeholder={t("담당 세션에 보낼 답을 입력하세요", "Write a reply to the assigned session")}
-          maxLength={24000} disabled={busy} reviewRequired={reply.needsReview} onReview={() => setReviewedReply(proposed ?? null)} />
+        <PhotoComposer draft={replyPhotos} disabled={busy}>
+          <DecisionReplyInput {...inputFocus} send={sendReply} value={reply.text} onChangeText={setDraft}
+            accessibilityLabel={named(t("답장 내용", "Reply text")).accessibilityLabel}
+            placeholder={t("담당 세션에 보낼 답을 입력하세요", "Write a reply to the assigned session")}
+            maxLength={24000} disabled={busy} reviewRequired={reply.needsReview} onReview={() => setReviewedReply(proposed ?? null)} />
+        </PhotoComposer>
         <div style={wrap}>
           <SendButton {...named(t("담당 세션에 답장 보내기", "Send reply to assigned session"))} send={sendReply} selected={!sendReply.disabled} />
           {clarification}
@@ -151,19 +157,21 @@ export function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle
         </div>}
         {showMethods && <div style={wrap}>
           {canRestore && <Button {...named(t("추천 답장으로 돌아가기", "Restore suggested reply"))} disabled={busy} onPress={() => selectReply(null)} />}
-          {canCoordinate && <Button {...named(t("코디네이터에 조율 요청", "Ask coordinator to coordinate"))} disabled={busy}
+          {canCoordinate && <Button {...named(t("코디네이터에 조율 요청", "Ask coordinator to coordinate"))} disabled={busy || replyPhotos.reading}
             onPress={() => { setError(null); setCoordination({ recipientId: coordinator, text: "" }); }} />}
         </div>}
       </>}
       {coordination && <div style={{ ...column, gap: 7 }}>
         <p className="muted">{t("받는 곳", "Recipient")} · {targetChanged ? coordination.recipientId : coordinatorTitle || coordinator}</p>
         {targetChanged && <p className="warn">{t("코디네이터가 교체되었습니다. 취소하고 새 수신자를 확인해 주세요.", "The coordinator changed. Cancel and check the new recipient.")}</p>}
-        <DecisionReplyInput {...inputFocus} send={sendCoordination} accessibilityLabel={named(t("조율 요청 내용", "Coordination request text")).accessibilityLabel}
-          placeholder={t("조율 요청 내용을 입력하세요", "Write your coordination request")} value={coordination.text}
-          disabled={busy || targetChanged} maxLength={24000} onChangeText={text => setCoordination({ ...coordination, text })} />
+        <PhotoComposer draft={editorPhotos} disabled={busy || targetChanged}>
+          <DecisionReplyInput {...inputFocus} send={sendCoordination} accessibilityLabel={named(t("조율 요청 내용", "Coordination request text")).accessibilityLabel}
+            placeholder={t("조율 요청 내용을 입력하세요", "Write your coordination request")} value={coordination.text}
+            disabled={busy || targetChanged} maxLength={24000} onChangeText={text => setCoordination({ ...coordination, text })} />
+        </PhotoComposer>
         <div style={wrap}>
           <SendButton {...named(busy ? t("전송 중…", "Sending…") : t("코디네이터에 조율 요청 보내기", "Send request to coordinator"))} send={sendCoordination} />
-          <Button {...named(t("취소", "Cancel"))} disabled={busy} onPress={() => { setCoordination(null); setError(null); }} />
+          <Button {...named(t("취소", "Cancel"))} disabled={busy || editorPhotos.reading} onPress={() => { setCoordination(null); setError(null); editorPhotos.clear(); }} />
         </div>
       </div>}
     </>}

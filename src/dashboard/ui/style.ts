@@ -56,6 +56,10 @@ html.dark .surface{border-color:var(--border)}
 .btn:disabled{opacity:.5;pointer-events:none}
 .btn svg{width:16px;height:16px;flex:none}
 .btn-sm{height:32px;padding:0 12px;gap:6px}
+.btn-icon{width:36px;padding:0}
+.drop-zone{display:flex;flex-direction:column;gap:6px;border-radius:var(--r-md)}
+.drop-zone[data-dragging=true]{outline:2px dashed var(--ring);outline-offset:2px}
+.thumb{width:56px;height:56px;flex:none;object-fit:contain;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--muted)}
 .btn-xs{height:24px;padding:0 8px;gap:4px;font-size:12px}
 .btn-primary{background:var(--primary);color:var(--primary-fg)}
 .btn-primary:hover{background:color-mix(in oklab,var(--primary) 90%,transparent)}

@@ -1,17 +1,42 @@
 /** @jsxImportSource react */
-// Paseo's ReplyHistory and ReplyCard (client/reply-history.tsx). Photos arrive in phase 6, so an entry
-// shows how many it had but not the photos, and sessions are local because Orca has no peer hosts.
-import { useState } from "react";
+// Paseo's ReplyHistory and ReplyCard (client/reply-history.tsx). Sessions are local because Orca has no
+// peer hosts.
+import { useEffect, useState } from "react";
 import type { HistoryLinks, HistorySession } from "../paseo/client/history-sessions";
 import { mergeNotificationLabel } from "../paseo/client/merge-notification";
 import { pullUrl } from "../paseo/shared/prs";
-import type { ReplyEntry } from "../paseo/shared/reply-history";
+import { readReplyPhoto, type ReplyEntry } from "../paseo/shared/reply-history";
 import type { OpenSession } from "./board-layout";
+import { call } from "./rpc";
 import { Button, column, Disclosure, row, SessionChip, space } from "./ui/controls";
 import { useBoardLanguage } from "./ui/language";
 import { Markdown } from "./ui/markdown";
 
 type Props = { entry: ReplyEntry; links: HistoryLinks; open?: OpenSession };
+
+function LocalPhoto({ entryKey, index }: { entryKey: string; index: number }) {
+  const { t } = useBoardLanguage();
+  const [uri, setUri] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let current = true;
+    setFailed(false); setUri(null);
+    void call(readReplyPhoto, { key: entryKey, index }).then(({ image }) => {
+      if (!current) return;
+      if (image) setUri(`data:${image.mimeType};base64,${image.data}`);
+      else setFailed(true);
+    }).catch(() => { if (current) setFailed(true); });
+    return () => { current = false; };
+  }, [entryKey, index, attempt]);
+  if (failed) return <div style={{ ...column, alignItems: "flex-start", gap: 4 }}>
+    <p role="status" className="muted">{t("사진을 불러오지 못했습니다.", "Could not load the photo.")}</p>
+    <Button size="sm" label={t("다시 불러오기", "Retry loading")} onPress={() => setAttempt(n => n + 1)} />
+  </div>;
+  if (!uri) return <p role="status" className="muted">{t("사진 불러오는 중…", "Loading photo…")}</p>;
+  return <img src={uri} alt={t(`첨부 사진 ${index + 1}`, `Attached photo ${index + 1}`)} onError={() => setFailed(true)}
+    style={{ width: "100%", height: 200, objectFit: "contain", borderRadius: "var(--r-sm)", background: "var(--muted)" }} />;
+}
 
 function SessionReference({ session, state, open }: Pick<Props, "open"> & { session: HistorySession; state?: string }) {
   const { t } = useBoardLanguage();
@@ -27,6 +52,7 @@ export function ReplyCard({ entry, links, open }: Props) {
   const { t, language } = useBoardLanguage();
   const [full, setFull] = useState(false);
   const [showOrigin, setShowOrigin] = useState(false);
+  const [photoIndex, setPhotoIndex] = useState<number | null>(null);
   const origin = entry.origin;
   const long = [entry.answer, entry.response].some(text => text && (text.length > 160 || text.split("\n").length > 3));
   const merge = entry.pullMerge;
@@ -50,7 +76,16 @@ export function ReplyCard({ entry, links, open }: Props) {
       <SessionReference key={JSON.stringify([session.role, session.host, session.id])} session={session} state={session.state && states[session.state]} open={open} />)}</div>}
     {!!entry.reviewReason && <Markdown source={entry.reviewReason} />}
     {!!entry.answer && <Markdown source={entry.answer} preview={long && !full} />}
-    {!!entry.imageCount && <p className="muted sm">{t(`첨부 사진 ${entry.imageCount}장`, `${entry.imageCount} attached photo${entry.imageCount === 1 ? "" : "s"}`)}</p>}
+    {!!entry.imageCount && <div style={{ ...column, gap: 4 }}>
+      <p className="muted sm">{t(`첨부 사진 ${entry.imageCount}장`, `${entry.imageCount} attached photo${entry.imageCount === 1 ? "" : "s"}`)}</p>
+      {entry.localPhotos && <>
+        <div style={{ ...row, gap: 5 }}>{Array.from({ length: entry.imageCount }, (_, index) =>
+          <Button key={index} size="sm" label={t(`사진 ${index + 1}`, `Photo ${index + 1}`)} expanded={photoIndex === index} selected={photoIndex === index}
+            accessibilityLabel={entry.title + " · " + t(`사진 ${index + 1}`, `Photo ${index + 1}`)}
+            onPress={() => setPhotoIndex(current => current === index ? null : index)} />)}</div>
+        {photoIndex !== null && <LocalPhoto key={entry.key + "/" + photoIndex} entryKey={entry.key} index={photoIndex} />}
+      </>}
+    </div>}
     {entry.status === "sent" && (entry.response
       ? <div style={{ ...column, gap: 3 }}>
         <p className="muted sm">{t("세션의 후속 응답", "Session follow-up")}</p>

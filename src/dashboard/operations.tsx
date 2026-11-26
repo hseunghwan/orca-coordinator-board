@@ -9,6 +9,7 @@ import { resolveRoute, type RouteChoice } from "../paseo/shared/dispatch";
 import { askDigest, requestWork, setProviderInclusion, setWorkerMode, updateRouting } from "../paseo/shared/operations";
 import { setUsageRouting } from "../paseo/shared/usage-routing";
 import type { Translate } from "../paseo/view-types";
+import { PhotoComposer, usePhotoDraft } from "./photo-composer";
 import { noRetry, retryKey, type RetryKey } from "./request-key";
 import { FactReplyControls } from "./fact-reply-controls";
 import { ProviderSettings } from "./providers";
@@ -52,6 +53,7 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [text, setText] = useState("");
   const [editorExpanded, setEditorExpanded] = useState(false);
+  const photoDraft = usePhotoDraft();
   const [confirm, setConfirm] = useState(false);
   const [chosenWorkspace, setChosenWorkspace] = useState<string | null>(null);
   const live = useRef(false);
@@ -105,23 +107,26 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
   }
 
   async function post(kind: Delivery) {
-    if (!coordinator || pending.current) return;
+    if (!coordinator || pending.current || (kind === "work" ? photoDraft.blocksSubmit() : photoDraft.readPending.current)) return;
+    const images = photoDraft.latest.current;
     const request = text.trim();
-    if (kind === "work" && !request) return;
-    const payload = JSON.stringify(kind === "digest" ? [coordinator, language] : [coordinator, request, []]);
+    if (kind === "work" && !request && !images.length) return;
+    const payload = JSON.stringify(kind === "digest" ? [coordinator, language] : [coordinator, request, images.map(photo => photo.id)]);
     delivery.current[kind] = retryKey(delivery.current[kind], payload, "board");
     const input = { coordinator, requestKey: delivery.current[kind].key };
     const sent = await act(async () => {
       const result = kind === "digest" ? await call(askDigest, { ...input, language, handleBoardFacts: true })
-        : await call(requestWork, { ...input, text: request });
+        : await call(requestWork, { ...input, text: request, ...(images.length > 0 && { images: images.map(photo => photo.image) }) });
       if (!result.ok) throw Error(t("전송을 확인하지 못했습니다. 다시 시도해 주세요.", "Delivery was not confirmed. Please retry."));
       return result;
     }, kind === "digest"
       ? t("다이제스트를 요청했습니다. 코디네이터 세션에서 답을 확인하세요.", "Digest requested. Open the coordinator session to read the response.")
-      : t("첨부 없이 코디네이터에게 요청을 보냈습니다.", "Sent the request to the coordinator without attachments."));
+      : images.length
+        ? t(`사진 ${images.length}장과 함께 코디네이터에게 요청을 보냈습니다.`, `Sent the request to the coordinator with ${images.length} photo${images.length === 1 ? "" : "s"}.`)
+        : t("첨부 없이 코디네이터에게 요청을 보냈습니다.", "Sent the request to the coordinator without attachments."));
     if (sent && live.current) {
       delivery.current[kind] = noRetry;
-      if (kind === "work") { setText(""); setEditorExpanded(false); }
+      if (kind === "work") { setText(""); setEditorExpanded(false); photoDraft.clear(); }
     }
   }
 
@@ -206,7 +211,7 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
     </Section>}
   </div>;
 
-  const sendRequest = { disabled: busy || !configured || !text.trim(), onPress: () => void post("work") };
+  const sendRequest = { disabled: busy || !configured || !(text.trim() || photoDraft.photos.length) || photoDraft.blocked, onPress: () => void post("work") };
   const requestLabel = t("코디네이터에게 맡길 일", "Request for the coordinator");
   return <Section title={t("코디네이터", "Coordinator")} aside={coordinator && openCoordinator &&
     <SessionChip label={t("코디네이터 세션", "Coordinator session")} accessibilityLabel={t("코디네이터 세션 열기", "Open coordinator session")} onPress={() => openCoordinator(coordinator)} />}>
@@ -216,13 +221,15 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
         <Button size="sm" expanded={editorExpanded} label={editorExpanded ? t("입력창 접기", "Collapse editor") : t("입력창 펼치기", "Expand editor")}
           onPress={() => setEditorExpanded(expanded => !expanded)} />
       </div>
-      <SendTextInput send={sendRequest} className="textarea-strong" aria-label={requestLabel} value={text} disabled={busy} maxLength={24000}
-        placeholder={t("예: 초안 작성과 자료 검증을 나눠 맡겨 주세요", "Example: Assign the first draft and source checks separately.")}
-        onChange={event => setText(event.target.value)}
-        style={{ height: editorExpanded ? Math.min(480, Math.max(160, Math.round(window.innerHeight * 0.48))) : undefined }} />
+      <PhotoComposer draft={photoDraft} disabled={busy} showHint>
+        <SendTextInput send={sendRequest} className="textarea-strong" aria-label={requestLabel} value={text} disabled={busy} maxLength={24000}
+          placeholder={t("예: 초안 작성과 자료 검증을 나눠 맡겨 주세요", "Example: Assign the first draft and source checks separately.")}
+          onChange={event => setText(event.target.value)}
+          style={{ height: editorExpanded ? Math.min(480, Math.max(160, Math.round(window.innerHeight * 0.48))) : undefined }} />
+      </PhotoComposer>
       <div style={wrap}>
         <SendButton label={t("코디네이터에 요청 보내기", "Send to coordinator")} send={sendRequest} selected={!sendRequest.disabled} />
-        <Button label={t("다이제스트 요청", "Request digest")} disabled={busy || !configured} onPress={() => void post("digest")} />
+        <Button label={t("다이제스트 요청", "Request digest")} disabled={busy || !configured || photoDraft.reading} onPress={() => void post("digest")} />
       </div>
       <p className="muted">{!configured ? t("설정에서 관리할 프로젝트를 선택해 주세요.", "Choose a project to manage in Settings.")
         : t("작업 요청은 코디네이터에게 전달됩니다. 다이제스트는 내 결정과 추천 답장을 모읍니다.", "Requests go to the coordinator. A digest gathers decisions and suggested replies.")}</p>
