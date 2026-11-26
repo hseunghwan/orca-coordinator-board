@@ -17,6 +17,8 @@ const SUGGESTED: Readonly<Record<string, readonly { model: string; label: string
     { model: "claude-opus-5-5", label: "Opus 5.5", efforts: CLAUDE_EFFORTS, isDefault: true },
     { model: "claude-fable-5-2", label: "Fable 5.2", efforts: CLAUDE_EFFORTS },
     { model: "claude-sonnet-5-5", label: "Sonnet 5.5", efforts: CLAUDE_EFFORTS },
+    // Not in Paseo's recommendations; a person can route a grade to it (orca agent launch --model haiku).
+    { model: "haiku", label: "Haiku", efforts: [] },
   ],
   codex: [
     { model: "gpt-6.2-astra", label: "GPT-6.2 Astra", efforts: CODEX_EFFORTS, isDefault: true },
