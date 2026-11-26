@@ -6,7 +6,8 @@
 // ledger=1 adds the phase 5 ledger records; resolve=<status> answers every ledger reply with that status,
 // merge=<blocked|unconfirmed|changed> answers the merge preview or confirm that way, pull=<OPEN|CLOSED|MERGED|UNKNOWN>
 // is the lifecycle a merge record reads, repo=fail makes repository settings fail, ops=conflict makes every
-// provider, usage and routing save fail with a revision conflict, photo=fail makes stored reply photos unreadable.
+// provider, usage and routing save fail with a revision conflict, photo=fail makes stored reply photos unreadable,
+// links=fail makes the session link list fail and links=conflict makes every link change fail.
 import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
@@ -19,7 +20,8 @@ import { askDigest, requestWork, setProviderInclusion, setWorkerMode, updateRout
 import { setUsageRouting } from "../src/paseo/shared/usage-routing";
 import { requestRecommendation } from "../src/paseo/shared/recommendation";
 import { startCoordinator } from "../src/dashboard/rpc";
-import { coordinatorSession, fixtureLedger, fixtureOperations, fixtureSnapshot } from "./fixture";
+import { coordinatorSession, fixtureLedger, fixtureOperations, fixtureSessionLinks, fixtureSnapshot } from "./fixture";
+import { linkSession } from "../src/paseo/shared/session-links";
 
 const params = new URLSearchParams(location.search);
 const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -52,6 +54,7 @@ const resolveAs = params.get("resolve");
 const mergeAs = params.get("merge");
 let factReplies = false;
 const ops = fixtureOperations();
+const sessionLinks = fixtureSessionLinks();
 const stale = (expected: number) => { if (params.get("ops") === "conflict" || expected !== ops.revision) throw new Error("revision_conflict: 다른 곳에서 설정이 바뀌었습니다. 새로 고친 뒤 다시 저장해 주세요."); ops.revision++; };
 const sha = (seed: string) => seed.repeat(40).slice(0, 40);
 const failing = !!params.get("fail");
@@ -205,6 +208,19 @@ const handlers: Record<string, (input: any) => unknown> = {
     const data = (await photo(input.index + 1, 640, 360)).split(",")[1];
     return { image: { mimeType: "image/png", data } };
   },
+  "board.session-links": async () => {
+    await settle();
+    if (params.get("links") === "fail") throw new Error("unavailable");
+    return { sessions: structuredClone(sessionLinks) };
+  },
+  "board.link-session": async (raw: unknown) => {
+    const input = linkSession.input.parse(raw);
+    await settle();
+    const entry = sessionLinks.find(row => row.sessionId === input.sessionId);
+    if (params.get("links") === "conflict" || !entry || entry.targetProjectId !== input.expectedTargetProjectId) throw new Error("conflict");
+    entry.targetProjectId = input.targetProjectId;
+    return { ok: true };
+  },
   "board.fact-reply-settings": (raw: unknown) => { factReplySettings.input.parse(raw); return { enabled: factReplies }; },
   "board.set-fact-auto-reply": async (raw: unknown) => {
     factReplies = setFactAutoReply.input.parse(raw).enabled;
@@ -290,10 +306,11 @@ async function attach(spec: string) {
 const presses = params.get("press")?.split(",") ?? [];
 // "@<label>=<text>" types into the visible text box with that accessible label instead of pressing.
 function type(label: string, text: string) {
-  const box = Array.from(document.querySelectorAll<HTMLTextAreaElement>("textarea"))
+  const box = Array.from(document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>("textarea, input"))
     .find(area => area.offsetParent !== null && area.getAttribute("aria-label")?.startsWith(label));
   if (!box) return;
-  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
+  const prototype = box instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(box, text);
   box.dispatchEvent(new Event("input", { bubbles: true }));
 }
 async function pressAll() {

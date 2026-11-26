@@ -150,6 +150,16 @@ const shots = [
   ["photo-history-light-wide", "theme=light" + press("기록", "최근 결정 기록", "이전 기록 더 보기", "사진 2"), 1280, 1200],
   ["photo-history-dark-narrow", "theme=dark" + press("기록", "최근 결정 기록", "이전 기록 더 보기", "사진 1"), 520, 1400],
   ["photo-history-fail-light-narrow", "theme=light&photo=fail" + press("기록", "최근 결정 기록", "이전 기록 더 보기", "사진 1"), 520, 1400],
+  ["links-light-wide", "theme=light" + press("설정", "다른 프로젝트의 세션"), 1280, 1400],
+  ["links-dark-narrow", "theme=dark" + press("설정", "다른 프로젝트의 세션"), 520, 2000],
+  ["links-pick-light-wide", "theme=light" + press("설정", "다른 프로젝트의 세션", "#오프라인 동기화", "#billing-api"), 1280, 1500],
+  ["links-linked-dark-wide", "theme=dark" + press("설정", "다른 프로젝트의 세션", "#오프라인 동기화", "#editor-app", "이 프로젝트에 연결"), 1280, 1500],
+  ["links-unlink-light-narrow", "theme=light" + press("설정", "다른 프로젝트의 세션", "#푸시 알림 문구", "프로젝트 연결 해제"), 520, 2000],
+  ["links-missing-dark-narrow", "theme=dark" + press("설정", "다른 프로젝트의 세션", "#예전 빌드 실험"), 520, 2000],
+  ["links-search-light-wide", "theme=light" + press("설정", "다른 프로젝트의 세션", "@연결할 세션 검색=충돌"), 1280, 1100],
+  ["links-more-dark-wide", "theme=dark" + press("설정", "다른 프로젝트의 세션", "세션 더 보기"), 1280, 1800],
+  ["links-fail-light-wide", "theme=light&links=fail" + press("설정", "다른 프로젝트의 세션"), 1280, 1000],
+  ["links-conflict-dark-wide", "theme=dark&links=conflict" + press("설정", "다른 프로젝트의 세션", "#오프라인 동기화", "#billing-api", "이 프로젝트에 연결"), 1280, 1500],
   ["ledger-merge-preview-en-dark-wide", "theme=dark&ledger=1&coord=1&lang=en" + press("설치 안내 이동", "Merge on board"), 1280, 1000],
 ];
 const only = process.argv[2] ? new RegExp(process.argv[2]) : null;

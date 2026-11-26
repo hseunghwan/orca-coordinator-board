@@ -131,6 +131,22 @@ export function fixtureLedger() {
   };
 }
 
+// Sessions the link picker lists: a few from the unmanaged mobile project, one already linked and one whose session is gone.
+export function fixtureSessionLinks() {
+  const entry = (sessionId: string, title: string, sourceProjectId: string, workspaceTitle: string, targetProjectId: string | null = null, available = true) => {
+    const source = projects.find(p => p.id === sourceProjectId)!;
+    return { sessionId, title, sourceProjectId, sourceProjectTitle: source.title, workspaceTitle, targetProjectId, available };
+  };
+  return [
+    entry("m-sync", "오프라인 동기화", "mobile", "feat-sync"),
+    entry("m-push", "푸시 알림 문구", "mobile", "main", "billing"),
+    entry("m-crash", "충돌 보고 정리", "mobile", "fix-crash"),
+    entry("m-gone", "예전 빌드 실험", "mobile", "exp-build", "editor", false),
+    ...Array.from({ length: 11 }, (_, i) => entry(`m-ui-${i + 1}`, `화면 다듬기 ${i + 1}`, "mobile", `ui-${i + 1}`)),
+    entry("s-refund", "환불 API 문서", "billing", "환불-api-문서"),
+  ];
+}
+
 // The coordinator joins the board only when a harness page asks for one.
 export const coordinatorSession = { ...base("s-coord", "billing", "코디네이터"), lane: "idle" as const, status: "idle", activityAt: minutes(2), detail: "다음 요청 대기" };
 

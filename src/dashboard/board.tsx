@@ -28,6 +28,7 @@ import { MergeFeedback, PullRequestCard, PullRequestSettings, type MergeNotice, 
 import { call, openSession } from "./rpc";
 import { TrackedDecisionCard } from "./tracked-decisions";
 import type { TrackedSessionLinks } from "./tracked-session-chips";
+import { SessionLinks } from "./session-links";
 import { SessionProgress } from "./session-progress";
 import { Button, column, Disclosure, fontSize, row, space } from "./ui/controls";
 import { BoardLanguageSetting, useBoardLanguage } from "./ui/language";
@@ -305,6 +306,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
         : <Disclosure title={t("보드에서 관리할 프로젝트 선택", "Choose projects to manage")} expanded={manage} onPress={() => setManage(!manage)}>
           {projectPicker}
         </Disclosure>)}
+      {settings && snapshot && !!configured && <SessionLinks projects={snapshot.projects} onChange={onRefresh} />}
       {settings && snapshot?.pullRequests && !!configured && <PullRequestSettings view={snapshot.pullRequests}
         names={new Map(snapshot.projects.map(project => [project.id, project.title]))} refresh={onRefresh} />}
       {operationsNode}
