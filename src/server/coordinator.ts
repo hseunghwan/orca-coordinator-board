@@ -2,7 +2,7 @@
 // plugins cannot give an agent MCP tools, so each tool is a coordinator-board command answered over the
 // channel (src/channel/), and the agent is the session the channel verified. The tool bodies are
 // Paseo's. report needs the caller on the board instead of Paseo's reporting metadata, which Orca
-// sessions lack. plan, assign, fact and review come in later phases.
+// sessions lack. fact and review are served from ./board-facts.ts and ./tracked-review.ts; plan and assign come later.
 import { z } from "zod";
 import type { PluginHandlerContext } from "../orca";
 import type { Command } from "../channel/names";
@@ -15,7 +15,7 @@ import { isCurrentMembership, managedSessions } from "./session-links";
 type Sdk = PluginHandlerContext["paseo"];
 export type ToolContext = { paseo: Sdk; agent: { id: string } };
 export type ToolResult = { text: string; isError?: boolean };
-type Tool = { audience: "coordinator" | "session"; input: z.ZodType; execute(input: never, context: ToolContext): Promise<ToolResult> };
+export type Tool = { audience: "coordinator" | "session"; input: z.ZodType; execute(input: never, context: ToolContext): Promise<ToolResult> };
 
 export const notYet = "이 버전의 보드에는 아직 없는 명령입니다. 사람에게 보드에서 직접 처리해 달라고 알리세요.";
 
@@ -46,13 +46,13 @@ export function recordReport(store: NoteStore, sessionId: string, report: z.infe
     { isError: true, text: "The card changed. Leave your update in the session." };
 }
 
-function tool<I extends z.ZodType>(audience: Tool["audience"], input: I, execute: (input: z.output<I>, context: ToolContext) => Promise<ToolResult>): Tool {
+export function tool<I extends z.ZodType>(audience: Tool["audience"], input: I, execute: (input: z.output<I>, context: ToolContext) => Promise<ToolResult>): Tool {
   return { audience, input, execute: execute as Tool["execute"] };
 }
 
 const later = tool("coordinator", z.unknown(), async () => { throw new Error(notYet); });
 
-export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore): Record<Command, Tool> {
+export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Partial<Record<Command, Tool>> = {}): Record<Command, Tool> {
   const read = tool("coordinator", z.object({ sessionId: z.string().optional() }), async ({ sessionId }, { paseo, agent }) => {
     const rows = await managedRowsForCoordinator(paseo, prefs, agent.id);
     if (!sessionId) {
@@ -106,7 +106,7 @@ export function coordinatorCommands(prefs: PreferenceStore, reader: Conversation
     }
     return recordReport(notes, agent.id, input);
   });
-  return { read, classify, report, plan: later, assign: later, fact: later, review: later };
+  return { read, classify, report, plan: later, assign: later, fact: later, review: later, ...served };
 }
 
 /** Parses the input the way Paseo's tool host does, and runs the tool's body. */

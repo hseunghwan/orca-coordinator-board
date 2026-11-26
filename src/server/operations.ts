@@ -18,6 +18,7 @@ import type { PreferenceStore } from "../paseo/server/preferences";
 import { readAccountUsage, readDirectory } from "./catalog";
 import type { DecisionSender } from "./decisions";
 import { CoordinatorLifecycle } from "./lifecycle";
+import type { BoardFacts } from "./board-facts";
 
 export { coordinatorWorkspace, operations, startCoordinator } from "../contract";
 import { operations, startCoordinator } from "../contract";
@@ -47,6 +48,15 @@ const prompts = {
 export const digestPrompt = prompts.ko + " 이번 요청은 조회와 분류만 맡깁니다.";
 export const englishDigestPrompt = prompts.en + " Limit this request to reading and classification.";
 
+/** Paseo's digestWithFactReplies, naming the fact command and its flags instead of the tool. */
+export function digestWithFactReplies(language: "ko" | "en", cycleId: string) {
+  const command = "coordinator-board fact --cycle " + cycleId + " --session <sessionId> --evidence <evidenceId>";
+  const instructions = language === "ko"
+    ? "이번 다이제스트에서 보드가 단독 사실 질문으로 식별한 세션(coordinator-board read 목록의 factCandidate)에는 `" + command + "`로 답하세요. 이 명령이 허용한 대상·근거에 대해서만 코디네이터 이름으로 확인된 사실을 보낼 수 있습니다. 다른 방식의 메시지 전송은 요청하지 않았습니다. 처리 결과와 사람이 결정할 안건을 구분하세요."
+    : "For this digest, run `" + command + "` for standalone factual questions identified by the board (factCandidate in the coordinator-board read listing). Only that command may send its verified facts as the coordinator. Do not send a message by any other route. Report handled items separately from human decisions.";
+  return prompts[language] + " " + instructions + " " + JSON.stringify({ cycleId });
+}
+
 export function recommendationPrompt(sessionId: string, language: "ko" | "en") {
   const target = JSON.stringify({ sessionId });
   return language === "en"
@@ -63,7 +73,7 @@ function requestUuid(content: unknown[]) {
 }
 
 export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "deliver">, store: PreferenceStore, t: T,
-  expected: string, key: string, text: string, options: { reserveMessage?: (originalId: string) => string; boardMade: boolean }) {
+  expected: string, key: string, text: string, options: { reserveMessage?: (originalId: string) => string; beforeSend?: (messageId: string) => void; boardMade: boolean }) {
   if (store.read().coordinator !== expected) throw new Error(t("현재 코디네이터를 다시 확인해 주세요.", "Check the current coordinator again."));
   if (!store.read().projects.length) throw new Error(t("관리할 프로젝트를 하나 이상 선택하세요.", "Choose at least one project to manage."));
   const session = (await fleet.view({ maxAgeMs: 0 })).sessions.get(expected as SessionId);
@@ -71,6 +81,7 @@ export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "delive
   if (store.read().coordinator !== expected) throw new Error(t("코디네이터가 교체되었습니다. 새로 고쳐 주세요.", "The coordinator changed. Refresh the board."));
   const originalId = requestUuid([expected, key, text]);
   const messageId = options.reserveMessage?.(originalId) ?? originalId;
+  options.beforeSend?.(messageId);
   const outcome = await fleet.deliver({
     messageId, to: expected as SessionId, text: options.boardMade ? BOARD_PREFIX + "\n" + text : text,
     subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse",
@@ -90,7 +101,8 @@ export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "delive
   return { ok: true };
 }
 
-export function registerOperations(server: PluginServerContext, store: PreferenceStore, fleet: Fleet, decisions: DecisionSender, dataDir: string, deps: OperationDeps) {
+export function registerOperations(server: PluginServerContext, store: PreferenceStore, fleet: Fleet, decisions: DecisionSender, dataDir: string, deps: OperationDeps,
+  facts?: Pick<BoardFacts, "prepareCycle" | "bindMessage">) {
   const lifecycle = new CoordinatorLifecycle(store, fleet, dataDir, { t: deps.t, bin: deps.bin });
   const unsupportedPin = () => new Error(deps.t()("Orca에서는 플러그인이 워크스페이스를 고정할 수 없습니다.", "Orca does not let a plugin pin a workspace."));
 
@@ -200,6 +212,11 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
   });
   server.handle(askDigest, async input => {
     const language = input.language ?? "ko";
+    const cycle = input.handleBoardFacts && facts ? await facts.prepareCycle(fleet.paseo, input.coordinator, input.requestKey) : null;
+    if (cycle && facts) {
+      return sendCoordinatorRequest(fleet, store, deps.t(), input.coordinator, input.requestKey, digestWithFactReplies(language, cycle),
+        { boardMade: true, beforeSend: messageId => facts.bindMessage(input.coordinator, cycle, messageId) });
+    }
     return sendCoordinatorRequest(fleet, store, deps.t(), input.coordinator, input.requestKey, language === "en" ? englishDigestPrompt : digestPrompt, { boardMade: true });
   });
   server.handle(requestWork, async input => {

@@ -20,6 +20,7 @@ import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } fro
 import { ProjectPullRequests } from "./prs";
 import type { Command } from "../channel/names";
 import { coordinatorCommands, runCommand } from "./coordinator";
+import { BoardFacts } from "./board-facts";
 import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operations";
 import { translator } from "../i18n";
 import { createHash } from "node:crypto";
@@ -44,8 +45,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const reader = new ConversationReader();
   const prs = new ProjectPullRequests(prefs, pulls);
   const decisions = new DecisionSender(prefs, notes, reader, fleet);
-  const commands = coordinatorCommands(prefs, reader, notes);
-  const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host);
+  const facts = new BoardFacts(prefs, notes, reader, fleet);
+  facts.register(server);
+  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool });
+  const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
     const session = (await fleet.view({ maxAgeMs: 0 })).sessions.get(sessionId as SessionId);
@@ -82,6 +85,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     const latest = prefs.read();
     const visible = sessions.filter(row => isCurrentMembership(row, latest));
     const visibleNotes = notes.visible(new Set(visible.map(s => s.id)));
+    facts.decorate(visible, evidence, visibleNotes);
     for (const row of visible) {
       decorateDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
       restoreClarifiedDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
