@@ -35,7 +35,7 @@ const local = (w: WorkspaceRecord) => !w.archived && (!w.hostId || w.hostId === 
 export function coordinatorWorkspaces(world: World, focusedId: string | null, selected: readonly string[]) {
   const focusKey = focusedId ? workspaceKey({ id: focusedId }) : null;
   return [...world.workspaces.values()].filter(local)
-    .map(w => ({ id: w.id as string, projectId: w.projectId as string, title: w.title,
+    .map(w => ({ id: w.id as string, projectId: w.projectId as string, title: w.projectName && w.projectName !== w.title ? `${w.projectName} · ${w.title}` : w.title,
       ...(focusedId && (w.listId === focusedId || w.id === focusedId || (focusKey && workspaceKey(w) === focusKey)) ? { focused: true } : {}) }))
     .sort((a, b) => Number(selected.includes(b.projectId)) - Number(selected.includes(a.projectId)) || a.title.localeCompare(b.title));
 }
