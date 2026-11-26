@@ -44,6 +44,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - 대시보드 `.tsx` 첫 줄의 `/** @jsxImportSource react */`는 지우지 않는다. tsconfig의 기본 JSX는 사이드바 패널용 `orca`다.
 - 대시보드는 워커를 Paseo 계약(`src/paseo/shared/contract.ts` 등의 `defineRpc`)으로 부른다. `src/dashboard/rpc.ts`의 `call`이 출력을 zod로 검사한다. 워커가 보내는 `board.changed`는 다시 읽으라는 신호일 뿐이다.
 - 대시보드 열쇠 파일(`.coordinator-board/`)은 `.git/info/exclude`로 숨기고, 사용자 저장소에 `.gitignore`를 새로 만들지 않는다.
+- 코디네이터 운영 폴더(보드 데이터 폴더의 `coordinator`)는 `src/orca/home.ts`의 `CoordinatorHome.ensure`로만 등록한다. `repo list`를 경로로 먼저 보고, `repo add`의 답은 믿지 않고 `repo list`를 다시 읽어 확인한다. 이 프로젝트는 `Fleet.paseo.projects.list`와 보드의 프로젝트 선택에서 빠진다.
 - 작업자 실행은 `src/server/dispatch.ts`로만 한다. 실행 기록(`workers.json`)을 먼저 쓰고, `orca agent launch`는 채널 protocol 2로 코디네이터의 셸에서 돌린다(`ToolContext.caller`). 워커 자신의 CLI로 작업자를 띄우지 않는다. 작업자 권한은 `src/channel/hook.ts`의 `WORKER_MODES`에서만 고르고, 우회 모드를 넣지 않는다.
 - 사진은 메시지에 붙이지 않고 `fleet.deliver`의 `photos`(파일 경로)로만 보낸다. 표식 뒤 `[사진 n]` 줄의 모양은 `src/orca/conversation.ts`의 `photoLines`와 `readMarked`가 함께 정한다.
 - 터미널 전송은 CLI `orca terminal send`로만 한다. 포커스와 상관없이 들어가므로 보내기 전에 `terminal.focus`로 화면을 옮기지 않는다.

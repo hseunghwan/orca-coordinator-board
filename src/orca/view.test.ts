@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { fixtureWorld as world, sid } from './fixtures/load'
-import { paseoAgentView, workspaceKey } from './view'
+import { buildWorld, paseoAgentView, samePath, workspaceKey } from './view'
 
 test('a row without an orca_session_id is counted, not boarded, and one conversation in two panes is one session', () => {
   const w = world()
@@ -15,6 +15,17 @@ test('workspaces keep the host list id, a branch without refs/heads and the proj
   expect(login).toMatchObject({ listId: 'identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000002', branch: 'feat/login', projectName: 'app', title: 'feat-login' })
   const folder = w.workspaces.get('folder:f01d0000-0000-4000-8000-000000000000' as never)
   expect(folder).toMatchObject({ listId: 'folder:f01d0000-0000-4000-8000-000000000000', projectName: 'Notes', branch: null })
+})
+
+test('a folder project\'s id: selector is not taken for a workspace.list id', () => {
+  const w = buildWorld({ worktrees: [{ worktreeId: 'r1::C:\\w\\home', repoId: 'r1', path: 'C:\\w\\home', address: { worktree: 'id:r1::C:\\w\\home' } }] },
+    { repos: [{ id: 'r1', path: 'C:\\w\\home', displayName: 'home' }] }, 0)
+  expect([...w.workspaces.values()][0].listId).toBeNull()
+})
+
+test('a Windows path is one folder whatever its case and slashes; other paths compare exactly', () => {
+  expect(samePath('C:\\Users\\Me\\.board\\coordinator', 'c:/users/me/.board/coordinator/')).toBe(true)
+  expect(samePath('/home/me/Board', '/home/me/board')).toBe(false)
 })
 
 test('only an inline raster icon is kept, so an isolated frame never fetches', () => {

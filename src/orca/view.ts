@@ -130,6 +130,9 @@ function normalPath(path: string): string {
   return /^[a-z]:\//i.test(slashes) ? slashes.toLowerCase() : slashes
 }
 
+/** Two local paths name one folder: Windows paths compare without case and with either slash. */
+export const samePath = (a: string, b: string) => normalPath(a) === normalPath(b)
+
 /**
  * One join key for every workspace id Orca prints: "folder:<uuid>" stays as it is; "<repo>::<path>"
  * (CLI rows, event workspaceId) and an "identity:..." id with its row path (host workspace.list)
@@ -165,7 +168,8 @@ export function buildWorld(ps: WorktreePs, repos: RepoList, at: number): World {
     const title = w.displayName?.trim() || w.branch?.replace(/^refs\/heads\//, '') || w.path
     workspaces.set(id, {
       id,
-      listId: (w.address?.worktree ?? null) as WorkspaceListId | null,
+      // A folder project's address is an "id:<repo>::<path>" selector, not a workspace.list id.
+      listId: (w.address?.worktree && !w.address.worktree.startsWith('id:') ? w.address.worktree : null) as WorkspaceListId | null,
       projectId: w.repoId as RepoId,
       projectName: projects.get(w.repoId as RepoId)?.name ?? w.repo ?? title,
       path: w.path,

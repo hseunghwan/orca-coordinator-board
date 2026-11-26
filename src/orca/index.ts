@@ -5,12 +5,14 @@ import type { PluginRpcContract } from '../paseo/plugin-shim'
 import { agentRead, timelinePage, type TimelinePage } from './conversation'
 import type { OrcaCli } from './cli'
 import { createDeliver, type DeliverDeps, type Delivery, type DeliveryOutcome } from './deliver'
+import { CoordinatorHome, homeDir } from './home'
 import {
-  buildWorld, paseoAgentView, paseoProjectView, paseoWorkspaceView, repoList, worktreePs,
+  buildWorld, paseoAgentView, paseoProjectView, paseoWorkspaceView, repoList, samePath, worktreePs,
   type PaseoAgentView, type PaseoProjectView, type PaseoWorkspaceView, type SessionId, type TerminalHandle, type World, type WorktreeId
 } from './view'
 
 export * from './view'
+export { CoordinatorHome, homeDir } from './home'
 export type { TimelinePage } from './conversation'
 export type { Delivery, DeliveryOutcome, RefuseReason, Route, Sender } from './deliver'
 
@@ -76,6 +78,8 @@ export interface Fleet {
   launch(request: LaunchRequest): Promise<LaunchOutcome>
   /** For reads the Fleet does not model (installed agents, account usage). */
   cli: OrcaCli
+  /** The board's coordinator folder project, under the data folder; null without one. Not a managed project. */
+  home: CoordinatorHome | null
   paseo: PaseoReads
 }
 
@@ -179,12 +183,13 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
     },
     projects: {
       async list() {
-        return { projects: [...(await view()).projects.values()].map(paseoProjectView) }
+        return { projects: [...(await view()).projects.values()].filter((p) => !home || !samePath(p.path, home.dir)).map(paseoProjectView) }
       }
     }
   }
 
   const sender = send ? createDeliver({ ...send, cli, view, now }) : null
+  const home = send ? new CoordinatorHome(homeDir(send.dataDir), cli, send.sleep) : null
   const sentText = (messageId: string) => sender?.sentText(messageId)
 
   async function launch(request: LaunchRequest): Promise<LaunchOutcome> {
@@ -197,6 +202,7 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
     view,
     launch,
     cli,
+    home,
     peek: () => last,
     deliver(delivery) {
       if (!sender) return Promise.reject(new Error('this fleet has no data folder to send from'))

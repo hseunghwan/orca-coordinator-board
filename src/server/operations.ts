@@ -1,6 +1,7 @@
 // Adapted from paseo-coordinator-board server/operations.ts, server/digest.ts and
 // server/recommendation.ts @ 2e9d128. The provider directory and usage come from the orca CLI
-// (./catalog.ts), the coordinator starts through ./lifecycle.ts in a workspace the person picks, and
+// (./catalog.ts), the coordinator starts through ./lifecycle.ts in the board's coordinator home unless the
+// person picks another workspace, and
 // requests reach it through fleet.deliver. Paseo steers a running coordinator; Orca cannot, so a
 // request waits until the coordinator is idle. Orca has no pin, photos are named by path in the message
 // (./photo-files.ts), and tool names in the prompts are coordinator-board commands.
@@ -40,12 +41,28 @@ export type OperationDeps = {
 
 const local = (w: WorkspaceRecord) => !w.archived && (!w.hostId || w.hostId === "local");
 
-export function coordinatorWorkspaces(world: World, focusedId: string | null, selected: readonly string[]) {
+/** Local workspaces a coordinator can start in: the coordinator home first, then the managed projects'. */
+export function coordinatorWorkspaces(world: World, focusedId: string | null, selected: readonly string[], home: { project: string | null; title: string }) {
   const focusKey = focusedId ? workspaceKey({ id: focusedId }) : null;
   return [...world.workspaces.values()].filter(local)
-    .map(w => ({ id: w.id as string, projectId: w.projectId as string, title: w.projectName && w.projectName !== w.title ? `${w.projectName} · ${w.title}` : w.title,
+    .map(w => ({ id: w.id as string, projectId: w.projectId as string,
+      title: w.projectId === home.project ? home.title : w.projectName && w.projectName !== w.title ? `${w.projectName} · ${w.title}` : w.title,
+      ...(w.projectId === home.project ? { home: true } : {}),
       ...(focusedId && (w.listId === focusedId || w.id === focusedId || (focusKey && workspaceKey(w) === focusKey)) ? { focused: true } : {}) }))
-    .sort((a, b) => Number(selected.includes(b.projectId)) - Number(selected.includes(a.projectId)) || a.title.localeCompare(b.title));
+    .sort((a, b) => Number(!!b.home) - Number(!!a.home) || Number(selected.includes(b.projectId)) - Number(selected.includes(a.projectId)) || a.title.localeCompare(b.title));
+}
+
+const homeTitle = (t: T) => t("코디네이터 운영", "Coordinator home");
+
+/** The coordinator home's workspace, registering the folder with Orca the first time. */
+async function homeWorkspace(fleet: Fleet, t: T): Promise<WorkspaceRecord> {
+  const fail = (detail: string) => new Error(t("코디네이터 운영 폴더를 Orca 프로젝트로 열지 못했습니다. ", "Could not open the coordinator home as an Orca project. ") + detail);
+  if (!fleet.home) throw fail("");
+  await fleet.home.ensure().catch((error: unknown) => { throw fail(error instanceof Error ? error.message : String(error)); });
+  fleet.invalidate();
+  const workspace = fleet.home.workspace(await fleet.view({ maxAgeMs: 0 }));
+  if (!workspace) throw fail(t("Orca가 이 폴더의 워크스페이스를 아직 보여 주지 않습니다. 잠시 뒤 다시 누르세요.", "Orca does not list the folder's workspace yet. Try again in a moment."));
+  return workspace;
 }
 
 const prompts = {
@@ -138,7 +155,7 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
       providers: directory.providers.map(p => ({ ...p, included: !scope.excludedProviders.includes(p.id) })),
       catalog, coordinatorMode: catalog.find(m => m.provider === coordinator?.provider)?.coordinatorMode ?? null,
       routing: scope.routing, revision: scope.routingRevision,
-      workspaces: coordinatorWorkspaces(world, focused, scope.projects),
+      workspaces: coordinatorWorkspaces(world, focused, scope.projects, { project: fleet.home?.project(world) ?? null, title: homeTitle(deps.t()) }),
     };
   });
   server.handle(setUsageRouting, async input => {
@@ -212,14 +229,14 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
     const mode = catalog.find(m => m.provider === input.expectedRoute.provider)?.coordinatorMode;
     if (!mode || (input.expectedModeId !== undefined && input.expectedModeId !== mode.id))
       throw new Error("코디네이터 권한 모드를 확인할 수 없거나 바뀌었습니다. 설정에서 실행기·모델을 새로 고쳐 주세요.");
-    const candidates = coordinatorWorkspaces(world, focused, initial.projects);
-    const picked = input.workspaceId ? candidates.find(w => w.id === input.workspaceId) : candidates.find(w => w.focused);
+    const candidates = coordinatorWorkspaces(world, focused, initial.projects, { project: fleet.home?.project(world) ?? null, title: homeTitle(t) });
+    const picked = input.workspaceId ? candidates.find(w => w.id === input.workspaceId) : undefined;
     if (input.workspaceId && !picked) throw new Error(t("고른 워크스페이스를 이 컴퓨터에서 찾을 수 없습니다. 목록을 새로 고쳐 주세요.", "The chosen workspace is not on this computer any more. Refresh the list."));
     return lifecycle.ensure({
       expectedCoordinator: input.expectedCoordinator, replace: input.replace,
       config: { provider: input.expectedRoute.provider + "/" + input.expectedRoute.model,
         ...(input.expectedRoute.effort !== null ? { thinkingOptionId: input.expectedRoute.effort } : {}), modeId: mode.id },
-      workspace: picked ? world.workspaces.get(picked.id as WorktreeId) ?? null : null, verifyRoute,
+      workspace: async () => picked ? world.workspaces.get(picked.id as WorktreeId) ?? null : homeWorkspace(fleet, t), verifyRoute,
     });
   });
   server.handle(askDigest, async input => {

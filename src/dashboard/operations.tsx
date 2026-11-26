@@ -135,14 +135,16 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
   const mode = data?.coordinatorMode;
   const modeText = mode ? t(`도구 권한 · ${mode.label}`, `Tool permissions · ${mode.label}`)
     : t("권한 모드를 확인할 수 없습니다. 실행기와 모델을 새로 고쳐 주세요.", "Permission mode unavailable. Refresh providers and models.");
-  const workspaces = data?.workspaces ?? [];
-  const startIn = workspaces.find(w => w.id === chosenWorkspace) ?? workspaces.find(w => w.focused) ?? workspaces[0];
+  // The coordinator home is the default. Before the board first registers it, it shows as an entry with no id.
+  const listed = data?.workspaces ?? [];
+  const workspaces = data && !listed.some(w => w.home) ? [{ id: "", projectId: "", title: t("코디네이터 운영", "Coordinator home"), home: true }, ...listed] : listed;
+  const startIn = workspaces.find(w => w.id === chosenWorkspace) ?? workspaces.find(w => w.home) ?? workspaces[0];
   const projectTitle = (id: string) => projects.find(project => project.id === id)?.title;
 
   function connect() {
     if (!model || !mode || !configured) return;
     void act(() => call(startCoordinator, {
-      expectedCoordinator: coordinator, replace: !!coordinator, expectedRoute: model, expectedModeId: mode.id, ...(startIn && { workspaceId: startIn.id }),
+      expectedCoordinator: coordinator, replace: !!coordinator, expectedRoute: model, expectedModeId: mode.id, ...(startIn && !startIn.home && { workspaceId: startIn.id }),
     }), t("운영 세션을 연결했습니다.", "Coordinator session connected.")).then(result => {
       if (result && live.current) setConfirm(false);
     });

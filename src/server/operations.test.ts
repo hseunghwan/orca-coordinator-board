@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -30,7 +30,9 @@ function setup(sessions: FakeSession[] = []) {
   prefs.change(s => { s.projects = ['acme'] })
   const launches = () => orca.writes.filter(w => w[0] === 'agent' && w[1] === 'launch')
   const setupCoordinator = (more: object = {}) => request('board.setup-coordinator', { replace: false, expectedCoordinator: null, expectedRoute: ROUTE, ...more })
-  return { orca, fleet, board, request, prefs, launches, setupCoordinator }
+  const repoAdds = () => orca.writes.filter(w => w[0] === 'repo' && w[1] === 'add')
+  const home = join(dataDir, 'coordinator')
+  return { orca, fleet, board, request, prefs, launches, setupCoordinator, repoAdds, home, homeWorkspace: 'home-1::' + home.replace(/\\/g, '/') }
 }
 
 test('the operations catalog lists installed agents with suggested models, the coordinator mode and the workspaces to start in', async () => {
@@ -55,16 +57,18 @@ test('account rate limits become Paseo usage windows, a model family window scop
   expect(usage[1]).toMatchObject({ providerId: 'gemini', status: 'unavailable', windows: [] })
 })
 
-test('setup launches one terminal coordinator in the focused workspace, marked for the hook, and adopts its session', async () => {
+test('setup launches one terminal coordinator in the coordinator home, marked for the hook, and adopts its session', async () => {
   const f = setup()
   f.orca.behavior.reportAfterPs = 2
   let pendingDuringLaunch: unknown
-  f.orca.behavior.onWrite = () => { pendingDuringLaunch = f.board.pendingLaunches()[0] }
+  f.orca.behavior.onWrite = (args) => { if (args[0] === 'agent') pendingDuringLaunch = f.board.pendingLaunches()[0] }
   const started = await f.setupCoordinator() as { sessionId: string; workspaceId: string; reused: boolean }
-  expect(started).toEqual({ sessionId: 'launched-1', workspaceId: 'acme::/w/acme', reused: false, pinFailed: true })
+  expect(started).toEqual({ sessionId: 'launched-1', workspaceId: f.homeWorkspace, reused: false, pinFailed: true })
+  expect(existsSync(f.home)).toBe(true)
+  expect(f.repoAdds()).toEqual([['repo', 'add', '--path', f.home, '--kind', 'folder', '--json']])
   const [args] = f.launches()
   const flag = (name: string) => args[args.indexOf(name) + 1]
-  expect([flag('--agent'), flag('--worktree'), flag('--surface'), flag('--model'), flag('--effort')]).toEqual(['claude', 'id:acme::/w/acme', 'terminal', 'claude-opus-5-5', 'high'])
+  expect([flag('--agent'), flag('--worktree'), flag('--surface'), flag('--model'), flag('--effort')]).toEqual(['claude', 'id:' + f.homeWorkspace, 'terminal', 'claude-opus-5-5', 'high'])
   const launch = pendingDuringLaunch as { launchId: string; modeId: string; role: string }
   expect(launch).toMatchObject({ modeId: 'bypass', role: 'coordinator' })
   expect(flag('--prompt').startsWith(launchMarker(launch.launchId) + '\n')).toBe(true)
@@ -73,6 +77,46 @@ test('setup launches one terminal coordinator in the focused workspace, marked f
   expect(f.prefs.read().coordinator).toBe('launched-1')
   expect(await f.setupCoordinator({ expectedCoordinator: 'launched-1' })).toMatchObject({ sessionId: 'launched-1', reused: true })
   expect(f.launches()).toHaveLength(1)
+})
+
+test('a replacement coordinator starts in the same home without adding the folder again', async () => {
+  const f = setup()
+  await f.setupCoordinator()
+  expect(await f.setupCoordinator({ expectedCoordinator: 'launched-1', replace: true })).toMatchObject({ sessionId: 'launched-2', workspaceId: f.homeWorkspace })
+  expect(f.repoAdds()).toHaveLength(1)
+})
+
+test('a repo add whose answer is lost is settled from the repo list, and a refused one starts nothing', async () => {
+  const f = setup()
+  f.orca.behavior.repoAdd = 'lose'
+  expect(await f.setupCoordinator()).toMatchObject({ sessionId: 'launched-1', workspaceId: f.homeWorkspace })
+  expect(f.repoAdds()).toHaveLength(1)
+
+  const g = setup()
+  g.orca.behavior.repoAdd = 'refuse'
+  await expect(g.setupCoordinator()).rejects.toThrow('Could not open the coordinator home as an Orca project. path is not a directory')
+  expect(g.launches()).toHaveLength(0)
+})
+
+test('an explicit workspace overrides the coordinator home', async () => {
+  const f = setup()
+  expect(await f.setupCoordinator({ workspaceId: 'acme::/w/acme' })).toMatchObject({ sessionId: 'launched-1', workspaceId: 'acme::/w/acme' })
+  expect(f.repoAdds()).toHaveLength(0)
+})
+
+test('the coordinator home is listed first to start in, but is never a project choice; its coordinator stays the coordinator', async () => {
+  const f = setup()
+  await f.setupCoordinator()
+  const ops = await f.request('board.operations', { view: 'setup' }) as { workspaces: unknown[] }
+  expect(ops.workspaces).toEqual([
+    { id: f.homeWorkspace, projectId: 'home-1', title: 'Coordinator home', home: true },
+    { id: 'acme::/w/acme', projectId: 'acme', title: 'acme', focused: true },
+  ])
+  const snapshot = await f.request('board.snapshot', { fresh: true }) as { projects: { id: string }[]; sessions: { id: string }[]; coordinator: string }
+  expect(snapshot.projects.map(p => p.id)).toEqual(['acme'])
+  expect(snapshot.sessions.map(s => s.id)).toEqual(['worker'])
+  expect(snapshot.coordinator).toBe('launched-1')
+  await expect(f.request('board.scope', { kind: 'project', projectId: 'home-1', enabled: true })).rejects.toThrow('코디네이터 운영 폴더')
 })
 
 test('a launch whose answer is lost is settled with Orca\'s retry id, never started twice', async () => {
