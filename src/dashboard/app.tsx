@@ -105,7 +105,8 @@ function HostBoard() {
   return <ProjectIconSources.Provider value={icons}>
     <BoardView snapshot={snapshot} readiness={readiness} hostLabel={t("이 기기", "This device")} compact={compact}
       error={actionError || error} loading={loading} updatedAt={updatedAt} changing={changing}
-      onRefresh={() => void refresh("manual")} onProject={(projectId, enabled) => void updateScope({ kind: "project", projectId, enabled })} onOpen={open} />
+      onRefresh={() => void refresh("manual")} onProject={(projectId, enabled) => void updateScope({ kind: "project", projectId, enabled })}
+      onCoordinator={sessionId => void updateScope({ kind: "coordinator", sessionId })} onOpen={open} />
   </ProjectIconSources.Provider>;
 }
 
