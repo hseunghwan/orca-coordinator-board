@@ -27,9 +27,14 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 
 - 실행 중인 세션에 끼워 넣기(steer)는 기본적으로 거부하고 대기열에 넣는다. 실행 중인 TUI가 붙여 넣은 입력을 대기열로 받는지 시험한 뒤 바꾼다.
 
+## 실기 확인 (2026-11-26, Orca 1.4.277)
+
+- 채팅 세션에 `orca orchestration send --to orca_session_id:<id> --type status --body-file <f>`로 보내면 포커스와 상관없이 바로 들어간다. 유휴 채팅은 메일을 받으면 턴을 하나 돈다.
+- 받는 쪽 `agent read`에는 user 항목 하나로 남는다. 모양은 `──── From: <NAME> (<handle>) (<type>) ────`, `Subject: <subject>`, 본문, 끝에 `[Reply: orca orchestration reply …]` 순서다. 본문 첫 줄의 표식 `[cb:<id>]`는 그대로 남지만 항목의 첫 줄은 아니다. 대조는 메일 머리를 뗀 뒤 표식을 찾는다.
+- `--from`이 없으면 실행한 셸의 `ORCA_TERMINAL_HANDLE`이 발신자로 남는다. 워커에는 이 변수가 없으므로 보드 발신용 터미널이 필요하다.
+
 ## 확인할 것
 
 - CLI `terminal send`도 포커스된 워크스페이스에만 보내는가.
-- 메일(`orchestration send`)이 받는 쪽 기록에 표식을 남기는가.
 - `agent.launch.before`의 `event.env`에 PATH가 들어오는가.
 - 워커 env에서 `orca.exe`가 런타임을 찾는가.
