@@ -1,0 +1,46 @@
+{
+  "id": "repos-1",
+  "ok": true,
+  "result": {
+    "repos": [
+      {
+        "id": "aaaa1111-0000-4000-8000-000000000000",
+        "path": "/w/app",
+        "displayName": "app",
+        "badgeColor": "#737373",
+        "addedAt": 1795000000000,
+        "kind": "git",
+        "repoIcon": {
+          "type": "image",
+          "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          "source": "upload",
+          "label": "icon.png"
+        },
+        "upstream": null,
+        "gitRemoteIdentity": {
+          "canonicalKey": "github.com/acme/app",
+          "remoteName": "origin",
+          "remoteUrl": "git@github.com:acme/app.git"
+        }
+      },
+      {
+        "id": "bbbb2222-0000-4000-8000-000000000000",
+        "path": "/w/site",
+        "displayName": "site",
+        "kind": "git",
+        "repoIcon": {
+          "type": "image",
+          "src": "https://github.com/acme.png",
+          "source": "github"
+        },
+        "gitRemoteIdentity": {
+          "remoteUrl": "https://github.com/acme/site.git"
+        }
+      }
+    ],
+    "repoIconIds": {}
+  },
+  "_meta": {
+    "runtimeId": "runtime-1"
+  }
+}

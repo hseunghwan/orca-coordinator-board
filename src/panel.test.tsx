@@ -1,103 +1,66 @@
-import { assert, mockHost, mount, test } from 'orca/testing'
-import type { BoardView } from './model'
+import { assert, mockHost, mount } from 'orca/testing'
+import { test } from 'vitest'
 import * as panel from './panel'
 
-const session = { key: 't1@100', terminalId: 't1', workspaceId: 'w1', workspaceName: 'feat-login', branch: 'feat/login', agent: 'claude', title: 'fix login', state: 'waiting' as const, since: 100 }
-const board = (over: Partial<BoardView> = {}): BoardView => ({
-  at: 1000,
-  selected: ['p1'],
-  projects: [{ projectId: 'p1', name: 'App', sessions: [session], closed: [], repo: 'acme/app', pullStatus: 'ok', pulls: [] }],
-  decisions: [{ key: 't1@100', kind: 'reply', projectName: 'App', since: 100, session, tail: ['Which branch?'] }],
-  replies: [],
-  truncated: false,
-  ...over
-})
+// A plain string, so the post stays the bare change signal whatever the old frame declares.
+const BOARD_CHANGED: string = 'board.changed'
 
-test('sends the typed reply to the card\'s session', async () => {
-  const sent: unknown[] = []
+const ready = (over = {}) => ({ configured: true, coordinator: null, decisionTitles: ['Pick a layout', 'Delete build cache'], ...over })
+
+test('shows how many decisions wait, the first ones, and opens the board', async () => {
+  const opened: unknown[] = []
   const host = mockHost({
     requests: {
-      'board.read': () => board(),
-      'board.reply': (input) => { sent.push(input); return { status: 'sent', at: 2000 } }
+      'board.decision-count': { count: 2 },
+      'board.readiness': ready(),
+      'board.open-dashboard': (input: unknown) => { opened.push(input); return { message: null } }
     }
   })
+  const view = await mount(panel, { host, locale: 'en' })
+  assert.ok(view.find({ text: '2 to decide' }))
+  assert.ok(view.find({ label: 'Pick a layout' }))
+  assert.ok(view.find({ label: 'Delete build cache' }))
+  await view.press({ text: 'Open board' })
+  assert.equal(opened.length, 1)
+  assert.equal(view.persisted.storage.locale, 'en')
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('asks to choose projects on the board before any are managed', async () => {
+  const host = mockHost({ requests: { 'board.decision-count': { count: 0 }, 'board.readiness': ready({ configured: false, decisionTitles: [] }) } })
   const view = await mount(panel, { host, locale: 'ko' })
-  assert.ok(view.find({ text: '답 기다림' }))
-  await view.type({ label: '답장' }, 'main으로 가세요')
-  await view.press({ text: '보내기' })
-  assert.equal(sent.length, 1)
-  assert.deepEqual({ ...(sent[0] as object) }, {
-    workspaceId: 'w1', terminalId: 't1', text: 'main으로 가세요', expectedSince: 100,
-    projectName: 'App', workspaceName: 'feat-login', title: 'fix login'
-  })
-  assert.ok(view.find({ text: '보냈습니다.' }))
-  assert.deepEqual(view.errors, [])
+  assert.ok(view.find({ text: '보드를 열어 관리할 프로젝트를 고르세요.' }))
+  assert.ok(view.find({ text: '보드 열기' }))
   await view.unmount()
 })
 
-test('asks for projects when none are selected', async () => {
-  const saved: unknown[] = []
+test('says why the dashboard did not open', async () => {
   const host = mockHost({
     requests: {
-      'board.read': () => board({ selected: [], projects: [], decisions: [] }),
-      'board.projects': () => ({ projects: [{ id: 'p1', name: 'App', path: '/w/app', remote: false }], selected: [] }),
-      'board.select-projects': (input) => { saved.push(input); return { selected: ['p1'] } }
+      'board.decision-count': { count: 0 },
+      'board.readiness': ready({ decisionTitles: [] }),
+      'board.open-dashboard': { message: 'Open a workspace, then try again.' }
     }
   })
   const view = await mount(panel, { host, locale: 'en' })
-  await view.toggle({ label: 'App' })
-  await view.press({ text: 'Save' })
-  assert.deepEqual(saved, [{ projectIds: ['p1'] }])
-  assert.deepEqual(view.errors, [])
+  assert.ok(view.find({ text: 'Nothing to decide right now.' }))
+  await view.press({ text: 'Open board' })
+  assert.ok(view.find({ text: 'Open a workspace, then try again.' }))
   await view.unmount()
 })
 
-test('shows a permission card without a reply box', async () => {
-  const blocked = { ...session, state: 'blocked' as const }
-  const host = mockHost({
-    requests: { 'board.read': () => board({ decisions: [{ key: 't1@100', kind: 'permission', projectName: 'App', since: 100, session: blocked }] }) }
-  })
+test('reads again when the worker says the board changed, and shows a failed read', async () => {
+  let n = 1
+  const host = mockHost({ requests: { 'board.decision-count': () => ({ count: n }), 'board.readiness': ready() } })
   const view = await mount(panel, { host, locale: 'en' })
-  assert.ok(view.find({ text: 'Open session' }))
-  assert.equal(view.find({ label: 'Reply' }), null)
-  assert.deepEqual(view.errors, [])
+  assert.ok(view.find({ text: '1 to decide' }))
+  n = 3
+  await view.post(BOARD_CHANGED, {})
+  assert.ok(view.find({ text: '3 to decide' }))
   await view.unmount()
-})
-
-test('a chat tab waiting for an answer offers to open it, not a reply box', async () => {
-  const chat = { ...session, key: 'w1:chat@100', terminalId: null, title: 'chat' }
-  const focused: unknown[] = []
-  const host = mockHost({
-    requests: {
-      'board.read': () => board({ decisions: [{ key: chat.key, kind: 'reply', projectName: 'App', since: 100, session: chat }] }),
-      'board.focus': (input) => { focused.push(input); return { focused: true } }
-    }
-  })
-  const view = await mount(panel, { host, locale: 'en' })
-  assert.equal(view.find({ label: 'Reply' }), null)
-  await view.press({ text: 'Open chat' })
-  assert.deepEqual(focused.map((input) => ({ ...(input as object) })), [{ terminalId: null, workspaceId: 'w1' }])
-  assert.deepEqual(view.errors, [])
-  await view.unmount()
-})
-
-test('answers a closed session by resuming it', async () => {
-  const closed = { key: 'closed:s-old', sessionId: 's-old', agent: 'claude' as const, title: 'old task', workspaceId: 'w1', workspaceName: 'feat-login', branch: 'feat/login', updatedAt: 900 }
-  const sent: unknown[] = []
-  const host = mockHost({
-    requests: {
-      'board.read': () => board({ decisions: [], projects: [{ projectId: 'p1', name: 'App', sessions: [], closed: [closed], repo: null, pullStatus: 'unmapped', pulls: [] }] }),
-      'board.resume-reply': (input) => { sent.push(input); return { status: 'sent', at: 2000 } }
-    }
-  })
-  const view = await mount(panel, { host, locale: 'en' })
-  await view.select({ label: 'Board view' }, 'progress')
-  await view.toggle({ label: '1 recently closed' })
-  await view.type({ label: 'Reply to the closed session' }, 'go on')
-  await view.press({ text: 'Resume and send' })
-  assert.deepEqual(sent.map((input) => ({ ...(input as object) })), [{
-    workspaceId: 'w1', sessionId: 's-old', agent: 'claude', text: 'go on', projectName: 'App', workspaceName: 'feat-login', title: 'old task'
-  }])
-  assert.deepEqual(view.errors, [])
-  await view.unmount()
+  const broken = mockHost({ requests: {} })
+  const failed = await mount(panel, { host: broken, locale: 'en' })
+  assert.ok(failed.find({ label: 'Could not load the board' }))
+  await failed.unmount()
 })

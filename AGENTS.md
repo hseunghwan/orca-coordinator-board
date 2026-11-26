@@ -2,40 +2,63 @@
 
 Orca 에이전트 세션을 프로젝트별로 모으고 사람이 내릴 결정을 한곳에 올리는 Orca 플러그인이다. 사용자 안내는 `README.md`가 정본이다. 이 파일은 그 문서에 없는 에이전트용 규칙만 담는다.
 
-Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1), Node(워커). 런타임 의존성은 없다.
+Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1), Node(워커), React 19(대시보드), esbuild(번들), vitest(테스트). 런타임 의존성은 없다. 워커와 대시보드는 쓰는 패키지까지 `dist/`에 묶는다.
 
 ## Operational Commands
 
-- 개발 의존성: `npm ci`(typescript, @types/node). 잠금 파일은 `package-lock.json` 하나다.
+- 개발 의존성: `npm ci`(typescript, @types/node, esbuild, zod, vitest, react, react-dom). 잠금 파일은 `package-lock.json` 하나다.
+- 빌드: `npm run build`(`dist/worker.mjs`, 코디네이터 명령 `dist/cli.cjs`, `dist/dashboard.js`, 대시보드 entry `dist/dashboard.html`). Orca는 선언된 프레임 entry를 확장자와 상관없이 HTML 문서로 읽으므로 entry를 `.js`로 두지 않는다. 고치는 동안은 `npm run watch`.
 - Orca 타입: `orca plugin types .` (`.orca/types`, git에 올리지 않음)
 - 타입 검사: `npm run typecheck`
-- 테스트: `orca plugin test .`
+- 실기 확인: `node scripts/probe-snapshot.mjs`(실제 orca CLI로 스냅샷을 만든다. 출력에 실제 세션 이름이 나오니 커밋하지 않는다).
+- 전송 실기 확인: `node scripts/probe-send.mjs --session <id> --yes [--from <term_…>]`(실제 워커 경로로 답장 하나를 보낸다. 사람이 시험용으로 정한 세션에만 쓴다). 에이전트 셸에서 돌리면 그 터미널이 발신자가 되므로 워커의 경우를 보려면 터미널 밖 프로세스로 띄운다.
+- 채널 실기 확인: `node scripts/probe-channel.mjs [--terminal <term_…>]`(빌드 뒤. 실제 워커 코드의 실행 훅과 `bin/coordinator-board`를 실제 orca CLI로 돌린다. 보드 데이터는 임시 폴더).
+- 장부, 사실, PR 실기 확인: `node scripts/probe-ledger.mjs prs|mail|review`(보드 데이터는 임시 폴더). `prs`는 읽기 전용이다. `mail`과 `review --send`는 실제 메시지를 하나 보내므로 사람이 시험용으로 정한 세션에만 `--yes`로 쓴다. `mail`은 터미널 밖 프로세스로 띄운다.
+- 배정 실기 확인: `node scripts/probe-dispatch.mjs check|send|verify|close`(로드된 개발 플러그인이 이 코드일 때만. `check`와 `verify`는 읽기 전용이다. `send --yes`는 등급 D를 Haiku로 바꾸고 코디네이터에게 작업 요청 하나를 보내며, `close --yes`는 작업자 터미널을 닫고 등급 D를 되돌린다. 사람이 정한 코디네이터에만 쓴다).
+- PATH 실기 확인: `node scripts/probe-path.mjs --match <명령 줄의 글>`(Windows. 실행 중인 에이전트 프로세스의 환경 블록을 읽기만 하고 PATH 키 이름과 `CB_*` 이름만 출력한다).
+- 테스트: `orca plugin test .`. `node_modules`에 vitest가 있으면 Orca가 vitest로 돌린다. 그래서 테스트의 `test`는 `vitest`에서 불러온다.
 - 렌더 검사: `orca plugin check .`, manifest 검사: `orca plugin validate .`
-- 커밋 전에는 위 넷을 모두 통과시킨다. CI에는 Orca CLI가 없으니 로컬에서 돌린다.
+- 대시보드 하네스: `node dev/build.mjs`로 가짜 `window.orca`와 예시 보드를 `dev/out/index.html`에 묶고, `node dev/shoot.mjs`로 로컬 Chrome이나 Edge 헤드리스 화면을 `dev/shots/`에 찍는다. 둘 다 git에 올리지 않는다. 하네스 타입 검사는 `npx tsc -p dev`. 가짜 워커는 답장을 확인됨, 전송 미확인, 다른 수신자의 영수증 순서로 돌려 답한다. 주소의 `send=<n>`으로 시작 위치를 고르고, `press=`는 보이는 버튼만 누른다. `press=`의 `#<접근성 이름>`은 이름이 그렇게 시작하는 버튼을 누른다(글이 아이콘으로 시작하는 버튼용). `solo=1`은 결정을 웹훅 답장 하나만 남겨, 보내고 나면 모두 처리한 집중 화면이 된다. `press=`의 `@<접근성 이름>=<글>`은 그 입력창에 글을 넣는다. `coord=1`은 코디네이터가 있는 보드로 열고, `fail=1`은 코디네이터 요청과 시작을 실패시킨다. `ledger=1`은 질문, 전송 대기, 병합, 직접 확인, 답장 양식, 다른 운영 코디네이터의 결정 기록을 더한다. `resolve=<상태>`는 결정 기록 답을 그 상태로, `merge=blocked|unconfirmed|changed`는 병합 미리보기와 확정을 그렇게, `pull=OPEN|CLOSED|MERGED|UNKNOWN`은 병합 기록이 읽는 PR 상태를 정하고, `repo=fail`은 저장소 설정을 실패시킨다. `ops=conflict`는 실행기, 사용량, 모델 배정 저장을 판 번호 충돌로 실패시킨다. `press=`의 `+<n>`은 보이는 첫 사진 첨부 버튼에 만든 사진 n장을 넣고, `+<n>/<k>`는 k번째 버튼에, `+bad`는 글 파일을 넣는다. `photo=fail`은 기록의 저장된 사진 읽기를 실패시킨다. `links=fail`은 세션 연결 목록 읽기를, `links=conflict`는 연결 바꾸기를 실패시킨다. `@<접근성 이름>=<글>`은 한 줄 입력창에도 글을 넣는다. `hosts=1`은 `board.hosts`에 호스트 세 대로 답하고 `hosts=fail`은 실패시킨다. 둘 다 없으면 그 메서드가 없는 워커처럼 호스트 카드를 그리지 않는다. `note=conflict`는 다음 기록 저장이 더 새 기록을 만나게 하고, `note=fail`은 기록 저장과 보고 켜기를 실패시킨다. `press=`는 보이는 `label`도 누른다(직접 확인 체크 상자). 워커가 `board.operations`에 `workspaces`를 주면 코디네이터를 시작할 워크스페이스를 고를 수 있다(`src/dashboard/rpc.ts`의 Orca 확장 계약).
+- 커밋 전에는 빌드와 위 넷을 모두 통과시킨다. CI에는 Orca CLI가 없으니 로컬에서 돌린다.
 
 ## Golden Rules
 
 ### Immutable
 
 - `terminal.sendText`는 사람이 친 글과 구분되지 않는다. 그래서 출처 표시 없는 전송은 사용자가 화면에서 쓰고 보내기를 누른 글에만 쓴다. 보드가 만든 문장을 보내는 경로를 만들면 `[coordinator-board]` 머리말을 붙이고, 실패해도 다시 보내지 않는다.
-- 권한 대기 세션에는 보내지 않는다. 전송 직전에 `agents.list`로 상태를 다시 읽고 `replyGuard`(`src/model.ts`)를 거친다.
-- 같은 대화를 두 곳에서 돌리지 않는다. `agent.resume`은 `closedSessions`와 `resumeGuard`(`src/model.ts`)를 거친 닫힌 세션에만, 사람이 보내기를 누른 경로에서만 쓴다. 채팅 탭 세션(터미널 id 없음)은 `workspace.open`으로 보여 주기만 한다.
+- 코디네이터 명령(`coordinator-board`)의 자유 텍스트는 stdin이나 파일로만 받는다. `.cmd`가 `% ^ &`를 다시 읽기 때문이다. 채널 요청의 호출자는 `src/channel/caller.ts`로만 확인하고, 코디네이터 명령은 토큰이 맞는 지정 코디네이터 터미널에만 허용한다. 실행 훅(`src/channel/hook.ts`)은 순수 함수로 두고 CLI를 부르지 않는다(Orca가 2초 뒤 건너뛴다).
+- 코디네이터는 실행 기록(`coordinator-launch.json`)을 먼저 쓰고 띄운다. 결과가 불확실하면 `--retry-launch`로만 다시 확인하고 새로 띄우지 않는다.
+- 보드 사실은 코디네이터 터미널이, 병합 알림은 보드 메일 터미널이 서명한 메일(`fleet.deliver`의 agent, board 발신자)로만 보낸다. 서명할 터미널이 없으면 보내지 않고, 서명 없는 입력으로 바꿔 보내지 않는다.
+- 보내기는 `fleet.deliver`(`src/orca/deliver.ts`)로만 한다. outbox에 시도를 먼저 쓰고, 같은 messageId는 다시 보내지 않고 받는 쪽 기록으로 대조만 한다. 권한 대기, 질문 대기, 작업 중인 세션에는 보내지 않고, 전송 직전에 세션 상태를 다시 읽는다.
+- 같은 대화를 두 곳에서 돌리지 않는다. 보드는 세션을 이어 열지(`agent.resume`) 않는다. 채팅 세션과 터미널이 잠든 세션은 `workspace.open`으로 보여 주기만 한다.
 - 플러그인 승인(`--approve`)은 사람이 권한 목록을 보고 직접 한다. 에이전트가 대신 승인하지 않는다.
 - 공개 저장소다. 코드, 테스트 고정값, 문서, 커밋 메시지에 개인 이름, 사용자 홈 경로, 기기 이름, 사내 주소, 토큰을 넣지 않는다. 예시 값은 `acme/app`, `/w/app`처럼 지어낸다.
 
 ### Do
 
-- 판단 로직은 `src/model.ts`, `github.ts`, `labels.ts`, `summary.ts`에 두고, `panel.tsx`와 `src/dashboard/`에는 화면만 둔다. 테스트는 `dashboard/`를 불러오지 않는다(테스트 경계).
-- 대시보드(`src/dashboard/`)는 편집 탭의 프레임이라 DOM을 직접 만든다. 글은 `dom.ts`의 `h()`로 텍스트 노드로만 넣고 `innerHTML`을 쓰지 않는다.
+- 판단 로직은 옮긴 Paseo 코드(`src/paseo/`, `src/server/`)에 두고, `panel.tsx`에는 화면만 둔다. 대시보드가 스냅샷에서 계산하는 것은 `src/dashboard/board-model.ts`에 두고 테스트한다. 테스트는 `.tsx` 화면 파일을 불러오지 않는다(테스트 경계).
+- 대기열을 깨우는 상태 전이(턴 끝, 권한 해제, 사라짐)는 `src/orca/signals.ts`의 리듀서 하나로만 판단한다. 이벤트와 폴링이 같은 리듀서에 들어간다.
+- Orca 상태는 `src/orca/index.ts`의 `Fleet`로만 읽는다. Orca 행을 Paseo 상태로 바꾸는 레인 표는 `src/orca/view.ts` 한 곳에 있다. `src/server/`의 파일은 Paseo 파일을 고쳐 옮긴 것이라 첫 줄에 원본 경로와 커밋, 바꾼 점을 적는다.
+- `orca` CLI는 `src/orca/cli.ts`로만 실행한다. `orca.exe`를 셸 없이, 허용 목록 환경으로 실행한다. 읽기는 `read`, 보내는 명령은 `write`(캐시, 공유, 재시도 없음)로만 한다.
+- 대시보드(`src/dashboard/`)는 편집 탭의 프레임이고 React 19로 그린다. 화면 구조는 Paseo판 `client/*.tsx`를 따르고, 모양은 `src/dashboard/ui/`의 Orca 레시피(`--orca-*` 토큰)로 입힌다. 글은 React 텍스트로만 넣고 `innerHTML`과 `dangerouslySetInnerHTML`을 쓰지 않는다. 마크다운은 `marked` 토큰을 요소로 바꾼다(`ui/markdown.tsx`).
+- 대시보드 `.tsx` 첫 줄의 `/** @jsxImportSource react */`는 지우지 않는다. tsconfig의 기본 JSX는 사이드바 패널용 `orca`다.
+- 대시보드는 워커를 Paseo 계약(`src/paseo/shared/contract.ts` 등의 `defineRpc`)으로 부른다. `src/dashboard/rpc.ts`의 `call`이 출력을 zod로 검사한다. 워커가 보내는 `board.changed`는 다시 읽으라는 신호일 뿐이다.
 - 대시보드 열쇠 파일(`.coordinator-board/`)은 `.git/info/exclude`로 숨기고, 사용자 저장소에 `.gitignore`를 새로 만들지 않는다.
-- Orca는 포커스된 워크스페이스의 터미널에만 글을 넣게 한다. 보내기 전 `terminal.focus`로 화면을 옮기는 일은 사람이 보내기를 누른 경로에서만 한다.
-- 외부 명령(`git`, `gh`)은 `shell:false`, 시간 제한, `maxBuffer`, 대화형 프롬프트를 끈 환경 변수로 실행하고 인자는 배열로 넘긴다(`src/worker.ts`의 `run`).
-- GitHub에서 읽은 글과 터미널 출력은 화면에 내기 전에 제어 문자와 양방향 제어 문자를 지우고 길이를 자른다(`src/model.ts`의 `cleanLine`).
+- 코디네이터 운영 폴더(보드 데이터 폴더의 `coordinator`)는 `src/orca/home.ts`의 `CoordinatorHome.ensure`로만 등록한다. `repo list`를 경로로 먼저 보고, `repo add`의 답은 믿지 않고 `repo list`를 다시 읽어 확인한다. 이 프로젝트는 `Fleet.paseo.projects.list`와 보드의 프로젝트 선택에서 빠진다.
+- 작업자 실행은 `src/server/dispatch.ts`로만 한다. 실행 기록(`workers.json`)을 먼저 쓰고, `orca agent launch`는 채널 protocol 2로 코디네이터의 셸에서 돌린다(`ToolContext.caller`). 워커 자신의 CLI로 작업자를 띄우지 않는다. 작업자 권한은 `src/channel/hook.ts`의 `WORKER_MODES`에서만 고르고, 우회 모드를 넣지 않는다.
+- 사진은 메시지에 붙이지 않고 `fleet.deliver`의 `photos`(파일 경로)로만 보낸다. 표식 뒤 `[사진 n]` 줄의 모양은 `src/orca/conversation.ts`의 `photoLines`와 `readMarked`가 함께 정한다.
+- 터미널 전송은 CLI `orca terminal send`로만 한다. 포커스와 상관없이 들어가므로 보내기 전에 `terminal.focus`로 화면을 옮기지 않는다.
+- 외부 명령(`git`, `gh`)은 `shell:false`, 시간 제한, `maxBuffer`, 대화형 프롬프트를 끈 환경 변수로 실행하고 인자는 배열로 넘긴다(`src/github.ts`의 `run`).
+- GitHub에서 읽은 글은 화면에 내기 전에 제어 문자와 양방향 제어 문자를 지우고 길이를 자른다(`src/server/prs.ts`의 `parseOpenPulls`).
 - 화면 문구는 `t(한국어, 영어)`로 두 언어를 함께 쓴다. 한쪽만 바꾸지 않는다.
+- `src/paseo/`는 Paseo판 코드를 옮긴 폴더다. 옮긴 파일은 import 경로만 고친다. 다른 줄을 바꿔야 하면 upstream에서 고친 뒤 `node scripts/sync-paseo.mjs <체크아웃>`으로 다시 가져온다(`src/paseo/UPSTREAM.md`).
+- `dist/`는 git에 올린다. git으로 설치하면 빌드 없이 돌기 때문이다. `src/`를 고쳤으면 커밋 전에 `npm run build`를 돌리고 `dist/`도 함께 커밋한다.
 
 ### Don't
 
-- 플러그인 폴더 밖을 불러오지 않는다. Orca 플러그인에는 `node_modules`가 없으니 런타임 의존성을 더하지 않는다.
+- 플러그인 폴더 밖을 불러오지 않는다. Orca 플러그인에는 `node_modules`가 없으니 npm 패키지는 `devDependencies`에만 두고 번들로 넣는다.
+- 사이드바 패널(`src/panel.tsx`)은 Orca가 소스를 그대로 불러온다. 그래서 npm 패키지와 그것을 쓰는 `src/paseo/` 파일을 불러오지 않는다.
+- `dist/`를 손으로 고치지 않는다.
 - 권한(`capabilities`)을 바꾸면 새 승인이 필요하다. 바꾸기 전에 사람에게 알린다.
 
 ## Standards & References

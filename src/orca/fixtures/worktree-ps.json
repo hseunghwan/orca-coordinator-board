@@ -1,0 +1,466 @@
+{
+  "id": "ps-1",
+  "ok": true,
+  "result": {
+    "worktrees": [
+      {
+        "workspaceKind": "git",
+        "worktreeId": "aaaa1111-0000-4000-8000-000000000000::/w/app",
+        "repoId": "aaaa1111-0000-4000-8000-000000000000",
+        "hostId": "local",
+        "repo": "app",
+        "path": "/w/app",
+        "branch": "refs/heads/main",
+        "isArchived": false,
+        "displayName": "app",
+        "address": {
+          "environment": "local",
+          "worktree": "identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000001"
+        },
+        "agents": [
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "structured-agent-session-5e550001-0000-4000-8000-000000000000:c4a70000-0000-4000-8000-000000000001",
+            "address": "orca_session_id:5e550001-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550001-0000-4000-8000-000000000000",
+            "state": "done",
+            "outcome": "success",
+            "agentType": "claude",
+            "conversationName": "Ask about the release",
+            "lastAssistantMessage": "Draft ready. Which version should I tag, 2.4.0 or 3.0.0?",
+            "stateStartedAt": 1795000001000,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": true,
+              "clearable": true,
+              "sortAt": 1795000001000,
+              "title": "Ask about the release"
+            },
+            "mainAgent": {
+              "state": "done",
+              "outcome": "success",
+              "stateStartedAt": 1795000001000
+            },
+            "updatedAt": 1795000001100
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "structured-agent-session-5e550002-0000-4000-8000-000000000000:c4a70000-0000-4000-8000-000000000002",
+            "address": "orca_session_id:5e550002-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550002-0000-4000-8000-000000000000",
+            "state": "done",
+            "outcome": "success",
+            "agentType": "claude",
+            "conversationName": "Read and done",
+            "lastAssistantMessage": "All tests pass.",
+            "stateStartedAt": 1795000002000,
+            "mainAgent": {
+              "state": "done",
+              "outcome": "success",
+              "stateStartedAt": 1795000002000
+            },
+            "updatedAt": 1795000002100,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000002000,
+              "title": "Read and done"
+            }
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": "Bash",
+            "toolInput": null,
+            "interrupted": false,
+            "children": [
+              {
+                "state": "working"
+              },
+              {
+                "state": "done"
+              }
+            ],
+            "paneKey": "7ab00003-0000-4000-8000-000000000000:1eaf0003-0000-4000-8000-000000000000",
+            "address": "term_00000003-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550003-0000-4000-8000-000000000000",
+            "state": "working",
+            "agentType": "codex",
+            "conversationName": "Port the parser",
+            "lastAssistantMessage": "Running tests",
+            "stateStartedAt": 1795000003000,
+            "hasLivePty": true,
+            "mainAgent": {
+              "state": "working",
+              "stateStartedAt": 1795000003000
+            },
+            "updatedAt": 1795000003100,
+            "activity": {
+              "listed": true,
+              "status": "working",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000003000,
+              "title": "Port the parser"
+            }
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": "Bash",
+            "toolInput": "rm -rf build",
+            "interrupted": false,
+            "children": [],
+            "paneKey": "7ab00004-0000-4000-8000-000000000000:1eaf0004-0000-4000-8000-000000000000",
+            "address": "term_00000004-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550004-0000-4000-8000-000000000000",
+            "state": "blocked",
+            "agentType": "claude",
+            "conversationName": "Delete build cache",
+            "stateStartedAt": 1795000004000,
+            "hasLivePty": true,
+            "mainAgent": {
+              "state": "blocked",
+              "stateStartedAt": 1795000004000
+            },
+            "updatedAt": 1795000004100,
+            "activity": {
+              "listed": true,
+              "status": "blocked",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000004000,
+              "title": "Delete build cache"
+            }
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": "AskUserQuestion",
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "7ab00005-0000-4000-8000-000000000000:1eaf0005-0000-4000-8000-000000000000",
+            "address": "term_00000005-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550005-0000-4000-8000-000000000000",
+            "state": "waiting",
+            "agentType": "claude",
+            "conversationName": "Pick a layout",
+            "stateStartedAt": 1795000005000,
+            "hasLivePty": true,
+            "mainAgent": {
+              "state": "waiting",
+              "stateStartedAt": 1795000005000
+            },
+            "updatedAt": 1795000005100,
+            "activity": {
+              "listed": true,
+              "status": "waiting",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000005000,
+              "title": "Pick a layout"
+            }
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "7ab00006-0000-4000-8000-000000000000:1eaf0006-0000-4000-8000-000000000000",
+            "address": "term_00000006-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550006-0000-4000-8000-000000000000",
+            "state": "done",
+            "outcome": "failure",
+            "agentType": "claude",
+            "conversationName": "Broken run",
+            "stateStartedAt": 1795000006000,
+            "hasLivePty": true,
+            "mainAgent": {
+              "state": "done",
+              "outcome": "failure",
+              "stateStartedAt": 1795000006000
+            },
+            "updatedAt": 1795000006100,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000006000,
+              "title": "Broken run"
+            }
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "7ab00007-0000-4000-8000-000000000000:1eaf0007-0000-4000-8000-000000000000",
+            "address": "term_00000007-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550007-0000-4000-8000-000000000000",
+            "state": "done",
+            "agentType": "claude",
+            "conversationName": "Long release answer",
+            "lastAssistantMessage": "Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. \nPlease choose the version to tag: 2.4.0 or 3.0.0.",
+            "stateStartedAt": 1795000007000,
+            "hasLivePty": true,
+            "mainAgent": {
+              "state": "done",
+              "stateStartedAt": 1795000007000
+            },
+            "updatedAt": 1795000007100,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000007000,
+              "title": "Long release answer"
+            }
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "7ab00008-0000-4000-8000-000000000000:1eaf0008-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550008-0000-4000-8000-000000000000",
+            "state": "done",
+            "agentType": "claude",
+            "conversationName": "Asleep terminal",
+            "stateStartedAt": 1795000008000,
+            "mainAgent": {
+              "state": "done",
+              "stateStartedAt": 1795000008000
+            },
+            "updatedAt": 1795000008100,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000008000,
+              "title": "Asleep terminal"
+            }
+          },
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "7ab00009-0000-4000-8000-000000000000:1eaf0009-0000-4000-8000-000000000000",
+            "address": "term_00000009-0000-4000-8000-000000000000",
+            "state": "done",
+            "outcome": "success",
+            "agentType": "codex",
+            "stateStartedAt": 1795000009000,
+            "hasLivePty": true,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000009000,
+              "title": "Codex ready"
+            },
+            "mainAgent": {
+              "state": "done",
+              "outcome": "success",
+              "stateStartedAt": 1795000009000
+            },
+            "updatedAt": 1795000009100
+          }
+        ]
+      },
+      {
+        "workspaceKind": "git",
+        "worktreeId": "aaaa1111-0000-4000-8000-000000000000::/w/app-login",
+        "repoId": "aaaa1111-0000-4000-8000-000000000000",
+        "hostId": "local",
+        "repo": "app",
+        "path": "/w/app-login",
+        "branch": "refs/heads/feat/login",
+        "isArchived": false,
+        "displayName": "feat-login",
+        "address": {
+          "environment": "local",
+          "worktree": "identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000002"
+        },
+        "agents": [
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "7ab00001-0000-4000-8000-000000000000:1eaf0001-0000-4000-8000-000000000000",
+            "address": "term_00000001-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550007-0000-4000-8000-000000000000",
+            "state": "done",
+            "agentType": "claude",
+            "conversationName": "Long release answer",
+            "stateStartedAt": 1795000000500,
+            "hasLivePty": true,
+            "activity": {
+              "listed": false
+            },
+            "mainAgent": {
+              "state": "done",
+              "stateStartedAt": 1795000000500
+            },
+            "updatedAt": 1795000000600
+          }
+        ]
+      },
+      {
+        "workspaceKind": "git",
+        "worktreeId": "aaaa1111-0000-4000-8000-000000000000::/w/app-old",
+        "repoId": "aaaa1111-0000-4000-8000-000000000000",
+        "hostId": "local",
+        "repo": "app",
+        "path": "/w/app-old",
+        "branch": "refs/heads/old",
+        "isArchived": true,
+        "displayName": "old",
+        "address": {
+          "environment": "local",
+          "worktree": "identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000003"
+        },
+        "agents": [
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "structured-agent-session-5e550009-0000-4000-8000-000000000000:c4a70000-0000-4000-8000-000000000009",
+            "address": "orca_session_id:5e550009-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550009-0000-4000-8000-000000000000",
+            "state": "done",
+            "agentType": "claude",
+            "conversationName": "Archived work",
+            "stateStartedAt": 1795000000100,
+            "mainAgent": {
+              "state": "done",
+              "stateStartedAt": 1795000000100
+            },
+            "updatedAt": 1795000000200,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000000100,
+              "title": "Archived work"
+            }
+          }
+        ]
+      },
+      {
+        "workspaceKind": "folder-workspace",
+        "worktreeId": "folder:f01d0000-0000-4000-8000-000000000000",
+        "repoId": "folder-workspace:f01d1111-0000-4000-8000-000000000000",
+        "hostId": "local",
+        "repo": "Notes",
+        "path": "/w/notes",
+        "branch": "",
+        "isArchived": false,
+        "displayName": "Notes",
+        "address": {
+          "environment": "local",
+          "worktree": "folder:f01d0000-0000-4000-8000-000000000000"
+        },
+        "agents": [
+          {
+            "parentPaneKey": null,
+            "prompt": "task prompt",
+            "taskTitle": null,
+            "displayName": null,
+            "toolName": null,
+            "toolInput": null,
+            "interrupted": false,
+            "children": [],
+            "paneKey": "structured-agent-session-5e550008-0000-4000-8000-000000000000:c4a70000-0000-4000-8000-000000000008",
+            "address": "orca_session_id:5e550010-0000-4000-8000-000000000000",
+            "orcaSessionId": "5e550010-0000-4000-8000-000000000000",
+            "state": "done",
+            "agentType": "claude",
+            "conversationName": "Sort notes",
+            "stateStartedAt": 1795000010000,
+            "mainAgent": {
+              "state": "done",
+              "stateStartedAt": 1795000010000
+            },
+            "updatedAt": 1795000010100,
+            "activity": {
+              "listed": true,
+              "status": "done",
+              "unread": false,
+              "clearable": true,
+              "sortAt": 1795000010000,
+              "title": "Sort notes"
+            }
+          }
+        ]
+      }
+    ],
+    "hostScope": {
+      "hostIds": [
+        "local"
+      ],
+      "omittedHostIds": [],
+      "omittedHostSelectors": []
+    },
+    "totalCount": 4,
+    "truncated": false
+  },
+  "_meta": {
+    "runtimeId": "runtime-1"
+  }
+}

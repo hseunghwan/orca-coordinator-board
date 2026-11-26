@@ -1,177 +1,111 @@
-// Runs the worker over a mock Orca host and a fake GitHub, so no git or gh process starts.
-import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import { activateWith, OPEN_DASHBOARD, type FileDeps, type GithubDeps } from './worker'
+// Runs the worker over a mock Orca host and the recorded-shape orca CLI answers, so no orca, git or gh process starts.
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { assert, mockHost, mountWorker } from 'orca/testing'
+import { afterEach, test } from 'vitest'
+import { createCli } from './orca/cli'
+import { fixturePulls, fixtureRunner, sid } from './orca/fixtures/load'
+import { fakeOrca } from './orca/fixtures/fake-orca'
+import { activateWith, OPEN_DASHBOARD, STATUS_ITEM, type FileDeps } from './worker'
+import { randomUUID } from 'node:crypto'
+import { runCli } from './cli/run'
 
-const github: GithubDeps = {
-  originOf: async () => 'acme/app',
-  openPulls: async () => ({ status: 'ok', items: [] }),
-  now: () => 5000
-}
+const APP = 'aaaa1111-0000-4000-8000-000000000000'
 const opened: string[] = []
 const files: FileDeps = { ensureDashboard: async (root) => { opened.push(root) } }
-let stop: (() => void) | undefined
-const worker = {
-  default: (orca: Parameters<typeof activateWith>[0]) => { stop = activateWith(orca, github, { files, pollMs: 0 }) },
-  deactivate: () => stop?.()
+const dirs: string[] = []
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+
+function worker(calls: string[][] = []) {
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  return {
+    default: (orca: Parameters<typeof activateWith>[0]) => { stop = activateWith(orca, { cli: createCli(fixtureRunner(calls)), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: null }) },
+    deactivate: () => stop?.()
+  }
 }
 
-const agents = (state: string, stateStartedAt = 100) => ({
-  agents: [{ terminalId: 't1', title: 'fix login', agent: 'claude', state, stateStartedAt, sessionId: null, task: null }]
-})
-
-function host(state = 'waiting', shown: string[] = []) {
-  // Orca types only into the focused workspace's terminals; focusing one shows its workspace.
-  const focusable = new Set(['t1', 't9'])
+function host(storage: Record<string, string | string[]> = { locale: 'en' }) {
   return mockHost({
-    storage: { selectedProjects: ['p1'] },
+    storage,
     results: {
-      'project.list': { projects: [{ id: 'p1', name: 'App', kind: 'git', hostId: 'local', path: '/w/app' }], truncated: false },
       'workspace.list': {
-        workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'local',
-          status: { state: 'active', unread: false, terminalCount: 1, lastActivityAt: 1 } }],
+        workspaces: [
+          { id: 'identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000001', kind: 'worktree', name: 'app', projectId: APP, path: '/w/app', branch: 'main', hostId: 'local' },
+          { id: 'w-login', kind: 'worktree', name: 'feat-login', projectId: APP, path: '/w/app-login', branch: 'feat/login', hostId: 'local' }
+        ],
         truncated: false
       },
-      'agents.list': agents(state),
-      'terminal.read': { lines: ['Which branch should I use?', ''], truncated: false },
-      'terminal.sendText': { accepted: true },
-      'terminal.focus': ({ terminalId }: { terminalId: string }) => {
-        if (!focusable.has(terminalId)) return { focused: false }
-        shown.splice(0, shown.length, terminalId)
-        return { focused: true }
-      },
-      'statusBar.update': { ok: true },
-      'workspace.readContext': () => ({ workspaceId: 'w1', branch: 'feat/login', displayName: 'feat-login', terminals: shown.map((id) => ({ id })) }),
-      'editor.open': { opened: true },
+      'terminal.focus': { focused: true },
       'workspace.open': { opened: true },
-      'agent.listSessions': { sessions: [], truncated: false },
-      'agent.resume': { terminalId: 't9', started: true }
+      'statusBar.update': { ok: true },
+      'workspace.readContext': { workspaceId: 'w-login', branch: 'feat/login', displayName: 'feat-login', terminals: [] },
+      'editor.open': { opened: true }
     }
   })
 }
 
-const reply = { workspaceId: 'w1', terminalId: 't1', text: 'main 브랜치\n로 가세요', expectedSince: 100, projectName: 'App', workspaceName: 'feat-login', title: 'fix login' }
-
-test('reads a board with a reply card and its recent output', async () => {
-  const mounted = await mountWorker(worker, { host: host() })
-  const board = await mounted.request('board.read', {})
-  assert.deepEqual(board.selected, ['p1'])
-  assert.equal(board.decisions.length, 1)
-  assert.equal(board.decisions[0].kind, 'reply')
-  assert.deepEqual(board.decisions[0].tail, ['Which branch should I use?'])
-  assert.equal(board.projects[0].repo, 'acme/app')
-  assert.deepEqual(mounted.refusals, [])
+test('serves the Paseo snapshot, count and readiness for the chosen projects', async () => {
+  const mounted = await mountWorker(worker(), { host: host() })
+  assert.deepEqual(await mounted.request('board.scope', { kind: 'project', projectId: APP, enabled: true }), { ok: true })
+  const snapshot = await mounted.request('board.snapshot', { fresh: true }) as { sessions: { title: string; lane: string }[]; coordinator: null }
+  assert.equal(snapshot.sessions.find((s) => s.title === 'Ask about the release')?.lane, 'human')
+  assert.equal(snapshot.coordinator, null)
+  assert.deepEqual(await mounted.request('board.decision-count', {}), { count: 5 })
+  assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: [] })
   await mounted.deactivate()
 })
 
-test('types the person\'s reply as written and records it', async () => {
+test('a request outside the contract is refused before anything is read', async () => {
+  const calls: string[][] = []
+  const mounted = await mountWorker(worker(calls), { host: host() })
+  await assert.rejects(mounted.request('board.scope', { kind: 'project', projectId: '' }))
+  await assert.rejects(mounted.request('board.decision-count', { extra: true }))
+  assert.equal(calls.length, 0)
+  await mounted.deactivate()
+})
+
+test('opens a terminal session by its handle and a chat by showing its workspace', async () => {
   const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  const result = await mounted.request('board.reply', reply)
-  assert.equal(result.status, 'sent')
-  // The session was not in view: it is shown first, then the text goes in.
-  const order = h.calls.map((call) => call.method).filter((method) => method === 'terminal.focus' || method === 'terminal.sendText')
-  assert.deepEqual(order, ['terminal.focus', 'terminal.sendText'])
-  assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 't1', text: 'main 브랜치\n로 가세요', enter: true }])
-  assert.equal((h.data().storage.replies as unknown[]).length, 1)
-  assert.deepEqual(mounted.posts.map((p) => p.event), ['board.changed'])
+  const mounted = await mountWorker(worker(), { host: h })
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: sid(4) }), { opened: true })
+  assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 'term_00000004-0000-4000-8000-000000000000' }])
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: sid(1) }), { opened: true })
+  assert.deepEqual(h.callsOf('workspace.open'), [{ workspaceId: 'identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000001' }])
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: 'gone' }), { opened: false })
   await mounted.deactivate()
 })
 
-test('types straight into a session already in view, without moving the window', async () => {
-  const h = host('waiting', ['t1'])
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'sent')
-  assert.equal(h.callsOf('terminal.focus').length, 0)
-  assert.equal(h.callsOf('terminal.sendText').length, 1)
-  await mounted.deactivate()
-})
-
-test('does not type when Orca cannot show the session', async () => {
+test('an asleep terminal opens its workspace, found by path when the host names it differently', async () => {
   const h = host()
-  h.respond('terminal.focus', { focused: false })
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'failed')
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
+  h.respond('workspace.list', { workspaces: [{ id: 'other-id', kind: 'worktree', name: 'app', projectId: APP, path: '\\w\\app\\', branch: 'main', hostId: 'local' }], truncated: false })
+  const mounted = await mountWorker(worker(), { host: h })
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: sid(8) }), { opened: true })
+  assert.deepEqual(h.callsOf('workspace.open'), [{ workspaceId: 'other-id' }])
   await mounted.deactivate()
 })
 
-test('opens a session by its terminal, or a chat tab by its workspace', async () => {
+test('an agent event tells open panels the board changed and recounts the status bar', async () => {
   const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  assert.deepEqual(await mounted.request('board.focus', { terminalId: 't1', workspaceId: 'w1' }), { focused: true })
-  assert.deepEqual(await mounted.request('board.focus', { terminalId: null, workspaceId: 'w1' }), { focused: true })
-  assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 't1' }])
-  assert.deepEqual(h.callsOf('workspace.open'), [{ workspaceId: 'w1' }])
-  await mounted.deactivate()
-})
-
-test('never types into a session waiting for permission', async () => {
-  const h = host('blocked')
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'permission')
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
-  await mounted.deactivate()
-})
-
-test('refuses a reply to a question the session has moved past', async () => {
-  const h = host()
-  h.respond('agents.list', agents('waiting', 999))
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'changed')
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
-  await mounted.deactivate()
-})
-
-test('keeps only projects Orca knows when saving a selection', async () => {
-  const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  assert.deepEqual(await mounted.request('board.select-projects', { projectIds: ['p1', 'nope', 'p1'] }), { selected: ['p1'] })
-  assert.deepEqual(h.data().storage.selectedProjects, ['p1'])
-  await mounted.deactivate()
-})
-
-
-test('asks workspaces whose terminal count is 0: Orca still lists their agents', async () => {
-  const h = host()
-  h.respond('workspace.list', {
-    workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'local',
-      status: { state: 'inactive', unread: false, terminalCount: 0, lastActivityAt: null } }],
-    truncated: false
-  })
-  const mounted = await mountWorker(worker, { host: h })
-  const board = await mounted.request('board.read', {})
-  assert.equal(board.projects[0].sessions.length, 1)
-  assert.deepEqual(h.callsOf('agents.list'), [{ workspaceId: 'w1' }])
-  await mounted.deactivate()
-})
-
-test('shows how many sessions wait in the status bar, in the panel\'s language', async () => {
-  const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  await mounted.request('board.read', {})
-  await mounted.request('board.read', { locale: 'ko-KR' })
-  const updates = h.callsOf('statusBar.update') as { id: string; text: string; tone: string }[]
-  assert.deepEqual(updates.map((u) => [u.id, u.text, u.tone]), [['waiting', '1 waiting', 'accent'], ['waiting', '기다림 1', 'accent']])
-  assert.equal(h.data().storage.locale, 'ko-KR')
-  await mounted.deactivate()
-})
-
-test('a session waiting for permission turns the status bar warning', async () => {
-  const h = host('blocked')
-  const mounted = await mountWorker(worker, { host: h })
-  await mounted.request('board.read', {})
-  const [update] = h.callsOf('statusBar.update') as { tone: string }[]
-  assert.equal(update.tone, 'warning')
+  const mounted = await mountWorker(worker(), { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: APP, enabled: true })
+  await mounted.emit('agent.status.changed', { workspaceId: null, paneKey: 'a:b', state: 'done', receivedAt: 1 })
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  assert.deepEqual(mounted.posts.map((p) => [p.event, p.payload]), [['board.changed', {}]])
+  const last = h.callsOf('statusBar.update').at(-1) as { id: string; text: string }
+  assert.deepEqual([last.id, last.text], [STATUS_ITEM, '5 to decide'])
   await mounted.deactivate()
 })
 
 test('opens the dashboard on its key file in the focused workspace', async () => {
   opened.length = 0
   const h = host()
-  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  const mounted = await mountWorker(worker(), { host: h, commands: [OPEN_DASHBOARD] })
   assert.equal(await mounted.command(OPEN_DASHBOARD), undefined)
   assert.deepEqual(opened, ['/w/app-login'])
-  assert.deepEqual(h.callsOf('editor.open'), [{ workspaceId: 'w1', path: '.coordinator-board/board.coordinator-board' }])
+  assert.deepEqual(h.callsOf('editor.open'), [{ workspaceId: 'w-login', path: '.coordinator-board/board.coordinator-board' }])
   await mounted.deactivate()
 })
 
@@ -179,7 +113,7 @@ test('asks for a workspace when none is focused, and writes nothing', async () =
   opened.length = 0
   const h = host()
   h.respond('workspace.readContext', null)
-  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  const mounted = await mountWorker(worker(), { host: h, commands: [OPEN_DASHBOARD] })
   assert.match(String(await mounted.command(OPEN_DASHBOARD)), /Open a workspace/)
   assert.deepEqual(opened, [])
   assert.equal(h.callsOf('editor.open').length, 0)
@@ -190,54 +124,154 @@ test('does not write the key file into a workspace on another host', async () =>
   opened.length = 0
   const h = host()
   h.respond('workspace.list', {
-    workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'ssh:box' }],
+    workspaces: [{ id: 'w-login', kind: 'worktree', name: 'feat-login', projectId: APP, path: '/w/app-login', branch: 'feat/login', hostId: 'ssh:box' }],
     truncated: false
   })
-  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  const mounted = await mountWorker(worker(), { host: h, commands: [OPEN_DASHBOARD] })
   assert.match(String(await mounted.command(OPEN_DASHBOARD)), /another host/)
   assert.deepEqual(opened, [])
   await mounted.deactivate()
 })
 
-const closedReply = { workspaceId: 'w1', sessionId: 's-old', agent: 'claude', text: '이어서 해 줘', projectName: 'App', workspaceName: 'feat-login', title: 'old task' }
-const oldRow = (running = false) => ({ sessions: [{ sessionId: 's-old', agent: 'claude', title: 'old task', workspaceId: 'w1', hostId: 'local', branch: 'feat/login', createdAt: 1, updatedAt: 4000, messageCount: 3, totalTokens: 10, running }], truncated: false })
-const liveNamed = { agents: [{ terminalId: 't1', title: 'fix login', agent: 'claude', state: 'waiting', stateStartedAt: 100, sessionId: 's-live', task: null }] }
-
-test('lists a closed session on the board and leaves out the one that runs now', async () => {
-  const h = host()
-  h.respond('agents.list', liveNamed)
-  h.respond('agent.listSessions', { sessions: [...oldRow().sessions, { ...oldRow().sessions[0], sessionId: 's-live' }], truncated: false })
-  const mounted = await mountWorker(worker, { host: h })
-  const board = await mounted.request('board.read', {})
-  assert.deepEqual(board.projects[0].closed.map((s) => s.sessionId), ['s-old'])
+test('takes the projects chosen in version 0.1 once, then forgets the old key', async () => {
+  const h = host({ locale: 'en', selectedProjects: [APP] })
+  const mounted = await mountWorker(worker(), { host: h })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: [] })
+  assert.equal(Object.hasOwn(h.data().storage, 'selectedProjects'), false)
   await mounted.deactivate()
 })
 
-test('resumes a closed session, shows its terminal, then types the reply as written', async () => {
-  const h = host()
-  h.respond('agents.list', liveNamed)
-  h.respond('agent.listSessions', oldRow())
-  h.respond('terminal.read', { lines: ['> ready'], truncated: false })
-  const mounted = await mountWorker(worker, { host: h })
-  const result = await mounted.request('board.resume-reply', closedReply)
-  assert.equal(result.status, 'sent')
-  const order = h.calls.map((call) => call.method).filter((m) => m === 'agent.resume' || m === 'terminal.focus' || m === 'terminal.sendText')
-  assert.deepEqual(order, ['agent.resume', 'terminal.focus', 'terminal.sendText'])
-  assert.deepEqual(h.callsOf('agent.resume'), [{ workspaceId: 'w1', agent: 'claude', sessionId: 's-old' }])
-  assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 't9', text: '이어서 해 줘', enter: true }])
+test('a reply to a chat is mailed from one board terminal, opened once in the coordinator home and reused', async () => {
+  const orca = fakeOrca([{ id: 'writer', surface: 'chat', state: 'done', updatedAt: 1, title: 'Writer', project: 'studio' }])
+  orca.say('writer', 'assistant', '제목을 골라 주실 수 있나요? 할까요?')
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en' }, results: {
+    'workspace.readContext': { workspaceId: 'w-dash', branch: 'main', displayName: 'studio', terminals: [] },
+    'terminal.create': { terminalId: 'term_board' },
+    'terminal.list': { terminals: [{ id: 'term_board' }], truncated: false },
+    'statusBar.update': { ok: true },
+    'workspace.list': { workspaces: [{ id: 'w-home', kind: 'folder', name: 'coordinator', projectId: 'home-1', path: join(dataDir, 'coordinator'), branch: '', hostId: 'local' }], truncated: false }
+  } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: null }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  const card = async () => ((await mounted.request('board.snapshot', { fresh: true })) as { sessions: { id: string; decision?: { version: string } }[] })
+    .sessions.find((s) => s.id === 'writer')!.decision!
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: (await card()).version,
+    action: 'question', text: 'Which title is shorter?', requestKey: 'worker-question-0001' })
+  orca.say('writer', 'assistant', '두 번째가 짧습니다. 어느 쪽으로 할까요?')
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: (await card()).version,
+    action: 'reply', text: 'Use the second.', requestKey: 'worker-reply-000002' })
+  assert.deepEqual(h.callsOf('terminal.create'), [{ workspaceId: 'w-home', title: 'Coordinator Board mail' }])
+  const mails = orca.writes.filter((w) => w[0] === 'orchestration')
+  assert.deepEqual(mails.map((w) => w[w.indexOf('--from') + 1]), ['term_board', 'term_board'])
+  assert.deepEqual(orca.writes.filter((w) => w[0] === 'repo').map((w) => w[1]), ['add'])
   await mounted.deactivate()
 })
 
-test('never resumes a session that runs again, or beside a pane it cannot name', async () => {
-  const h = host()
-  h.respond('agents.list', liveNamed)
-  h.respond('agent.listSessions', oldRow(true))
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.resume-reply', closedReply)).status, 'open')
-  h.respond('agent.listSessions', oldRow())
-  h.respond('agents.list', { agents: [{ ...liveNamed.agents[0], terminalId: null, sessionId: null }] })
-  assert.equal((await mounted.request('board.resume-reply', closedReply)).status, 'open')
-  assert.equal(h.callsOf('agent.resume').length, 0)
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
+test('the coordinator reads and classifies over the channel with the env its launch got; others are refused', async () => {
+  const orca = fakeOrca([
+    { id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'studio' },
+    { id: 'writer', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_w', title: 'Writer', project: 'studio' },
+    { id: 'chat', surface: 'chat', state: 'done', updatedAt: 1, title: 'Chat', project: 'studio' }
+  ])
+  orca.say('writer', 'assistant', '제목을 골라 주실 수 있나요? 할까요?')
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  const path = process.platform === 'win32' ? '\\\\.\\pipe\\cb-worker-' + randomUUID() : join(dataDir, 'channel.sock')
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en' }, results: { 'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false } } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: { path, bin: '/plugin/bin', node: '/orca/orca' } }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  const envOf = async (terminalId: string) => {
+    const decision = await mounted.hooks.fire('agent.launch.before', { agent: 'claude', workspaceId: null, workspaceKind: null, terminalId, command: 'claude', env: {} })
+    assert.equal(decision.kind, 'continue')
+    return (decision as { event: { env: Record<string, string> } }).event.env
+  }
+  const coordinatorEnv = await envOf('term_c')
+  assert.equal(coordinatorEnv.CB_PIPE, path)
+  assert.equal(coordinatorEnv.CB_BIN, '/plugin/bin')
+  const cli = async (env: Record<string, string>, argv: string[], files: Record<string, string> = {}) => {
+    const out: string[] = []
+    const code = await runCli(argv, { env, readText: async (name) => files[name], stdout: (t) => { out.push(t) }, stderr: (t) => { out.push(t) }, defaultPipe: path,
+      runOrca: async (args, ms) => ({ stdout: await orca.runner(args, ms), error: null }) })
+    return { code, text: out.join('').trim() }
+  }
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  assert.equal((await cli(coordinatorEnv, ['read'])).code, 4)
+  await mounted.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
+  const listing = await cli(coordinatorEnv, ['read'])
+  assert.equal(listing.code, 0)
+  assert.ok((JSON.parse(listing.text) as { id: string }[]).some((row) => row.id === 'writer'))
+  const read = JSON.parse((await cli(coordinatorEnv, ['read', '--session', 'writer'])).text) as { evidenceId: string }
+  const classified = await cli(coordinatorEnv, ['classify', '--session', 'writer', '--evidence', read.evidenceId, '--kind', 'question', '--text-file', '-', '--input-file', 'in.json'],
+    { '-': 'Which title?', 'in.json': JSON.stringify({ content: { question: 'Which title?', recommendation: 'Use the second.' } }) })
+  assert.deepEqual(classified, { code: 0, text: '판단을 해당 세션 카드에 기록했습니다.' })
+  const snapshot = await mounted.request('board.snapshot', { fresh: true }) as { sessions: { id: string; decision?: { source: string; recommendation?: string } }[] }
+  assert.deepEqual(snapshot.sessions.find((s) => s.id === 'writer')?.decision?.source, 'coordinator')
+  assert.equal(snapshot.sessions.find((s) => s.id === 'writer')?.decision?.recommendation, 'Use the second.')
+  const plan = await cli(coordinatorEnv, ['plan'])
+  assert.equal(plan.code, 0)
+  const { workspaces, routes } = JSON.parse(plan.text) as { workspaces: { id: string; projectId: string }[]; routes: { grade: string; route: unknown; expectedModeId?: string }[] }
+  const d = routes.find((r) => r.grade === 'D')!
+  const job = { projectId: 'studio', workspaceId: workspaces[0].id, grade: 'D', title: 'Ready check', prompt: 'Reply ready.', requestKey: 'worker-test-0001', expectedRoute: d.route, expectedModeId: d.expectedModeId }
+  const assigned = await cli(coordinatorEnv, ['assign', '--input-file', 'job.json'], { 'job.json': JSON.stringify({ job }) })
+  assert.equal(assigned.code, 0, assigned.text)
+  assert.equal((JSON.parse(assigned.text) as { sessionId: string }).sessionId, 'launched-1')
+  assert.equal(orca.launches.length, 1)
+
+  const writerEnv = await envOf('term_w')
+  assert.equal((await cli(writerEnv, ['read'])).code, 4)
+  assert.equal((await cli({ ...writerEnv, CB_CALLER_TOKEN: coordinatorEnv.CB_CALLER_TOKEN }, ['read'])).code, 4)
+  assert.deepEqual(await cli(writerEnv, ['report', '--kind', 'review', '--text-file', '-'], { '-': 'Draft is ready.' }), { code: 1, text: 'Board reporting is disabled for this session.' })
+  await mounted.request('board.set-reporting', { sessionId: 'writer', enabled: true })
+  await mounted.request('board.set-reporting', { sessionId: 'chat', enabled: true })
+  assert.deepEqual(await cli(writerEnv, ['report', '--kind', 'review', '--text-file', '-'], { '-': 'Draft is ready.' }), { code: 0, text: 'Reported on your own Coordinator Board card.' })
+  assert.equal((await cli({ CB_PIPE: path }, ['read', '--as', 'chat'])).code, 4)
+  assert.equal((await cli({ CB_PIPE: path }, ['report', '--as', 'chat', '--kind', 'question', '--text-file', '-'], { '-': 'Ready?' })).code, 0)
+  assert.equal((await cli({ CB_PIPE: path }, ['report', '--as', 'writer', '--kind', 'question', '--text-file', '-'], { '-': 'Ready?' })).code, 4)
+  const notes = (await mounted.request('board.snapshot', { fresh: true }) as { notes: Record<string, { text: string; origin: string }> }).notes
+  assert.deepEqual([notes.writer?.text, notes.writer?.origin, notes.chat?.text], ['Draft is ready.', 'agent', 'Ready?'])
+  await mounted.deactivate()
+})
+
+test('with a coordinator the board mail terminal lives in its workspace, and moves there from where it was', async () => {
+  const orca = fakeOrca([
+    { id: 'writer', surface: 'chat', state: 'done', updatedAt: 1, title: 'Writer', project: 'studio' },
+    { id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'ops' }
+  ])
+  orca.say('writer', 'assistant', '제목을 골라 주실 수 있나요? 할까요?')
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en', mailbox: { terminalId: 'term_old', workspaceId: 'w-dash' } }, results: {
+    'workspace.readContext': { workspaceId: 'w-dash', branch: 'main', displayName: 'studio', terminals: [] },
+    'terminal.create': { terminalId: 'term_board' },
+    'terminal.list': { terminals: [{ id: 'term_old' }], truncated: false },
+    'terminal.close': { closed: true },
+    'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false }
+  } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: null }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'ops', enabled: true })
+  await mounted.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
+  const card = ((await mounted.request('board.snapshot', { fresh: true })) as { sessions: { id: string; decision?: { version: string } }[] })
+    .sessions.find((s) => s.id === 'writer')!.decision!
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: card.version,
+    action: 'reply', text: 'Use the second.', requestKey: 'worker-reply-000009' })
+  assert.deepEqual(h.callsOf('terminal.close'), [{ terminalId: 'term_old' }])
+  assert.deepEqual(h.callsOf('terminal.create'), [{ workspaceId: 'identity:wt2:local:1', title: 'Coordinator Board mail' }])
+  assert.deepEqual(h.data().storage.mailbox, { terminalId: 'term_board', workspaceId: 'identity:wt2:local:1' })
+  assert.deepEqual(mounted.refusals, [])
   await mounted.deactivate()
 })

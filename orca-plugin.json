@@ -2,15 +2,23 @@
   "manifestVersion": 2,
   "id": "coordinator-board",
   "name": "Coordinator Board",
-  "version": "0.1.0",
+  "version": "0.6.2",
   "description": "Group agent sessions by project and answer the ones waiting for you, from a sidebar panel or a full-width dashboard tab.",
   "engines": {
     "orca": ">=1.4.259"
   },
   "execution": "trusted-worker",
   "pluginApi": 1,
-  "main": "src/worker.ts",
+  "main": "dist/worker.mjs",
   "contributes": {
+    "events": [
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.removed"
+      }
+    ],
     "panels": [
       {
         "id": "coordinator-board",
@@ -27,7 +35,7 @@
         "extensions": [
           ".coordinator-board"
         ],
-        "entry": "src/dashboard/main.ts",
+        "entry": "dist/dashboard.html",
         "frame": "isolated"
       }
     ],
@@ -44,6 +52,11 @@
         "icon": "blocks",
         "tooltip": "Coordinator Board",
         "command": "open-dashboard"
+      }
+    ],
+    "hooks": [
+      {
+        "event": "agent.launch.before"
       }
     ]
   },

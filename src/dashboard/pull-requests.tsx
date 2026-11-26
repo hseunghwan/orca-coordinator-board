@@ -1,0 +1,221 @@
+/** @jsxImportSource react */
+// Paseo's pull request pieces (client/pull-requests.tsx): the PR card with "merge on board", its
+// feedback line, the lifecycle line of a merge record, and the repository settings per project.
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { mergeNotificationLabel } from "../paseo/client/merge-notification";
+import { confirmPullRequestMerge, previewPullRequestMerge, pullUrl, readPullLifecycle, setProjectRepository, type MergeMethod, type MergePreview, type MergeReason, type MergeResult, type PullRequestView } from "../paseo/shared/prs";
+import type { Translate } from "../paseo/view-types";
+import { useDecisionInteraction } from "./decision-editing";
+import { call } from "./rpc";
+import { Button, column, Disclosure, ProjectText, row, SessionChip } from "./ui/controls";
+import { useBoardLanguage } from "./ui/language";
+
+type PullRequest = PullRequestView["items"][number];
+type Lifecycle = "OPEN" | "CLOSED" | "MERGED" | "UNKNOWN";
+const labels = {
+  ready: ["병합 검토 가능", "Ready for merge review"], draft: ["초안", "Draft"],
+  conflict: ["충돌 해결 필요", "Conflicts to resolve"], "checks-failed": ["검사 실패", "Checks failed"],
+  "checks-pending": ["검사 중", "Checks pending"], "changes-requested": ["수정 요청", "Changes requested"],
+  blocked: ["병합 조건 대기", "Merge requirements pending"], unknown: ["상태 미확인", "Status unknown"],
+  "auto-merge": ["자동 병합 대기", "Auto-merge enabled"],
+} as const;
+
+export type MergeNotice = { projectId: string; target: string; status: MergeResult["status"]; reason?: MergeReason; mergeSha?: string | null; notification?: MergeResult["notification"] };
+export type WorkSessionLink = { key: string; label: string; open: () => void };
+const wrap = { ...row, gap: 6 };
+
+const resultWords = {
+  merged: ["병합을 확인했습니다.", "Merge confirmed."],
+  "already-merged": ["이미 병합된 PR입니다.", "This pull request has already merged."],
+  changed: ["최신 정보로 병합 미리보기를 다시 여세요.", "Open a new preview to review the latest state."],
+  blocked: ["현재 병합할 수 없습니다. GitHub에서 상태를 확인하세요.", "Merge is currently blocked. Check the pull request on GitHub."],
+  unconfirmed: ["병합 결과를 확인하지 못했습니다. GitHub에서 현재 상태를 확인하세요.", "Merge result unknown. Check the current state on GitHub."],
+} as const;
+
+function reasonText(reason: MergeReason | undefined, t: Translate) {
+  if (!reason) return null;
+  const reasons: Partial<Record<MergeReason, readonly [string, string]>> = {
+    ...labels,
+    closed: ["닫힌 PR", "Pull request closed"],
+    queue: ["GitHub 병합 대기열 사용", "The repository uses a merge queue"],
+    permission: ["GitHub 병합 권한 확인 필요", "Check GitHub merge permissions"],
+    "no-method": ["저장소에서 허용한 병합 방식 없음", "No allowed merge method"],
+    expired: ["병합 미리보기 만료", "Preview expired"],
+    scope: ["관리 프로젝트의 저장소 연결이 변경됨", "The managed project's repository mapping changed"],
+    unavailable: ["GitHub 상태 조회 불가", "Could not read GitHub state"],
+  };
+  const words = reasons[reason];
+  if (words && reason !== "ready" && reason !== "blocked") return t(words[0], words[1]);
+  return null;
+}
+
+export function MergeFeedback({ notice }: { notice: MergeNotice }) {
+  const { t } = useBoardLanguage();
+  const words = resultWords[notice.status];
+  const reason = reasonText(notice.reason, t);
+  const delivery = mergeNotificationLabel(notice.notification, t);
+  const deliveryWarns = notice.notification?.status === "unavailable" || notice.notification?.status === "unconfirmed";
+  return <p role="status" className={notice.status === "merged" || notice.status === "already-merged" ? "ok" : "warn"} style={{ overflowWrap: "anywhere" }}>
+    {[notice.target, t(words[0], words[1]), reason, notice.mergeSha?.slice(0, 12)].filter(Boolean).join(" · ")}
+    {delivery && <span className={deliveryWarns ? "warn" : "muted"}>{" · "}{delivery}</span>}
+  </p>;
+}
+
+function GitHubPullLink({ repo, number }: { repo: string; number: number }) {
+  const { t } = useBoardLanguage();
+  const [failed, setFailed] = useState(false);
+  const url = pullUrl(repo, number);
+  const label = repo + " #" + number;
+  function open() {
+    void (orca.shell?.openExternal(url) ?? Promise.reject()).then(result => setFailed(!result.opened), () => setFailed(true));
+  }
+  return <>
+    <a className="link" href={url} aria-label={label + " · " + t("GitHub에서 보기", "View on GitHub")} style={{ maxWidth: "100%", fontSize: 13, overflowWrap: "anywhere" }}
+      onClick={event => { event.preventDefault(); open(); }}>{label}</a>
+    {failed && <span className="muted sm" style={{ overflowWrap: "anywhere", userSelect: "text" }}>{url}</span>}
+  </>;
+}
+
+export function TrackedPullStatus({ repo, number, projectId, securityGate }: { repo: string; number: number; projectId: string | null; securityGate: boolean }) {
+  const { t } = useBoardLanguage();
+  const [state, setState] = useState<Lifecycle | null>(null);
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    setState(null);
+    async function refresh() {
+      let current: Lifecycle = "UNKNOWN";
+      if (projectId) {
+        try { current = (await call(readPullLifecycle, { repo, number, projectId })).state; } catch { /* Show the link when GitHub is unavailable. */ }
+      }
+      if (!active) return;
+      setState(current);
+      if (projectId && current !== "MERGED") timer = setTimeout(() => void refresh(), 60_000);
+    }
+    void refresh();
+    return () => { active = false; clearTimeout(timer); };
+  }, [repo, number, projectId]);
+  const message = state === "MERGED" ? t("병합 완료", "Merged")
+    : state === "CLOSED" ? t("병합 없이 닫힘", "Closed without merging")
+    : state === "OPEN" && securityGate ? t("열린 PR · 보안 게이트 통과 여부 확인 필요", "Open · Security gate unverified")
+    : state === "OPEN" ? t("열린 PR · 병합 조건 미확인", "Open · Merge requirements unverified")
+    : state === "UNKNOWN" ? t("PR 상태 미확인", "Pull request status unavailable")
+    : t("GitHub 상태 확인 중…", "Checking GitHub status…");
+  return <div style={{ ...wrap, alignItems: "baseline" }}>
+    <GitHubPullLink repo={repo} number={number} />
+    <span role="status" className={state === "MERGED" ? "ok" : "muted"}>{message}</span>
+  </div>;
+}
+
+export function PullRequestCard({ pr, projectId, decision = false, showDivider = true, securityGate = false, openCoordinator, workSessions, onResult, clarification, priorityLabel }: {
+  pr: PullRequest; projectId: string; workSessions: WorkSessionLink[]; decision?: boolean; showDivider?: boolean; securityGate?: boolean;
+  openCoordinator?: () => void; onResult: (notice: MergeNotice) => void; clarification?: ReactNode; priorityLabel?: string;
+}) {
+  const { t } = useBoardLanguage();
+  const [preview, setPreview] = useState<MergePreview | null>(null);
+  const [method, setMethod] = useState<MergeMethod | null>(null);
+  const [notice, setNotice] = useState<MergeNotice | null>(null);
+  const [lookupError, setLookupError] = useState(false);
+  const [busy, setBusy] = useState<"read" | "merge" | null>(null);
+  const locked = useRef(false);
+  const target = pr.repo + " #" + pr.number;
+  const named = (label: string) => ({ label, accessibilityLabel: target + " · " + label });
+  const ready = !securityGate && !!projectId && pr.lane === "review" && pr.reason === "ready" && notice?.status !== "merged" && notice?.status !== "already-merged";
+  useDecisionInteraction(!!busy || (ready && !!preview));
+  const status = securityGate && pr.reason === "ready" ? t("열린 PR · 보안 게이트 통과 여부 확인 필요", "Open · Security gate unverified") : t(labels[pr.reason][0], labels[pr.reason][1]);
+  const args = { projectId, repo: pr.repo, number: pr.number };
+
+  async function inspect() {
+    if (locked.current || !ready) return;
+    locked.current = true; setBusy("read"); setNotice(null); setLookupError(false);
+    try {
+      const next = await call(previewPullRequestMerge, args);
+      if (next.status === "ready" && next.token && next.methods.length) {
+        setPreview(next); setMethod(next.defaultMethod && next.methods.includes(next.defaultMethod) ? next.defaultMethod : null);
+      } else {
+        const feedback: MergeNotice = { projectId, target, status: next.status === "merged" ? "already-merged" : "blocked", reason: next.reason };
+        setNotice(feedback); onResult(feedback);
+      }
+    } catch { setLookupError(true); }
+    finally { locked.current = false; setBusy(null); }
+  }
+  async function confirm() {
+    if (locked.current || !ready || !preview?.token || !method || !preview.methods.includes(method)) return;
+    locked.current = true; setBusy("merge");
+    let feedback: MergeNotice;
+    try {
+      const result = await call(confirmPullRequestMerge, { ...args, token: preview.token, method });
+      feedback = { projectId, target, ...result };
+    } catch { feedback = { projectId, target, status: "unconfirmed" }; }
+    finally { locked.current = false; setBusy(null); setPreview(null); setMethod(null); }
+    setNotice(feedback); onResult(feedback);
+  }
+  return <div style={{ ...column, gap: 6, ...(showDivider && { borderTop: "1px solid var(--border)", padding: "8px 0" }) }}>
+    <div style={{ ...wrap, alignItems: "baseline" }}>
+      <GitHubPullLink repo={pr.repo} number={pr.number} />
+      <span className="muted sm">· {[status, priorityLabel].filter(Boolean).join(" · ")}</span>
+      {workSessions.map(link => <SessionChip key={link.key} label={link.label} accessibilityLabel={target + " · " + link.label} onPress={link.open} />)}
+      {!workSessions.length && <span className="muted sm">{t("작업 세션 미확인", "No verified work session")}</span>}
+      {decision && openCoordinator && <SessionChip label={t("코디네이터 세션", "Coordinator session")} accessibilityLabel={named(t("코디네이터 세션 열기", "Open coordinator session")).accessibilityLabel} onPress={openCoordinator} />}
+    </div>
+    <p style={{ fontSize: 15, lineHeight: "21px", fontWeight: 600, overflowWrap: "anywhere" }}>{preview?.title || pr.title}</p>
+    {preview && ready && <div style={{ ...column, gap: 7, padding: 10, border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--bg)" }}>
+      <p style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{preview.baseRef} ← {preview.headRef}</p>
+      <p className="muted sm" style={{ overflowWrap: "anywhere" }}>{t("검토한 HEAD", "Reviewed HEAD")} · <code>{preview.headSha}</code></p>
+      <p className="muted sm" style={{ overflowWrap: "anywhere" }}>{t("대상 브랜치 SHA", "Base SHA")} · <code>{preview.baseSha}</code></p>
+      <p>{t("검사 상태", "Checks")} · {preview.checks ? t(`${preview.checks}건 완료`, `${preview.checks} completed`) : t("보고된 검사 없음", "No reported checks")}</p>
+      {openCoordinator && <p className="muted" style={{ fontSize: 13 }}>{t("병합되면 코디네이터에 후속 작업을 요청합니다.", "After the merge, the board asks the coordinator to follow up.")}</p>}
+      <p style={{ fontWeight: 600 }}>{t("병합 방식", "Merge method")}</p>
+      <div role="radiogroup" aria-label={named(t("병합 방식", "Merge method")).accessibilityLabel} style={wrap}>
+        {preview.methods.map(option => <Button key={option} size="sm" {...named(option)} selected={method === option} disabled={!!busy} onPress={() => setMethod(option)} />)}
+      </div>
+      <div style={wrap}>
+        <Button variant="default" {...named(busy === "merge" ? t("병합 확인 중…", "Confirming merge…") : t("병합 확정", "Confirm merge"))} disabled={!method || !!busy} onPress={() => void confirm()} />
+        <Button {...named(t("취소", "Cancel"))} disabled={!!busy} onPress={() => { setPreview(null); setMethod(null); }} />
+      </div>
+    </div>}
+    {((ready && !preview) || clarification) && <div style={wrap}>
+      {ready && !preview && <Button {...named(busy === "read" ? t("병합 정보 조회 중…", "Loading merge details…") : t("보드에서 병합", "Merge on board"))} selected={decision} disabled={!!busy} onPress={() => void inspect()} />}
+      {clarification}
+    </div>}
+    {lookupError && <p role="status" className="warn">{t("병합 정보를 불러오지 못했습니다. 다시 조회하거나 GitHub에서 확인하세요.", "Could not load merge details. Try again or open GitHub.")}</p>}
+    {notice && notice.status !== "merged" && notice.status !== "already-merged" && <MergeFeedback notice={notice} />}
+  </div>;
+}
+
+export function PullRequestSettings({ view, names, refresh }: { view: PullRequestView; names: ReadonlyMap<string, string>; refresh: () => void }) {
+  const { t } = useBoardLanguage();
+  const [expanded, setExpanded] = useState(false);
+  return <Disclosure title={t("프로젝트별 GitHub 저장소", "GitHub repositories by project")} expanded={expanded} onPress={() => setExpanded(!expanded)}>
+    {view.projects.map(project => <RepositorySetting key={JSON.stringify([project.projectId, project.mode, project.repo])} project={project}
+      title={names.get(project.projectId) ?? project.projectId} refresh={refresh} />)}
+  </Disclosure>;
+}
+
+function RepositorySetting({ project, title, refresh }: { project: PullRequestView["projects"][number]; title: string; refresh: () => void }) {
+  const { t } = useBoardLanguage();
+  const [repo, setText] = useState(project.repo ?? "");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  async function change(mode: "auto" | "off" | "manual") {
+    if (pending) return;
+    setPending(true);
+    try {
+      await call(setProjectRepository, { projectId: project.projectId, mode, ...(mode === "manual" ? { repo: repo.trim() } : {}), expectedMode: project.mode, expectedRepo: project.repo });
+      setError(false); refresh();
+    } catch { setError(true); } finally { setPending(false); }
+  }
+  const states = { ok: t("조회됨", "Connected"), unmapped: t("저장소 연결 필요", "Link a repository"), unavailable: t("조회 실패 · 호스트의 gh 연결 확인", "Lookup failed · Check gh on the host"), off: t("꺼짐", "Off"), truncated: t("일부 PR만 표시", "Showing a partial PR list") };
+  return <div className="surface" style={{ ...column, gap: 6, padding: 10, borderRadius: "var(--r-lg)", boxShadow: "none" }}>
+    <ProjectText projectId={project.projectId} projects={[title]} style={{ fontWeight: 600 }}>{title}</ProjectText>
+    <p className={project.status === "unavailable" ? "warn" : "muted"}>{project.repo ? project.repo + " · " : ""}{states[project.status]}</p>
+    <input className="input" aria-label={t(title + " GitHub 저장소", title + " GitHub repository")} placeholder="owner/repository" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+      value={repo} onChange={event => setText(event.target.value)} disabled={pending} />
+    <div style={{ ...row, gap: 5 }}>
+      <Button size="sm" label={t("저장소 연결", "Link repository")} disabled={pending || !repo.trim()} onPress={() => void change("manual")} />
+      <Button size="sm" selected={project.mode === "auto"} disabled={pending || project.mode === "auto"} label={t("자동 감지", "Auto-detect")} onPress={() => void change("auto")} />
+      <Button size="sm" selected={project.mode === "off"} disabled={pending || project.mode === "off"} label={t("PR 조회 끄기", "Turn off PR lookup")} onPress={() => void change("off")} />
+    </div>
+    {error && <p role="status" className="danger">{t("저장소 이름과 최신 프로젝트 설정을 확인해 주세요.", "Check the repository name and refresh this project's settings.")}</p>}
+  </div>;
+}

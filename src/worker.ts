@@ -1,77 +1,66 @@
-// The plugin's worker: reads projects, workspaces and agents from Orca, pull requests through
-// git and gh, and types the person's replies into session terminals.
+// The plugin's worker: serves the board's read requests from Orca's CLI with the ported Paseo
+// server code, keeps the status bar count, and opens the dashboard tab.
 import type { OrcaWorkerApi } from 'orca/worker'
-import { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
-import { commandEnv, GH_FIELDS, GH_PROJECTION, githubRepository, parseOpenPulls, SCAN_LIMIT } from './github'
+import { homedir, tmpdir } from 'node:os'
+import { delimiter, dirname, isAbsolute, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
+import { identifyCaller } from './channel/caller'
+import { withChannel } from './channel/hook'
+import { channelPath } from './channel/path'
+import { EXIT, type ChannelReply, type ChannelRequest } from './channel/protocol'
+import { serveChannel } from './channel/server'
+import { run } from './github'
 import { translator } from './i18n'
+import { createFleet, workspaceKey, type Fleet, type SessionId, type World, type WorkspaceRecord } from './orca'
+import { noSignals, reduceSignals, type Observation } from './orca/signals'
+import { createCli, hostCli, type OrcaCli, type Runner } from './orca/cli'
+import { contribute, type PullDeps } from './server/board'
+import { rpcServer } from './server/rpc'
 import { DASHBOARD_FILE, dashboardFileText, focusedWorkspace, statusItem, withExcludeLine } from './summary'
-import {
-  buildBoard, cleanTail, isResumeAgent, remember, replyGuard, resumeGuard, strings,
-  type BoardView, type ProjectPulls, type PullItem, type RawAgent, type RawHistorySession, type RawProject, type ReplyRecord, type ReplyStatus
-} from './model'
-
-export type GithubDeps = {
-  originOf(path: string): Promise<string | null>
-  openPulls(repo: string): Promise<{ status: 'ok' | 'truncated'; items: PullItem[] }>
-  now(): number
-}
 
 export type FileDeps = {
   /** Writes the dashboard key file in a local checkout and hides it from git. */
   ensureDashboard(root: string): Promise<void>
 }
 
-export type WorkerOptions = {
-  files?: FileDeps
-  /** How often the status bar count is read again; 0 turns the background read off (tests). */
-  pollMs?: number
+export type WorkerDeps = {
+  cli: OrcaCli
+  /** Where the board keeps its scope, notes and receipts (Paseo's plugin-data folder). */
+  dataDir: string
+  files: FileDeps
+  /** How often Orca is read again for the status bar and for changes no event reports; 0 turns it off (tests). */
+  pollMs: number
+  /** git and gh lookups for pull requests; the real ones when absent. */
+  pulls?: PullDeps
+  /** The coordinator channel; null leaves it closed (tests that do not use it). */
+  channel: ChannelDeps | null
 }
 
-const SELECTED = 'selectedProjects'
-const DISMISSED = 'dismissed'
-const REPLIES = 'replies'
+export type ChannelDeps = {
+  /** The pipe or socket to listen on. */
+  path: string
+  /** The plugin's bin folder. */
+  bin: string
+  /** The runtime the shims run the CLI with. */
+  node: string
+}
+
 const LOCALE = 'locale'
+/** The board's own terminal that chat mail is sent from: { terminalId, workspaceId }. */
+const MAILBOX = 'mailbox'
+const MAILBOX_TITLE = 'Coordinator Board mail'
+const LEGACY_SELECTION = 'selectedProjects'
+/** The HMAC key of the channel's caller tokens; made once. */
+const CHANNEL_SECRET = 'channelSecret'
 export const STATUS_ITEM = 'waiting'
 export const OPEN_DASHBOARD = 'open-dashboard'
 const POLL_MS = 30_000
-const MAX_WORKSPACES = 60
-const MAX_TAILS = 12
-const TTL = 60_000
-const FAILED_TTL = 15_000
-
-// shell:false, a timeout and a buffer cap; commandEnv turns prompts off.
-function run(command: 'git' | 'gh', args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(command, args, {
-      shell: false,
-      windowsHide: true,
-      timeout: command === 'gh' ? 15_000 : 3_000,
-      maxBuffer: 2 * 1024 * 1024,
-      env: commandEnv(process.env, process.platform)
-    }, (error: Error | null, stdout: string | Buffer) => (error ? reject(error) : resolve(String(stdout))))
-  })
-}
-
-export const hostGithub: GithubDeps = {
-  async originOf(path) {
-    // A nested non-Git folder would otherwise inherit a parent repository from git -C.
-    if (!(await isCheckout(path))) return null
-    try {
-      return githubRepository(await run('git', ['-C', path, 'remote', 'get-url', 'origin']))
-    } catch {
-      return null
-    }
-  },
-  async openPulls(repo) {
-    return parseOpenPulls(repo, await run('gh', [
-      'pr', 'list', '--repo', 'github.com/' + repo, '--state', 'open',
-      '--limit', String(SCAN_LIMIT + 1), '--json', GH_FIELDS, '--jq', GH_PROJECTION
-    ]))
-  },
-  now: () => Date.now()
-}
+const CHANGE_DEBOUNCE_MS = 500
+// Typed as a plain string so the post stays the contract's bare change signal, whatever the frame declares.
+const BOARD_CHANGED: string = 'board.changed'
 
 /** A folder with its own .git, not one nested in another repository. */
 async function isCheckout(path: string): Promise<boolean> {
@@ -103,311 +92,179 @@ export const hostFiles: FileDeps = {
   }
 }
 
-async function mapLimited<V, R>(items: readonly V[], limit: number, fn: (item: V) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length)
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++
-      out[index] = await fn(items[index])
+/** What a session looks like to a change check: polling sees chat sessions that send no events. */
+function fingerprint(world: World): string {
+  return [...world.sessions.values()].map((s) => `${s.id}:${s.state}:${s.updatedAt}:${s.unread}`).sort().join('|')
+}
+
+const openSession = z.object({ sessionId: z.string().min(1).max(256) })
+
+export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void {
+  // orchestration send from the worker, a process in no Orca terminal, needs --from. The board opens one
+  // quiet shell terminal of its own and reuses it while it lives; replies to its mail land in its
+  // mailbox. It lives in the coordinator's workspace, and moves there when the coordinator does;
+  // before there is a coordinator, in the board's coordinator home, so it never opens in a person's project.
+  async function hostWorkspace(ws: WorkspaceRecord | null | undefined): Promise<string | null> {
+    if (!ws || (ws.hostId && ws.hostId !== 'local')) return null
+    if (ws.listId) return ws.listId
+    const { workspaces } = await orca.host.call('workspace.list', {})
+    const key = workspaceKey(ws)
+    return workspaces.find((w) => key && workspaceKey(w) === key)?.id ?? null
+  }
+  async function coordinatorWorkspace(): Promise<string | null> {
+    const id = board.coordinator()
+    if (!id) return null
+    const world = await fleet.view()
+    const session = world.sessions.get(id as SessionId)
+    return hostWorkspace(session ? world.workspaces.get(session.worktree) : undefined)
+  }
+  async function homeWorkspace(): Promise<string | null> {
+    if (!fleet.home) return null
+    await fleet.home.ensure(translator(locale))
+    fleet.invalidate()
+    return hostWorkspace(fleet.home.workspace(await fleet.view({ maxAgeMs: 0 })))
+  }
+  async function mailSender(): Promise<string | null> {
+    const saved = await orca.storage.get(MAILBOX).catch(() => null) as { terminalId?: unknown; workspaceId?: unknown } | null
+    const target = await coordinatorWorkspace().catch(() => null) ?? await homeWorkspace().catch((error: unknown) => {
+      orca.log(`coordinator home failed: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    })
+    let alive = false
+    if (typeof saved?.terminalId === 'string' && typeof saved.workspaceId === 'string') {
+      const listed = await orca.host.call('terminal.list', { workspaceId: saved.workspaceId }).catch(() => null)
+      alive = !!listed?.terminals.some((terminal) => terminal.id === saved.terminalId)
+      if (alive && (!target || target === saved.workspaceId)) return saved.terminalId as string
+      if (alive) await orca.host.call('terminal.close', { terminalId: saved.terminalId as string }).catch(() => undefined)
     }
-  }))
-  return out
-}
-
-type Entry<V> = { expires: number; value: Promise<V> }
-
-function replyRecords(value: unknown): ReplyRecord[] {
-  return Array.isArray(value) ? (value as ReplyRecord[]).filter((row) => row && typeof row.at === 'number') : []
-}
-
-export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: WorkerOptions = {}): () => void {
-  const files = options.files ?? hostFiles
-  const pollMs = options.pollMs ?? POLL_MS
-  let locale = 'en'
-  void orca.storage.get(LOCALE).then((value) => { if (typeof value === 'string') locale = value }, () => undefined)
-  const origins = new Map<string, Entry<string | null>>()
-  const pullLists = new Map<string, Entry<{ status: 'ok' | 'truncated' | 'unavailable'; items: PullItem[] }>>()
-
-  function cached<V>(map: Map<string, Entry<V>>, key: string, refresh: boolean, load: () => Promise<V>, ttl: (value: V) => number): Promise<V> {
-    const hit = map.get(key)
-    // A lookup still running is shared, even by a refresh.
-    if (hit && (hit.expires === Infinity || (!refresh && hit.expires > github.now()))) return hit.value
-    const entry: Entry<V> = { expires: Infinity, value: load() }
-    map.set(key, entry)
-    entry.value.then(
-      (value) => { entry.expires = github.now() + ttl(value) },
-      () => { if (map.get(key) === entry) map.delete(key) }
-    )
-    return entry.value
-  }
-
-  async function agentsOf(workspaceId: string): Promise<RawAgent[]> {
-    // Checked live on Orca 1.4.272: agents.list takes the id workspace.list gives.
-    return (await orca.host.call('agents.list', { workspaceId })).agents
-  }
-
-  async function pullsFor(project: RawProject, refresh: boolean): Promise<ProjectPulls> {
-    if (project.hostId && project.hostId !== 'local') return { repo: null, status: 'remote', items: [] }
-    const repo = await cached(origins, project.path, refresh, () => github.originOf(project.path), () => TTL)
-    if (!repo) return { repo: null, status: 'unmapped', items: [] }
-    const list = await cached(pullLists, repo, refresh, async () => {
-      try {
-        return await github.openPulls(repo)
-      } catch (error) {
-        const { code, stderr } = error as { code?: unknown; stderr?: unknown }
-        orca.log(`gh pr list failed for ${repo}: exit ${String(code ?? '')}: ${String(stderr ?? '').trim().slice(0, 300)}`)
-        return { status: 'unavailable' as const, items: [] }
-      }
-    }, (value) => (value.status === 'unavailable' ? FAILED_TTL : TTL))
-    return { repo, status: list.status, items: list.items }
-  }
-
-  async function readHistory(workspaceId?: string): Promise<RawHistorySession[] | undefined> {
+    if (!target) return null
     try {
-      const { sessions } = await orca.host.call('agent.listSessions', workspaceId ? { workspaceId, limit: 200 } : { limit: 200 })
-      return sessions
+      const { terminalId } = await orca.host.call('terminal.create', { workspaceId: target, title: MAILBOX_TITLE })
+      await orca.storage.set(MAILBOX, { terminalId, workspaceId: target })
+      orca.log(alive ? 'moved the board mail terminal' : 'opened the board mail terminal')
+      return terminalId
     } catch (error) {
-      orca.log(`agent history unavailable: ${error instanceof Error ? error.message : String(error)}`)
-      return undefined
+      orca.log(`board mail terminal failed: ${error instanceof Error ? error.message : String(error)}`)
+      return null
     }
   }
-
-  type ReadOptions = { pulls: boolean; tails: boolean }
-  async function readBoard(refresh: boolean, read: ReadOptions = { pulls: true, tails: true }): Promise<BoardView> {
-    const [projectList, workspaceList, selectedRaw, dismissedRaw, repliesRaw] = await Promise.all([
-      orca.host.call('project.list', {}),
-      orca.host.call('workspace.list', { includeStatus: true }),
-      orca.storage.get(SELECTED),
-      orca.storage.get(DISMISSED),
-      orca.storage.get(REPLIES)
-    ])
-    const projects: RawProject[] = projectList.projects
-    const selected = strings(selectedRaw).filter((id) => projects.some((project) => project.id === id))
-    const workspaces = workspaceList.workspaces.filter((w) => w.projectId != null && selected.includes(w.projectId))
-    // Ask every workspace: Orca lists agents even where the terminal count is 0.
-    const scanned = workspaces.slice(0, MAX_WORKSPACES)
-    let truncated = projectList.truncated || workspaceList.truncated || workspaces.length > scanned.length
-    const agents = new Map<string, RawAgent[]>()
-    await mapLimited(scanned, 4, async (workspace) => {
-      try {
-        agents.set(workspace.id, await agentsOf(workspace.id))
-      } catch {
-        truncated = true
-      }
-    })
-    const chosen = projects.filter((project) => selected.includes(project.id))
-    const pulls = new Map(read.pulls ? await mapLimited(chosen, 3, async (project) => [project.id, await pullsFor(project, refresh)] as const) : [])
-    // Closed sessions come from Orca's history (history:read); without it the board just shows none.
-    const history = read.pulls ? await readHistory() : undefined
-    const board = buildBoard({
-      projects, selected, workspaces, agents, pulls,
-      dismissed: new Set(strings(dismissedRaw)),
-      replies: replyRecords(repliesRaw).slice(-20).reverse(),
-      history,
-      now: github.now(),
-      truncated
-    })
-    if (!read.tails) return board
-    const waiting = board.decisions.filter((d) => d.kind === 'reply' && d.session?.terminalId).slice(0, MAX_TAILS)
-    await mapLimited(waiting, 4, async (decision) => {
-      try {
-        const output = await orca.host.call('terminal.read', { terminalId: decision.session!.terminalId!, maxLines: 60 })
-        decision.tail = cleanTail(output.lines)
-      } catch {
-        // The card still works without recent output.
-      }
-    })
-    return board
-  }
-
-  // The status bar shows how many sessions wait for the person. A board read by a panel or the
-  // dashboard updates it at once; otherwise the worker reads sessions alone (no gh, no terminal output).
-  let statusRun: Promise<void> | null = null
-  let statusTimer: ReturnType<typeof setTimeout> | undefined
+  const fleet: Fleet = createFleet(deps.cli, Date.now, { dataDir: deps.dataDir, mailSender })
+  let locale = 'en'
+  const board = contribute(rpcServer((name, handler) => orca.panels.handle(name, handler), fleet.paseo), fleet, deps.dataDir, deps.pulls, {
+    t: () => translator(locale),
+    bin: deps.channel?.bin ?? '',
+    focusedWorkspace: async () => (await orca.host.call('workspace.readContext', {}).catch(() => null))?.workspaceId ?? null
+  })
   let stopped = false
-  async function showStatus(view: BoardView | null): Promise<void> {
-    if (stopped) return
-    try {
-      await orca.host.call('statusBar.update', { id: STATUS_ITEM, ...statusItem(translator(locale), view) })
-    } catch {
-      // The browser client has no status bar.
+  void orca.storage.get(LEGACY_SELECTION).then(async (value) => {
+    if (Array.isArray(value) && board.adoptLegacySelection(value)) {
+      orca.log(`took ${value.length} project(s) chosen in version 0.1`)
+      changed()
     }
-  }
+    await orca.storage.delete(LEGACY_SELECTION)
+  }, () => undefined)
+  const readLocale = () => orca.storage.get(LOCALE).then((value) => { if (typeof value === 'string' && value) locale = value }, () => undefined)
+  void readLocale()
+  const localeWatch = orca.storage.onDidChange((change) => { if (change.key === LOCALE) void readLocale() })
+
+  let statusRun: Promise<void> | null = null
   function updateStatus(): Promise<void> {
-    statusRun ??= readBoard(false, { pulls: false, tails: false })
-      .then((view) => showStatus(view), () => undefined)
+    statusRun ??= board.count()
+      .then((count) => ({ count, failed: false }), (error: unknown) => {
+        orca.log(`board count failed: ${error instanceof Error ? error.message : String(error)}`)
+        return { count: null, failed: true }
+      })
+      .then(async ({ count, failed }) => {
+        if (stopped) return
+        // The browser client has no status bar.
+        await orca.host.call('statusBar.update', { id: STATUS_ITEM, ...statusItem(translator(locale), board.configured() ? count : null, failed) }).catch(() => undefined)
+      })
       .finally(() => { statusRun = null })
     return statusRun
   }
-  function statusSoon(): void {
+
+  let changeTimer: ReturnType<typeof setTimeout> | undefined
+  function changed(): void {
     if (stopped) return
-    if (statusTimer) clearTimeout(statusTimer)
-    statusTimer = setTimeout(() => { statusTimer = undefined; void updateStatus() }, 500)
+    if (changeTimer) clearTimeout(changeTimer)
+    // Once per burst: invalidating per event would restart a snapshot still being built.
+    changeTimer = setTimeout(() => {
+      changeTimer = undefined
+      board.invalidate()
+      orca.panels.post(BOARD_CHANGED, {})
+      void updateStatus()
+      void board.adoptCoordinator().then((adopted) => {
+        if (!adopted || stopped) return
+        board.invalidate()
+        orca.panels.post(BOARD_CHANGED, {})
+      }, (error: unknown) => orca.log(`coordinator adoption failed: ${error instanceof Error ? error.message : String(error)}`))
+    }, CHANGE_DEBOUNCE_MS)
   }
-  const poll = pollMs > 0 ? setInterval(() => void updateStatus(), pollMs) : undefined
-  if (pollMs > 0) void updateStatus()
-
-  orca.panels.handle('board.read', async (input) => {
-    if (typeof input?.locale === 'string' && input.locale && input.locale !== locale) {
-      locale = input.locale.slice(0, 35)
-      await orca.storage.set(LOCALE, locale)
+  // Paseo drains its queues from turn, permission, close and archive hooks; Orca reports state changes.
+  let signalState = noSignals
+  function observe(observation: Observation): void {
+    const { state, signals } = reduceSignals(signalState, observation)
+    signalState = state
+    for (const signal of signals) {
+      void board.signal(signal).then(changed, (error: unknown) => orca.log(`queued reply check failed: ${error instanceof Error ? error.message : String(error)}`))
     }
-    const board = await readBoard(input?.refresh === true)
-    void showStatus(board)
-    return board
-  })
-
-  orca.panels.handle('board.projects', async () => {
-    const [{ projects }, selected] = await Promise.all([orca.host.call('project.list', {}), orca.storage.get(SELECTED)])
-    return {
-      projects: projects
-        .filter((project) => !project.hidden)
-        .map((project) => ({ id: project.id, name: project.name, path: project.path, remote: !!project.hostId && project.hostId !== 'local' }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-      selected: strings(selected)
-    }
-  })
-
-  orca.panels.handle('board.select-projects', async (input) => {
-    const { projects } = await orca.host.call('project.list', {})
-    const known = new Set(projects.map((project) => project.id))
-    const selected = [...new Set(strings(input?.projectIds))].filter((id) => known.has(id))
-    await orca.storage.set(SELECTED, selected)
-    orca.panels.post('board.changed', { at: github.now() })
-    statusSoon()
-    return { selected }
-  })
-
-  // Orca types only into terminals of the focused workspace, so a reply first shows its session.
-  // Only a person pressing send gets here; the window moves to the session they answered.
-  async function typeInto(terminalId: string, text: string): Promise<boolean> {
-    const inFocus = async () => {
-      const context = await orca.host.call('workspace.readContext', {}).catch(() => null)
-      return !!context?.terminals.some((terminal) => terminal.id === terminalId)
-    }
-    if (!(await inFocus())) {
-      const moved = await orca.host.call('terminal.focus', { terminalId }).catch(() => ({ focused: false }))
-      if (!moved.focused) return false
-      let shown = false
-      for (let tries = 0; tries < 20 && !(shown = await inFocus()); tries += 1) await new Promise((done) => setTimeout(done, 100))
-      if (!shown) return false
-    }
-    const sent = await orca.host.call('terminal.sendText', { terminalId, text, enter: true })
-    return sent.accepted
   }
-
-  orca.panels.handle('board.reply', async (input) => {
-    const at = github.now()
-    const text = typeof input?.text === 'string' ? input.text : ''
-    let status: ReplyStatus | null = null
-    if (typeof input?.workspaceId !== 'string' || typeof input?.terminalId !== 'string' || typeof input?.expectedSince !== 'number') {
-      status = 'gone'
-    } else {
-      // Re-read the agent now: the card may be minutes old.
-      let agents: RawAgent[] = []
-      try { agents = await agentsOf(input.workspaceId) } catch { /* gone */ }
-      const agent = agents.find((row) => row.terminalId === input.terminalId)
-      status = replyGuard(agent, text, input.expectedSince)
-      if (!status) {
-        // The person wrote this text and pressed send, so it goes as typed, without a board label.
-        // Never retry: a send that may have landed must not be typed twice.
-        try {
-          status = (await typeInto(input.terminalId, text.trimEnd())) ? 'sent' : 'failed'
-        } catch (error) {
-          orca.log(`reply failed: ${error instanceof Error ? error.message : String(error)}`)
-          status = 'failed'
-        }
-      }
-    }
-    const record: ReplyRecord = {
-      projectName: String(input?.projectName ?? '').slice(0, 200),
-      workspaceName: String(input?.workspaceName ?? '').slice(0, 200),
-      title: String(input?.title ?? '').slice(0, 200),
-      text: text.slice(0, 2000),
-      status,
-      at
-    }
-    await orca.storage.set(REPLIES, remember(replyRecords(await orca.storage.get(REPLIES)), record, 50))
-    orca.panels.post('board.changed', { at })
-    statusSoon()
-    return { status, at }
+  orca.events.on('agent.status.changed', (event) => {
+    changed()
+    const world = fleet.peek()
+    const session = world && [...world.sessions.values()].find((s) => s.paneKey === event.paneKey || (!!event.terminalId && s.handle === event.terminalId))
+    if (session) observe({ kind: 'status', session: session.id, state: event.state })
+  })
+  orca.events.on('workspace.removed', (event) => {
+    changed()
+    const world = fleet.peek()
+    if (!world) return
+    const key = workspaceKey({ id: event.workspaceId, path: event.path })
+    const gone = [...world.workspaces.values()].filter((w) => w.id === event.workspaceId || w.listId === event.workspaceListId || (key && workspaceKey(w) === key))
+    observe({ kind: 'workspace-removed', sessions: [...world.sessions.values()].filter((s) => gone.some((w) => w.id === s.worktree)).map((s) => s.id) })
   })
 
-  // A resumed agent starts in a new terminal: wait until its screen has drawn and stopped changing.
-  async function settled(terminalId: string, timeoutMs = 30_000): Promise<boolean> {
-    let last = ''
-    let same = 0
-    for (const end = Date.now() + timeoutMs; Date.now() < end;) {
-      await new Promise((done) => setTimeout(done, 500))
-      const output = await orca.host.call('terminal.read', { terminalId, maxLines: 40 }).catch(() => null)
-      const text = output ? output.lines.join('\n').trim() : ''
-      same = text && text === last ? same + 1 : 0
-      last = text
-      if (same >= 3) return true
-    }
-    return false
-  }
-
-  orca.panels.handle('board.resume-reply', async (input) => {
-    const at = github.now()
-    const text = typeof input?.text === 'string' ? input.text : ''
-    let status: ReplyStatus
-    if (typeof input?.workspaceId !== 'string' || typeof input?.sessionId !== 'string' || typeof input?.agent !== 'string') {
-      status = 'gone'
-    } else {
-      // Read again now: the session may have been opened somewhere since the card was drawn.
-      const [live, history] = await Promise.all([agentsOf(input.workspaceId).catch(() => undefined), readHistory(input.workspaceId)])
-      const row = history?.find((session) => session.sessionId === input.sessionId)
-      const refused = resumeGuard({ text, sessionId: input.sessionId, agent: input.agent, row, live })
-      status = refused ?? 'failed'
-      if (!refused && isResumeAgent(input.agent)) {
-        // The person wrote this text and pressed send: it goes as typed. Never retried.
-        try {
-          const resumed = await orca.host.call('agent.resume', { workspaceId: input.workspaceId, agent: input.agent, sessionId: input.sessionId })
-          orca.log(`resume reply: ${resumed.started ? 'started' : 'already running'} in ${resumed.terminalId}`)
-          if (await settled(resumed.terminalId)) status = (await typeInto(resumed.terminalId, text.trimEnd())) ? 'sent' : 'failed'
-          else orca.log('resume reply: the resumed terminal did not settle; nothing typed')
-        } catch (error) {
-          orca.log(`resume reply failed: ${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
-    }
-    const record: ReplyRecord = {
-      projectName: String(input?.projectName ?? '').slice(0, 200),
-      workspaceName: String(input?.workspaceName ?? '').slice(0, 200),
-      title: String(input?.title ?? '').slice(0, 200),
-      text: text.slice(0, 2000),
-      status,
-      at
-    }
-    await orca.storage.set(REPLIES, remember(replyRecords(await orca.storage.get(REPLIES)), record, 50))
-    orca.panels.post('board.changed', { at })
-    statusSoon()
-    return { status, at }
-  })
-
-  orca.panels.handle('board.focus', async (input) => {
+  let seen: string | null = null
+  async function poll(): Promise<void> {
     try {
-      if (typeof input?.terminalId === 'string') return await orca.host.call('terminal.focus', { terminalId: input.terminalId })
-      // A chat tab has no terminal Orca lets a plugin reach: show its workspace instead.
-      if (typeof input?.workspaceId === 'string') return { focused: (await orca.host.call('workspace.open', { workspaceId: input.workspaceId })).opened }
-    } catch { /* not focusable */ }
-    return { focused: false }
-  })
-
-  orca.panels.handle('board.dismiss', async (input) => {
-    if (typeof input?.key === 'string' && input.key.length <= 1024) {
-      await orca.storage.set(DISMISSED, remember(strings(await orca.storage.get(DISMISSED)).filter((key) => key !== input.key), input.key, 300))
-      orca.panels.post('board.changed', { at: github.now() })
-      statusSoon()
+      const world = await fleet.view({ maxAgeMs: 0 })
+      const now = fingerprint(world)
+      if (seen !== null && now !== seen) changed()
+      seen = now
+      observe({ kind: 'world', world })
+      void board.resumeWaiting().then((checked) => { if (checked) changed() }, (error: unknown) => orca.log(`queued reply check failed: ${error instanceof Error ? error.message : String(error)}`))
+    } catch {
+      // updateStatus reports the failure.
     }
-    return { ok: true as const }
+    await updateStatus()
+  }
+  const timer = deps.pollMs > 0 ? setInterval(() => void poll(), deps.pollMs) : undefined
+  if (deps.pollMs > 0) void poll()
+
+  // A terminal is focused by its handle; a chat, or a terminal asleep without one, by showing its workspace.
+  orca.panels.handle('board.open-session', async (input) => {
+    const { sessionId } = openSession.parse(input)
+    try {
+      const world = await fleet.view({ maxAgeMs: 0 })
+      const session = world.sessions.get(sessionId as SessionId)
+      if (!session) return { opened: false }
+      if (session.handle) return { opened: (await orca.host.call('terminal.focus', { terminalId: session.handle })).focused }
+      const ws = world.workspaces.get(session.worktree)
+      if (!ws) return { opened: false }
+      const { workspaces } = await orca.host.call('workspace.list', {})
+      const key = workspaceKey({ id: ws.id, hostId: ws.hostId })
+      const row = workspaces.find((w) => w.id === ws.listId) ?? workspaces.find((w) => key && workspaceKey(w) === key)
+      if (!row) return { opened: false }
+      return { opened: (await orca.host.call('workspace.open', { workspaceId: row.id })).opened }
+    } catch (error) {
+      orca.log(`open session failed: ${error instanceof Error ? error.message : String(error)}`)
+      return { opened: false }
+    }
   })
 
-  // The status bar item and the palette open the dashboard: an editor tab on a key file in the
-  // focused workspace, drawn by src/dashboard/ with the same requests as the panel.
-  orca.commands.register(OPEN_DASHBOARD, async () => {
+  // The status bar item, the palette and the panel open the dashboard: an editor tab on a key file
+  // in the focused workspace, drawn by src/dashboard/. A string result says why it did not open.
+  async function openDashboard(): Promise<string | undefined> {
     const t = translator(locale)
     const context = await orca.host.call('workspace.readContext', {}).catch((error: unknown) => {
       orca.log(`open dashboard: readContext failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -425,7 +282,7 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
         'The dashboard cannot open in a workspace on another host. Switch to a workspace on this computer.')
     }
     try {
-      await files.ensureDashboard(workspace.path)
+      await deps.files.ensureDashboard(workspace.path)
       await orca.host.call('editor.open', { workspaceId: workspace.id, path: DASHBOARD_FILE })
       orca.log('open dashboard: opened')
       return undefined
@@ -433,19 +290,68 @@ export function activateWith(orca: OrcaWorkerApi, github: GithubDeps, options: W
       orca.log(`open dashboard failed: ${error instanceof Error ? error.message : String(error)}`)
       return t('대시보드를 열지 못했습니다.', 'Could not open the dashboard.')
     }
+  }
+  orca.commands.register(OPEN_DASHBOARD, openDashboard)
+  orca.panels.handle('board.open-dashboard', async () => ({ message: (await openDashboard()) ?? null }))
+
+  const secret: Promise<string> = orca.storage.get(CHANNEL_SECRET).then(async (value) => {
+    if (typeof value === 'string' && value.length >= 64) return value
+    const made = randomBytes(32).toString('hex')
+    await orca.storage.set(CHANNEL_SECRET, made)
+    return made
   })
+  secret.catch((error: unknown) => orca.log(`channel secret failed: ${error instanceof Error ? error.message : String(error)}`))
+
+  async function answerChannel(request: ChannelRequest, exec: Runner | null): Promise<ChannelReply> {
+    const world = await fleet.view({ maxAgeMs: 0 })
+    const caller = identifyCaller(request.caller, await secret, world)
+    if ('denied' in caller) return { exit: EXIT.denied, text: caller.denied }
+    if (board.audience(request.command) === 'coordinator' && (caller.via !== 'terminal' || board.coordinator() !== caller.sessionId)) {
+      return { exit: EXIT.denied, text: caller.via === 'chat' ? '채팅 세션은 report만 쓸 수 있습니다.' : '지금 지정된 코디네이터만 쓸 수 있는 명령입니다.' }
+    }
+    try {
+      // One orca at a time in the caller's shell.
+      const result = await board.command(request.command, request.input, caller.sessionId, exec ? createCli(exec, Date.now, 1) : null)
+      if (request.command !== 'read') changed()
+      return { exit: result.isError ? EXIT.error : EXIT.ok, text: result.text }
+    } catch (error) {
+      return { exit: EXIT.error, text: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  let channel: { close(): Promise<void> } | null = null
+  const channelDeps = deps.channel
+  if (channelDeps) {
+    serveChannel(channelDeps.path, answerChannel).then((server) => {
+      if (stopped) void server.close()
+      else channel = server
+    }, (error: unknown) => orca.log(`coordinator channel did not open: ${error instanceof Error ? error.message : String(error)}`))
+    orca.hooks.on('agent.launch.before', async (event, next) => {
+      // Key names only: which PATH spelling Orca hands the hook decides whether the bin reaches the agent.
+      orca.log(`launch hook: PATH keys in the launch env: ${Object.keys(event.env).filter((key) => key.toUpperCase() === 'PATH').join(', ') || 'none'}`)
+      return next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter }, board.pendingLaunches()))
+    })
+  }
 
   return () => {
     stopped = true
-    if (poll) clearInterval(poll)
-    if (statusTimer) clearTimeout(statusTimer)
+    void channel?.close()
+    if (timer) clearInterval(timer)
+    if (changeTimer) clearTimeout(changeTimer)
+    localeWatch.dispose()
   }
 }
 
 let stop: (() => void) | undefined
 
+/** The plugin folder: dist/worker.mjs sits one level below it. */
+const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
 export default function activate(orca: OrcaWorkerApi): void {
-  stop = activateWith(orca, hostGithub)
+  stop = activateWith(orca, {
+    cli: hostCli(), dataDir: join(homedir(), '.orca-coordinator-board'), files: hostFiles, pollMs: POLL_MS,
+    channel: { path: channelPath(PLUGIN_ROOT, process.platform, tmpdir()), bin: join(PLUGIN_ROOT, 'bin'), node: process.execPath }
+  })
 }
 
 export function deactivate(): void {
