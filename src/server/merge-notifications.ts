@@ -1,6 +1,7 @@
 // Adapted from paseo-coordinator-board server/merge-notifications.ts @ 2e9d128. The notice goes through
 // fleet.deliver as mail from the board's own terminal (Paseo's sourceAgentId "plugin:coordinator-board").
-// A send Orca refused left nothing behind, so the row goes back to queued; an unconfirmed one is never resent.
+// A send Orca refused left nothing behind, so a busy recipient's row goes back to queued and any other
+// refusal makes it unavailable; an unconfirmed one is never resent.
 import { createHash } from "node:crypto";
 import type { Fleet, PluginHandlerContext, SessionId } from "../orca";
 import { pullUrl, type MergeNotification, type MergeTarget, type PullMergeActivity } from "../paseo/shared/prs";
@@ -118,7 +119,8 @@ export class MergeNotifications {
       attempted = true;
       const outcome = await this.fleet.deliver({ messageId: messageIdFor(key,id), to: id as SessionId, text: message(entry),
         subject: "Coordinator Board · PR merged", from: { kind: "board" }, whenWorking: "refuse" });
-      if (outcome.status === "refused") return update("queued");
+      // Busy or without a board terminal for now: nothing left, so it waits. Anything else will not change by waiting.
+      if (outcome.status === "refused") return update(["working","waiting","blocked","changed","no-board-sender"].includes(outcome.reason) ? "queued" : "unavailable");
       return update(outcome.status === "delivered" ? "sent" : "unconfirmed");
     } catch {
       if (attempted) return status("unconfirmed");

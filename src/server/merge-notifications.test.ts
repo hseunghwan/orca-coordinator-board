@@ -22,7 +22,7 @@ function fixture() {
   const store = new PreferenceStore(join(path,"scope.json"));
   store.change(s=>{s.projects=[target.projectId];s.coordinator="configured";});
   const control = { recipient:"ledger-owner" as string|null, repo:true, busy:false, lost:false, retired:false,
-    permission:false, refuse:false, placement:target.projectId, refresh:async()=>{}, send:async()=>{} };
+    permission:false, refuse:null as string|null, placement:target.projectId, refresh:async()=>{}, send:async()=>{} };
   const sent:{id:string;text:string;options:any}[]=[];
   const sdk={agents:{ref:(id:string)=>({refresh:async()=>{
     await control.refresh();
@@ -31,7 +31,7 @@ function fixture() {
   }})}};
   const fleet={deliver:async(d:any)=>{
     expect(store.read().pullMergeHistory[key].pullMerge.notification?.status).toBe("unconfirmed");
-    if(control.refuse) return {status:"refused",reason:"working"};
+    if(control.refuse) return {status:"refused",reason:control.refuse};
     sent.push({id:d.to,text:d.text,options:{from:d.from,messageId:d.messageId,whenWorking:d.whenWorking}}); await control.send();
     return control.lost ? {status:"unconfirmed",route:"mail"} : {status:"delivered",route:"mail",proof:"mail-id"};
   }};
@@ -90,13 +90,18 @@ test("an ambiguous acknowledgement never falls back to a user prompt or sends th
   expect(f.sent).toHaveLength(1);
 });
 
-test("a send Orca refused left nothing behind, so it waits queued and goes out once later", async()=>{
-  const f=fixture(); f.control.refuse=true;
+test("a send Orca refused left nothing behind: a busy recipient's notice waits and goes out once later, any other refusal ends it", async()=>{
+  const f=fixture(); f.control.refuse="working";
   expect((await f.notify()).status).toBe("queued");
-  f.control.refuse=false;
+  f.control.refuse=null;
   await f.make().resume(f.sdk);
   expect(f.sent).toHaveLength(1);
   expect(f.store.read().pullMergeHistory[key].pullMerge.notification.status).toBe("sent");
+  const g=fixture(); g.control.refuse="other-host";
+  expect((await g.notify()).status).toBe("unavailable");
+  g.control.refuse=null;
+  await g.make().resume(g.sdk);
+  expect(g.sent).toHaveLength(0);
 });
 
 test("PR target ownership uses the trusted matching project ledger, and ambiguous or unreadable sources cannot fall back", ()=>{
