@@ -121,8 +121,12 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
     }
   }
   const fleet: Fleet = createFleet(deps.cli, Date.now, { dataDir: deps.dataDir, mailSender })
-  const board = contribute(rpcServer((name, handler) => orca.panels.handle(name, handler), fleet.paseo), fleet, deps.dataDir, deps.pulls)
   let locale = 'en'
+  const board = contribute(rpcServer((name, handler) => orca.panels.handle(name, handler), fleet.paseo), fleet, deps.dataDir, deps.pulls, {
+    t: () => translator(locale),
+    bin: deps.channel?.bin ?? '',
+    focusedWorkspace: async () => (await orca.host.call('workspace.readContext', {}).catch(() => null))?.workspaceId ?? null
+  })
   let stopped = false
   void orca.storage.get(LEGACY_SELECTION).then(async (value) => {
     if (Array.isArray(value) && board.adoptLegacySelection(value)) {
@@ -161,6 +165,11 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       board.invalidate()
       orca.panels.post(BOARD_CHANGED, {})
       void updateStatus()
+      void board.adoptCoordinator().then((adopted) => {
+        if (!adopted || stopped) return
+        board.invalidate()
+        orca.panels.post(BOARD_CHANGED, {})
+      }, (error: unknown) => orca.log(`coordinator adoption failed: ${error instanceof Error ? error.message : String(error)}`))
     }, CHANGE_DEBOUNCE_MS)
   }
   orca.events.on('agent.status.changed', changed)
@@ -265,7 +274,7 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       else channel = server
     }, (error: unknown) => orca.log(`coordinator channel did not open: ${error instanceof Error ? error.message : String(error)}`))
     orca.hooks.on('agent.launch.before', async (event, next) =>
-      next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter })))
+      next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter }, board.pendingLaunch())))
   }
 
   return () => {

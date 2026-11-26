@@ -5,13 +5,14 @@ import { existsSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 import { z } from 'zod'
 
-export type ReadVerb = 'worktree ps' | 'repo list' | 'agent read'
+export type ReadVerb = 'worktree ps' | 'repo list' | 'agent read' | 'agent installed' | 'account list'
 /** Commands that send something. A write never shares a run, is never cached and never retried. */
-export type WriteVerb = 'terminal send' | 'orchestration send'
+export type WriteVerb = 'terminal send' | 'orchestration send' | 'agent launch'
 
-// terminal send waits up to 10 s for the prompt to start a turn.
+// terminal send waits up to 10 s for the prompt to start a turn. Paseo gives account usage 3 s.
 const TIMEOUT_MS: Readonly<Record<ReadVerb | WriteVerb, number>> = {
-  'worktree ps': 10_000, 'repo list': 10_000, 'agent read': 10_000, 'terminal send': 30_000, 'orchestration send': 20_000
+  'worktree ps': 10_000, 'repo list': 10_000, 'agent read': 10_000, 'agent installed': 10_000, 'account list': 3_000,
+  'terminal send': 30_000, 'orchestration send': 20_000, 'agent launch': 60_000
 }
 
 /**
@@ -135,7 +136,7 @@ export function writeOutcome(stdout: string): WriteResult {
   } catch (error) {
     const { message, code } = error as CliError
     if (code === 'unparseable') return { kind: 'ambiguous', message, retryRequest: null }
-    const retry = /--retry-request\s+([A-Za-z0-9_-]+)/.exec(message)
+    const retry = /--retry-(?:request|launch)\s+([A-Za-z0-9_-]+)/.exec(message)
     return retry ? { kind: 'ambiguous', message, retryRequest: retry[1] } : { kind: 'refused', code, message }
   }
 }

@@ -1,13 +1,13 @@
 // The board's one door to Orca. Ported Paseo server code receives `paseo` from here: the read
 // methods it calls, answered from one World per snapshot instead of the Paseo SDK.
-import type { z } from 'zod'
+import { z } from 'zod'
 import type { PluginRpcContract } from '../paseo/plugin-shim'
 import { agentRead, timelinePage, type TimelinePage } from './conversation'
 import type { OrcaCli } from './cli'
 import { createDeliver, type DeliverDeps, type Delivery, type DeliveryOutcome } from './deliver'
 import {
   buildWorld, paseoAgentView, paseoProjectView, paseoWorkspaceView, repoList, worktreePs,
-  type PaseoAgentView, type PaseoProjectView, type PaseoWorkspaceView, type SessionId, type World
+  type PaseoAgentView, type PaseoProjectView, type PaseoWorkspaceView, type SessionId, type TerminalHandle, type World, type WorktreeId
 } from './view'
 
 export * from './view'
@@ -42,6 +42,23 @@ export interface PluginServerContext {
   ): void
 }
 
+/** What became of a launch: started in a terminal, refused (nothing started), or unknown (it may have). */
+export type LaunchOutcome =
+  | { kind: 'started'; handle: TerminalHandle; operationId: string | null }
+  | { kind: 'refused'; message: string }
+  | { kind: 'unknown'; operationId: string | null; message: string }
+
+export type LaunchRequest = {
+  agent: string
+  /** The CLI's worktree id ("<repo>::<path>" or "folder:<id>"). */
+  worktree: WorktreeId
+  model: string
+  effort: string | null
+  prompt: string
+  /** The operationId of an earlier launch whose answer was lost: Orca settles that one instead of starting another. */
+  retryLaunch: string | null
+}
+
 export interface Fleet {
   /** A World no older than maxAgeMs (default 2 s); concurrent callers share one read. */
   view(options?: { maxAgeMs?: number }): Promise<World>
@@ -53,6 +70,10 @@ export interface Fleet {
   deliver(delivery: Delivery): Promise<DeliveryOutcome>
   /** What became of a messageId, without sending: null when it was never attempted. */
   reconcile(messageId: string): Promise<DeliveryOutcome | null>
+  /** Starts an agent CLI in a terminal (the launch hook runs for it). Never retried. */
+  launch(request: LaunchRequest): Promise<LaunchOutcome>
+  /** For reads the Fleet does not model (installed agents, account usage). */
+  cli: OrcaCli
   paseo: PaseoReads
 }
 
@@ -145,8 +166,28 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
   const sender = send ? createDeliver({ ...send, cli, view, now }) : null
   const sentText = (messageId: string) => sender?.sentText(messageId)
 
+  const launched = z.object({ outcome: z.object({ kind: z.string(), handle: z.string().nullish() }), operationId: z.string().nullish() })
+
+  async function launch(request: LaunchRequest): Promise<LaunchOutcome> {
+    const selector = request.worktree.startsWith('folder:') ? request.worktree : 'id:' + request.worktree
+    const result = await cli.write('agent launch', [
+      '--agent', request.agent, '--worktree', selector, '--surface', 'terminal', '--model', request.model,
+      ...(request.effort ? ['--effort', request.effort] : []), '--prompt', request.prompt,
+      ...(request.retryLaunch ? ['--retry-launch', request.retryLaunch] : [])
+    ])
+    if (result.kind === 'refused') return { kind: 'refused', message: result.message }
+    if (result.kind === 'ambiguous') return { kind: 'unknown', operationId: result.retryRequest, message: result.message }
+    const parsed = launched.safeParse(result.result)
+    const handle = parsed.success ? parsed.data.outcome.handle : null
+    if (!handle?.startsWith('term_')) return { kind: 'unknown', operationId: parsed.success ? parsed.data.operationId ?? null : null, message: 'no terminal in the launch result' }
+    current = null
+    return { kind: 'started', handle: handle as TerminalHandle, operationId: parsed.data!.operationId ?? null }
+  }
+
   return {
     view,
+    launch,
+    cli,
     peek: () => last,
     deliver(delivery) {
       if (!sender) return Promise.reject(new Error('this fleet has no data folder to send from'))
