@@ -15,22 +15,15 @@ export function waitingCounts(view: BoardView): Counts {
 export type StatusTone = 'neutral' | 'accent' | 'warning'
 export type StatusItem = { text: string; tone: StatusTone; tooltip: string }
 
-/** The status bar item: sessions waiting for the person (permission + reply). Pull requests are not counted. */
-export function statusItem(t: T, view: BoardView | null): StatusItem {
-  if (!view || !view.selected.length) {
-    return { text: t('보드', 'Board'), tone: 'neutral', tooltip: t('코디네이터 보드: 눌러서 프로젝트를 고르세요', 'Coordinator Board: click to choose projects') }
-  }
-  const counts = waitingCounts(view)
-  const waiting = counts.permission + counts.reply
+/** The status bar item: Paseo's decision count (src/paseo/shared/decision-count.ts); null before projects are chosen. */
+export function statusItem(t: T, count: number | null, failed = false): StatusItem {
+  const open = t(' · 눌러서 대시보드 열기', ' · Click to open the dashboard')
+  if (failed) return { text: t('보드', 'Board'), tone: 'warning', tooltip: t('코디네이터 보드: Orca 세션을 읽지 못했습니다', 'Coordinator Board: could not read Orca sessions') + open }
+  if (count === null) return { text: t('보드', 'Board'), tone: 'neutral', tooltip: t('코디네이터 보드: 눌러서 프로젝트를 고르세요', 'Coordinator Board: click to choose projects') }
   return {
-    text: waiting ? t(`기다림 ${waiting}`, `${waiting} waiting`) : t('기다림 없음', 'Nothing waiting'),
-    // Permission first: only the session itself can clear it.
-    tone: counts.permission ? 'warning' : counts.reply ? 'accent' : 'neutral',
-    tooltip: [
-      `${t('권한 대기', 'Permission')} ${counts.permission}`,
-      `${t('답 기다림', 'Waiting for you')} ${counts.reply}`,
-      `${t('작업 중', 'Working')} ${counts.working}`
-    ].join(' · ') + t(' · 눌러서 대시보드 열기', ' · Click to open the dashboard')
+    text: count ? t(`내 결정 ${count}`, `${count} to decide`) : t('결정 없음', 'Nothing to decide'),
+    tone: count ? 'accent' : 'neutral',
+    tooltip: t('코디네이터 보드', 'Coordinator Board') + open
   }
 }
 

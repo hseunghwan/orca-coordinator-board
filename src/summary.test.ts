@@ -1,40 +1,38 @@
 import { assert } from 'orca/testing'
 import { test } from 'vitest'
 import { translator } from './i18n'
-import { buildBoard, type RawAgent } from './model'
+import type { AgentState, BoardView, SessionRow } from './model'
 import { ago, laneGroups, statusItem, waitingCounts, withExcludeLine, focusedWorkspace } from './summary'
 
 const en = translator('en')
 const ko = translator('ko')
-const agent = (terminalId: string, state: RawAgent['state'], stateStartedAt: number): RawAgent =>
-  ({ terminalId, title: terminalId, agent: 'claude', state, stateStartedAt })
+const agent = (terminalId: string, state: AgentState, since: number): SessionRow =>
+  ({ key: terminalId + '@' + since, terminalId, workspaceId: 'w1', workspaceName: 'main', branch: 'main', agent: 'claude', title: terminalId, state, since })
 
-function board(agents: RawAgent[], selected = ['p1']) {
-  return buildBoard({
-    projects: [{ id: 'p1', name: 'App', hostId: 'local', path: '/w/app' }],
-    selected,
-    workspaces: [{ id: 'w1', name: 'main', projectId: 'p1', branch: 'main' }],
-    agents: new Map([['w1', agents]]),
-    pulls: new Map(),
-    dismissed: new Set(),
+function board(sessions: SessionRow[]): BoardView {
+  const kind = { blocked: 'permission', waiting: 'reply' } as const
+  return {
+    at: 1000,
+    selected: ['p1'],
+    projects: [{ projectId: 'p1', name: 'App', sessions, closed: [], repo: null, pullStatus: 'ok', pulls: [] }],
+    decisions: sessions.flatMap((session) => session.state === 'blocked' || session.state === 'waiting'
+      ? [{ key: session.key, kind: kind[session.state], projectName: 'App', since: session.since, session }] : []),
     replies: [],
-    now: 1000,
     truncated: false
-  })
+  }
 }
 
 test('counts permission and reply waits; working sessions are counted apart', () => {
   const view = board([agent('a', 'blocked', 1), agent('b', 'waiting', 2), agent('c', 'working', 3), agent('d', 'done', 4)])
   assert.deepEqual(waitingCounts(view), { permission: 1, reply: 1, review: 0, working: 1 })
-  assert.deepEqual(statusItem(en, view).text, '2 waiting')
-  assert.equal(statusItem(en, view).tone, 'warning')
-  assert.equal(statusItem(ko, view).text, '기다림 2')
 })
 
-test('a quiet board, and one with no projects chosen yet', () => {
-  assert.deepEqual([statusItem(en, board([agent('c', 'working', 3)])).text, statusItem(en, board([agent('c', 'working', 3)])).tone], ['Nothing waiting', 'neutral'])
-  assert.equal(statusItem(en, board([], [])).text, 'Board')
+test('the status bar shows the decision count, a quiet board, no projects chosen, and a failed read', () => {
+  assert.deepEqual([statusItem(en, 2).text, statusItem(en, 2).tone], ['2 to decide', 'accent'])
+  assert.equal(statusItem(ko, 2).text, '내 결정 2')
+  assert.deepEqual([statusItem(en, 0).text, statusItem(en, 0).tone], ['Nothing to decide', 'neutral'])
   assert.equal(statusItem(en, null).text, 'Board')
+  assert.equal(statusItem(en, null, true).tone, 'warning')
 })
 
 test('a project card lists sessions that need someone first and keeps finished ones apart', () => {

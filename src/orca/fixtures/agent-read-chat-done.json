@@ -1,0 +1,24 @@
+{
+  "id": "r2",
+  "ok": true,
+  "result": {
+    "orcaSessionId": "5e550002-0000-4000-8000-000000000000",
+    "kind": "chat",
+    "agent": "claude",
+    "source": "chat",
+    "limited": false,
+    "state": "done",
+    "entries": [
+      {
+        "kind": "message",
+        "role": "user",
+        "text": "Run the tests."
+      },
+      {
+        "kind": "message",
+        "role": "assistant",
+        "text": "All tests pass."
+      }
+    ]
+  }
+}

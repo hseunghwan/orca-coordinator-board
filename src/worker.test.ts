@@ -1,178 +1,108 @@
-// Runs the worker over a mock Orca host and a fake GitHub, so no git or gh process starts.
+// Runs the worker over a mock Orca host and the recorded-shape orca CLI answers, so no orca, git or gh process starts.
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { assert, mockHost, mountWorker } from 'orca/testing'
-import { test } from 'vitest'
-import { activateWith, OPEN_DASHBOARD, type FileDeps, type GithubDeps } from './worker'
+import { afterEach, test } from 'vitest'
+import { createCli } from './orca/cli'
+import { fixturePulls, fixtureRunner, sid } from './orca/fixtures/load'
+import { activateWith, OPEN_DASHBOARD, STATUS_ITEM, type FileDeps } from './worker'
 
-const github: GithubDeps = {
-  originOf: async () => 'acme/app',
-  openPulls: async () => ({ status: 'ok', items: [] }),
-  now: () => 5000
-}
+const APP = 'aaaa1111-0000-4000-8000-000000000000'
 const opened: string[] = []
 const files: FileDeps = { ensureDashboard: async (root) => { opened.push(root) } }
-let stop: (() => void) | undefined
-const worker = {
-  default: (orca: Parameters<typeof activateWith>[0]) => { stop = activateWith(orca, github, { files, pollMs: 0 }) },
-  deactivate: () => stop?.()
+const dirs: string[] = []
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+
+function worker(calls: string[][] = []) {
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  return {
+    default: (orca: Parameters<typeof activateWith>[0]) => { stop = activateWith(orca, { cli: createCli(fixtureRunner(calls)), dataDir, files, pollMs: 0, pulls: fixturePulls }) },
+    deactivate: () => stop?.()
+  }
 }
 
-const agents = (state: string, stateStartedAt = 100) => ({
-  agents: [{ terminalId: 't1', title: 'fix login', agent: 'claude', state, stateStartedAt, sessionId: null, task: null }]
-})
-
-function host(state = 'waiting', shown: string[] = []) {
-  // Orca types only into the focused workspace's terminals; focusing one shows its workspace.
-  const focusable = new Set(['t1', 't9'])
+function host() {
   return mockHost({
-    storage: { selectedProjects: ['p1'] },
+    storage: { locale: 'en' },
     results: {
-      'project.list': { projects: [{ id: 'p1', name: 'App', kind: 'git', hostId: 'local', path: '/w/app' }], truncated: false },
       'workspace.list': {
-        workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'local',
-          status: { state: 'active', unread: false, terminalCount: 1, lastActivityAt: 1 } }],
+        workspaces: [
+          { id: 'identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000001', kind: 'worktree', name: 'app', projectId: APP, path: '/w/app', branch: 'main', hostId: 'local' },
+          { id: 'w-login', kind: 'worktree', name: 'feat-login', projectId: APP, path: '/w/app-login', branch: 'feat/login', hostId: 'local' }
+        ],
         truncated: false
       },
-      'agents.list': agents(state),
-      'terminal.read': { lines: ['Which branch should I use?', ''], truncated: false },
-      'terminal.sendText': { accepted: true },
-      'terminal.focus': ({ terminalId }: { terminalId: string }) => {
-        if (!focusable.has(terminalId)) return { focused: false }
-        shown.splice(0, shown.length, terminalId)
-        return { focused: true }
-      },
-      'statusBar.update': { ok: true },
-      'workspace.readContext': () => ({ workspaceId: 'w1', branch: 'feat/login', displayName: 'feat-login', terminals: shown.map((id) => ({ id })) }),
-      'editor.open': { opened: true },
+      'terminal.focus': { focused: true },
       'workspace.open': { opened: true },
-      'agent.listSessions': { sessions: [], truncated: false },
-      'agent.resume': { terminalId: 't9', started: true }
+      'statusBar.update': { ok: true },
+      'workspace.readContext': { workspaceId: 'w-login', branch: 'feat/login', displayName: 'feat-login', terminals: [] },
+      'editor.open': { opened: true }
     }
   })
 }
 
-const reply = { workspaceId: 'w1', terminalId: 't1', text: 'main 브랜치\n로 가세요', expectedSince: 100, projectName: 'App', workspaceName: 'feat-login', title: 'fix login' }
-
-test('reads a board with a reply card and its recent output', async () => {
-  const mounted = await mountWorker(worker, { host: host() })
-  const board = await mounted.request('board.read', {})
-  assert.deepEqual(board.selected, ['p1'])
-  assert.equal(board.decisions.length, 1)
-  assert.equal(board.decisions[0].kind, 'reply')
-  assert.deepEqual(board.decisions[0].tail, ['Which branch should I use?'])
-  assert.equal(board.projects[0].repo, 'acme/app')
-  assert.deepEqual(mounted.refusals, [])
+test('serves the Paseo snapshot, count and readiness for the chosen projects', async () => {
+  const mounted = await mountWorker(worker(), { host: host() })
+  assert.deepEqual(await mounted.request('board.scope', { kind: 'project', projectId: APP, enabled: true }), { ok: true })
+  const snapshot = await mounted.request('board.snapshot', { fresh: true }) as { sessions: { title: string; lane: string }[]; coordinator: null }
+  assert.equal(snapshot.sessions.find((s) => s.title === 'Ask about the release')?.lane, 'human')
+  assert.equal(snapshot.coordinator, null)
+  assert.deepEqual(await mounted.request('board.decision-count', {}), { count: 5 })
+  assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: ['Ask about the release', 'Delete build cache', 'Pick a layout'] })
   await mounted.deactivate()
 })
 
-test('types the person\'s reply as written and records it', async () => {
+test('a request outside the contract is refused before anything is read', async () => {
+  const calls: string[][] = []
+  const mounted = await mountWorker(worker(calls), { host: host() })
+  await assert.rejects(mounted.request('board.scope', { kind: 'project', projectId: '' }))
+  await assert.rejects(mounted.request('board.decision-count', { extra: true }))
+  assert.equal(calls.length, 0)
+  await mounted.deactivate()
+})
+
+test('opens a terminal session by its handle and a chat by showing its workspace', async () => {
   const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  const result = await mounted.request('board.reply', reply)
-  assert.equal(result.status, 'sent')
-  // The session was not in view: it is shown first, then the text goes in.
-  const order = h.calls.map((call) => call.method).filter((method) => method === 'terminal.focus' || method === 'terminal.sendText')
-  assert.deepEqual(order, ['terminal.focus', 'terminal.sendText'])
-  assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 't1', text: 'main 브랜치\n로 가세요', enter: true }])
-  assert.equal((h.data().storage.replies as unknown[]).length, 1)
-  assert.deepEqual(mounted.posts.map((p) => p.event), ['board.changed'])
+  const mounted = await mountWorker(worker(), { host: h })
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: sid(4) }), { opened: true })
+  assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 'term_00000004-0000-4000-8000-000000000000' }])
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: sid(1) }), { opened: true })
+  assert.deepEqual(h.callsOf('workspace.open'), [{ workspaceId: 'identity:wt2:local:0a0a0a0a-0000-4000-8000-000000000001' }])
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: 'gone' }), { opened: false })
   await mounted.deactivate()
 })
 
-test('types straight into a session already in view, without moving the window', async () => {
-  const h = host('waiting', ['t1'])
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'sent')
-  assert.equal(h.callsOf('terminal.focus').length, 0)
-  assert.equal(h.callsOf('terminal.sendText').length, 1)
-  await mounted.deactivate()
-})
-
-test('does not type when Orca cannot show the session', async () => {
+test('an asleep terminal opens its workspace, found by path when the host names it differently', async () => {
   const h = host()
-  h.respond('terminal.focus', { focused: false })
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'failed')
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
+  h.respond('workspace.list', { workspaces: [{ id: 'other-id', kind: 'worktree', name: 'app', projectId: APP, path: '\\w\\app\\', branch: 'main', hostId: 'local' }], truncated: false })
+  const mounted = await mountWorker(worker(), { host: h })
+  assert.deepEqual(await mounted.request('board.open-session', { sessionId: sid(8) }), { opened: true })
+  assert.deepEqual(h.callsOf('workspace.open'), [{ workspaceId: 'other-id' }])
   await mounted.deactivate()
 })
 
-test('opens a session by its terminal, or a chat tab by its workspace', async () => {
+test('an agent event tells open panels the board changed and recounts the status bar', async () => {
   const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  assert.deepEqual(await mounted.request('board.focus', { terminalId: 't1', workspaceId: 'w1' }), { focused: true })
-  assert.deepEqual(await mounted.request('board.focus', { terminalId: null, workspaceId: 'w1' }), { focused: true })
-  assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 't1' }])
-  assert.deepEqual(h.callsOf('workspace.open'), [{ workspaceId: 'w1' }])
-  await mounted.deactivate()
-})
-
-test('never types into a session waiting for permission', async () => {
-  const h = host('blocked')
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'permission')
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
-  await mounted.deactivate()
-})
-
-test('refuses a reply to a question the session has moved past', async () => {
-  const h = host()
-  h.respond('agents.list', agents('waiting', 999))
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.reply', reply)).status, 'changed')
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
-  await mounted.deactivate()
-})
-
-test('keeps only projects Orca knows when saving a selection', async () => {
-  const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  assert.deepEqual(await mounted.request('board.select-projects', { projectIds: ['p1', 'nope', 'p1'] }), { selected: ['p1'] })
-  assert.deepEqual(h.data().storage.selectedProjects, ['p1'])
-  await mounted.deactivate()
-})
-
-
-test('asks workspaces whose terminal count is 0: Orca still lists their agents', async () => {
-  const h = host()
-  h.respond('workspace.list', {
-    workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'local',
-      status: { state: 'inactive', unread: false, terminalCount: 0, lastActivityAt: null } }],
-    truncated: false
-  })
-  const mounted = await mountWorker(worker, { host: h })
-  const board = await mounted.request('board.read', {})
-  assert.equal(board.projects[0].sessions.length, 1)
-  assert.deepEqual(h.callsOf('agents.list'), [{ workspaceId: 'w1' }])
-  await mounted.deactivate()
-})
-
-test('shows how many sessions wait in the status bar, in the panel\'s language', async () => {
-  const h = host()
-  const mounted = await mountWorker(worker, { host: h })
-  await mounted.request('board.read', {})
-  await mounted.request('board.read', { locale: 'ko-KR' })
-  const updates = h.callsOf('statusBar.update') as { id: string; text: string; tone: string }[]
-  assert.deepEqual(updates.map((u) => [u.id, u.text, u.tone]), [['waiting', '1 waiting', 'accent'], ['waiting', '기다림 1', 'accent']])
-  assert.equal(h.data().storage.locale, 'ko-KR')
-  await mounted.deactivate()
-})
-
-test('a session waiting for permission turns the status bar warning', async () => {
-  const h = host('blocked')
-  const mounted = await mountWorker(worker, { host: h })
-  await mounted.request('board.read', {})
-  const [update] = h.callsOf('statusBar.update') as { tone: string }[]
-  assert.equal(update.tone, 'warning')
+  const mounted = await mountWorker(worker(), { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: APP, enabled: true })
+  await mounted.emit('agent.status.changed', { workspaceId: null, paneKey: 'a:b', state: 'done', receivedAt: 1 })
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  assert.deepEqual(mounted.posts.map((p) => [p.event, p.payload]), [['board.changed', {}]])
+  const last = h.callsOf('statusBar.update').at(-1) as { id: string; text: string }
+  assert.deepEqual([last.id, last.text], [STATUS_ITEM, '5 to decide'])
   await mounted.deactivate()
 })
 
 test('opens the dashboard on its key file in the focused workspace', async () => {
   opened.length = 0
   const h = host()
-  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  const mounted = await mountWorker(worker(), { host: h, commands: [OPEN_DASHBOARD] })
   assert.equal(await mounted.command(OPEN_DASHBOARD), undefined)
   assert.deepEqual(opened, ['/w/app-login'])
-  assert.deepEqual(h.callsOf('editor.open'), [{ workspaceId: 'w1', path: '.coordinator-board/board.coordinator-board' }])
+  assert.deepEqual(h.callsOf('editor.open'), [{ workspaceId: 'w-login', path: '.coordinator-board/board.coordinator-board' }])
   await mounted.deactivate()
 })
 
@@ -180,7 +110,7 @@ test('asks for a workspace when none is focused, and writes nothing', async () =
   opened.length = 0
   const h = host()
   h.respond('workspace.readContext', null)
-  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  const mounted = await mountWorker(worker(), { host: h, commands: [OPEN_DASHBOARD] })
   assert.match(String(await mounted.command(OPEN_DASHBOARD)), /Open a workspace/)
   assert.deepEqual(opened, [])
   assert.equal(h.callsOf('editor.open').length, 0)
@@ -191,54 +121,11 @@ test('does not write the key file into a workspace on another host', async () =>
   opened.length = 0
   const h = host()
   h.respond('workspace.list', {
-    workspaces: [{ id: 'w1', kind: 'worktree', name: 'feat-login', projectId: 'p1', path: '/w/app-login', branch: 'feat/login', hostId: 'ssh:box' }],
+    workspaces: [{ id: 'w-login', kind: 'worktree', name: 'feat-login', projectId: APP, path: '/w/app-login', branch: 'feat/login', hostId: 'ssh:box' }],
     truncated: false
   })
-  const mounted = await mountWorker(worker, { host: h, commands: [OPEN_DASHBOARD] })
+  const mounted = await mountWorker(worker(), { host: h, commands: [OPEN_DASHBOARD] })
   assert.match(String(await mounted.command(OPEN_DASHBOARD)), /another host/)
   assert.deepEqual(opened, [])
-  await mounted.deactivate()
-})
-
-const closedReply = { workspaceId: 'w1', sessionId: 's-old', agent: 'claude', text: '이어서 해 줘', projectName: 'App', workspaceName: 'feat-login', title: 'old task' }
-const oldRow = (running = false) => ({ sessions: [{ sessionId: 's-old', agent: 'claude', title: 'old task', workspaceId: 'w1', hostId: 'local', branch: 'feat/login', createdAt: 1, updatedAt: 4000, messageCount: 3, totalTokens: 10, running }], truncated: false })
-const liveNamed = { agents: [{ terminalId: 't1', title: 'fix login', agent: 'claude', state: 'waiting', stateStartedAt: 100, sessionId: 's-live', task: null }] }
-
-test('lists a closed session on the board and leaves out the one that runs now', async () => {
-  const h = host()
-  h.respond('agents.list', liveNamed)
-  h.respond('agent.listSessions', { sessions: [...oldRow().sessions, { ...oldRow().sessions[0], sessionId: 's-live' }], truncated: false })
-  const mounted = await mountWorker(worker, { host: h })
-  const board = await mounted.request('board.read', {})
-  assert.deepEqual(board.projects[0].closed.map((s) => s.sessionId), ['s-old'])
-  await mounted.deactivate()
-})
-
-test('resumes a closed session, shows its terminal, then types the reply as written', async () => {
-  const h = host()
-  h.respond('agents.list', liveNamed)
-  h.respond('agent.listSessions', oldRow())
-  h.respond('terminal.read', { lines: ['> ready'], truncated: false })
-  const mounted = await mountWorker(worker, { host: h })
-  const result = await mounted.request('board.resume-reply', closedReply)
-  assert.equal(result.status, 'sent')
-  const order = h.calls.map((call) => call.method).filter((m) => m === 'agent.resume' || m === 'terminal.focus' || m === 'terminal.sendText')
-  assert.deepEqual(order, ['agent.resume', 'terminal.focus', 'terminal.sendText'])
-  assert.deepEqual(h.callsOf('agent.resume'), [{ workspaceId: 'w1', agent: 'claude', sessionId: 's-old' }])
-  assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 't9', text: '이어서 해 줘', enter: true }])
-  await mounted.deactivate()
-})
-
-test('never resumes a session that runs again, or beside a pane it cannot name', async () => {
-  const h = host()
-  h.respond('agents.list', liveNamed)
-  h.respond('agent.listSessions', oldRow(true))
-  const mounted = await mountWorker(worker, { host: h })
-  assert.equal((await mounted.request('board.resume-reply', closedReply)).status, 'open')
-  h.respond('agent.listSessions', oldRow())
-  h.respond('agents.list', { agents: [{ ...liveNamed.agents[0], terminalId: null, sessionId: null }] })
-  assert.equal((await mounted.request('board.resume-reply', closedReply)).status, 'open')
-  assert.equal(h.callsOf('agent.resume').length, 0)
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
   await mounted.deactivate()
 })

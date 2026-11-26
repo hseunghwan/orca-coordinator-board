@@ -1,0 +1,29 @@
+{
+  "id": "r1",
+  "ok": true,
+  "result": {
+    "orcaSessionId": "5e550001-0000-4000-8000-000000000000",
+    "kind": "chat",
+    "agent": "claude",
+    "source": "chat",
+    "limited": false,
+    "state": "done",
+    "entries": [
+      {
+        "kind": "message",
+        "role": "user",
+        "text": "Prepare the release."
+      },
+      {
+        "kind": "tool",
+        "name": "Bash",
+        "state": "completed"
+      },
+      {
+        "kind": "message",
+        "role": "assistant",
+        "text": "Draft ready.\n\nWhich version should I tag, 2.4.0 or 3.0.0? 골라 주세요."
+      }
+    ]
+  }
+}

@@ -11,6 +11,14 @@
   "pluginApi": 1,
   "main": "dist/worker.mjs",
   "contributes": {
+    "events": [
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.removed"
+      }
+    ],
     "panels": [
       {
         "id": "coordinator-board",
