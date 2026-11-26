@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-// Paseo's per-project kanban (client/project-kanban.tsx) without the note editor.
-import { useMemo, useState, type ReactNode } from "react";
+// Paseo's per-project kanban (client/project-kanban.tsx).
+import { useContext, useMemo, useState, type ReactNode } from "react";
 import { COLUMN_GAP, columnWidth } from "../paseo/client/lane-width";
 import { classifyProject } from "../paseo/client/matrix";
 import { factStatus, laneLabel, noteLabel, sessionDetail, type Card, type Lane } from "../paseo/client/model";
@@ -10,6 +10,7 @@ import type { PullRequestItem } from "../paseo/shared/prs";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
 import type { TrackedDecision } from "../paseo/shared/tracked-decisions";
 import type { OpenSession } from "./board-layout";
+import { EditNote } from "./note-editor";
 import { ReplyCard } from "./reply-history";
 import { TrackedSessionChips, type TrackedSessionLinks } from "./tracked-session-chips";
 import { useWidth } from "./use-width";
@@ -30,6 +31,7 @@ function accent(lane: ColumnKind) {
 export function CardView({ card, open, sessionHostLabel }: { card: Card; open: OpenSession; sessionHostLabel: string }) {
   const [expanded, setExpanded] = useState(false);
   const { t } = useBoardLanguage();
+  const edit = useContext(EditNote);
   const { session, note } = card;
   const fact = session.boardFact;
   const question = session.decision?.question;
@@ -67,6 +69,8 @@ export function CardView({ card, open, sessionHostLabel }: { card: Card; open: O
         <p className="muted sm">{noteTitle}</p>
         <Markdown source={note.text} />
       </div>}
+      {edit && <div><Button size="sm" label={noteTitle ? t("기록 편집", "Edit note") : t("기록 추가", "Add note")}
+        accessibilityLabel={t(`기록 편집 · ${session.title}`, `Edit note · ${session.title}`)} onPress={() => edit(session.id)} /></div>}
     </>}
   </div>;
 }

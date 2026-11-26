@@ -9,10 +9,11 @@
 // provider, usage and routing save fail with a revision conflict, photo=fail makes stored reply photos unreadable,
 // links=fail makes the session link list fail and links=conflict makes every link change fail. hosts=1 answers
 // board.hosts with three hosts and hosts=fail fails it; without it the method is unknown, like an older worker.
+// note=conflict makes the next note save find a newer note, note=fail makes note saves and report toggles fail.
 import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
-import { boardSnapshot } from "../src/paseo/shared/contract";
+import { boardSnapshot, saveNote, setReporting } from "../src/paseo/shared/contract";
 import { readReplyPhoto } from "../src/paseo/shared/reply-history";
 import { confirmPullRequestMerge, previewPullRequestMerge, readPullLifecycle, setProjectRepository } from "../src/paseo/shared/prs";
 import { cancelQueuedReply, resolveTrackedDecision } from "../src/paseo/shared/tracked-decisions";
@@ -54,6 +55,7 @@ if (params.get("ledger")) {
 const resolveAs = params.get("resolve");
 const mergeAs = params.get("merge");
 let factReplies = false;
+let conflicted = false;
 const ops = fixtureOperations();
 const sessionLinks = fixtureSessionLinks();
 const stale = (expected: number) => { if (params.get("ops") === "conflict" || expected !== ops.revision) throw new Error("revision_conflict: 다른 곳에서 설정이 바뀌었습니다. 새로 고친 뒤 다시 저장해 주세요."); ops.revision++; };
@@ -231,6 +233,29 @@ const handlers: Record<string, (input: any) => unknown> = {
       { id: "build", label: "빌드 서버", status: "connecting", current: false },
     ] };
   } }),
+  "board.save-note": async (raw: unknown) => {
+    const input = saveNote.input.parse(raw);
+    await settle();
+    if (params.get("note") === "fail") throw new Error("unavailable");
+    const current = snapshot.notes[input.sessionId];
+    if (params.get("note") === "conflict" && !conflicted) {
+      conflicted = true;
+      snapshot.notes[input.sessionId] = { sessionId: input.sessionId, kind: "review", origin: "person", text: "다른 창에서 남긴 확인 요청입니다.", revision: (current?.revision ?? 0) + 1 };
+      return { ok: false, conflict: true };
+    }
+    if ((current?.revision ?? 0) !== input.expectedRevision) return { ok: false, conflict: true };
+    if (input.kind === "clear") delete snapshot.notes[input.sessionId];
+    else snapshot.notes[input.sessionId] = { sessionId: input.sessionId, kind: input.kind, origin: "person", text: input.text, revision: input.expectedRevision + 1, evidenceId: input.evidenceId };
+    return { ok: true, conflict: false };
+  },
+  "board.set-reporting": async (raw: unknown) => {
+    const input = setReporting.input.parse(raw);
+    await settle();
+    if (params.get("note") === "fail") throw new Error("unavailable");
+    const session = snapshot.sessions.find(row => row.id === input.sessionId);
+    if (session) session.reporting = input.enabled || undefined;
+    return { ok: !!session };
+  },
   "board.fact-reply-settings": (raw: unknown) => { factReplySettings.input.parse(raw); return { enabled: factReplies }; },
   "board.set-fact-auto-reply": async (raw: unknown) => {
     factReplies = setFactAutoReply.input.parse(raw).enabled;

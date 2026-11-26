@@ -164,6 +164,14 @@ const shots = [
   ["hosts-dark-narrow", "theme=dark&hosts=1" + press("설정"), 520, 1400],
   ["hosts-fail-light-narrow", "theme=light&hosts=fail" + press("설정"), 520, 1400],
   ["hosts-unknown-dark-wide", "theme=dark" + press("설정"), 1280, 1100],
+  ["note-add-light-wide", "theme=light" + press("진행", "#결제 대시보드 리팩터링 · 상세", "기록 추가"), 1280, 900],
+  ["note-add-dark-narrow", "theme=dark" + press("진행", "#결제 대시보드 리팩터링 · 상세", "기록 추가"), 520, 1000],
+  ["note-agent-dark-wide", "theme=dark" + press("진행", "#링크 검사 · 상세", "기록 편집"), 1280, 900],
+  ["note-agent-light-narrow", "theme=light" + press("진행", "#링크 검사 · 상세", "기록 편집"), 520, 1000],
+  ["note-saved-light-wide", "theme=light" + press("진행", "#결제 대시보드 리팩터링 · 상세", "기록 추가", "확인 요청", "@확인 요청=리팩터링 뒤 결제 화면 스냅숏을 비교해 주세요.", "저장"), 1280, 1100],
+  ["note-reporting-dark-wide", "theme=dark" + press("진행", "#결제 대시보드 리팩터링 · 상세", "기록 추가", "보드 보고 켜기"), 1280, 900],
+  ["note-conflict-light-wide", "theme=light&note=conflict" + press("진행", "#링크 검사 · 상세", "기록 편집", "저장"), 1280, 900],
+  ["note-fail-dark-narrow", "theme=dark&note=fail" + press("진행", "#결제 대시보드 리팩터링 · 상세", "기록 추가", "@결정 요청=배포 시간을 정해 주세요", "저장"), 520, 1000],
   ["ledger-merge-preview-en-dark-wide", "theme=dark&ledger=1&coord=1&lang=en" + press("설치 안내 이동", "Merge on board"), 1280, 1000],
 ];
 const only = process.argv[2] ? new RegExp(process.argv[2]) : null;
