@@ -18,7 +18,7 @@ import { catalogProjects, discoverSessions, liveSelection } from "./discovery";
 import { ConversationReader, excerpt } from "./conversation";
 import { decorateDecision, DecisionSender } from "./decisions";
 import { ClarificationSender, clarificationHistory, restoreClarifiedDecision } from "./clarifications";
-import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } from "./session-links";
+import { isCurrentMembership, managedSessions, registerSessionLinks, releaseUnmanagedCoordinator } from "./session-links";
 import { ProjectPullRequests } from "./prs";
 import { MergeNotifications } from "./merge-notifications";
 import type { Command } from "../channel/names";
@@ -55,6 +55,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     });
   const facts = new BoardFacts(prefs, notes, reader, fleet);
   facts.register(server);
+  registerSessionLinks(server, prefs);
   const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()) });
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
