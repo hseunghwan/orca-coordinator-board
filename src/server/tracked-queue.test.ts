@@ -34,7 +34,7 @@ async function setup() {
   const resolve = (more: object = {}) => request('board.resolve-tracked-decision',
     { source: item.source, projectId: item.projectId, id: item.id, fingerprint: item.fingerprint, answer: 'Friday evening', recipientId: 'coord', ...more })
   const typed = () => orca.writes.filter(w => w[0] === 'terminal' && w[1] === 'send')
-  return { orca, fleet, board, request, item, resolve, typed }
+  return { orca, fleet, board, request, item, resolve, typed, dir }
 }
 
 test('a reply to a working recipient queues, and goes out once when its turn ends', async () => {
@@ -78,4 +78,15 @@ test('photos to a recipient are refused before anything is queued or sent', asyn
   const image = { mimeType: 'image/png', data: 'iVBORw0KGgo=' }
   await expect(f.resolve({ images: [image] })).rejects.toThrow('Photos cannot be sent yet')
   expect(f.typed()).toEqual([])
+})
+
+test('the coordinator\'s review command lists ledger checks from its own session and refuses anyone else', async () => {
+  const f = await setup()
+  writeFileSync(join(f.dir, 'tracked-decisions.json'), JSON.stringify({ version: 1, items: [
+    { source: 'ops', projectId: 'acme', id: 'qa', title: 'QA pass', where: 'manager', kind: 'check', sessionId: 'worker' }
+  ] }))
+  const listed = JSON.parse((await f.board.command('review', {}, 'coord')).text)
+  expect(listed).toEqual({ closed: [], reviewable: [{ key: expect.any(String), fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), title: 'QA pass', sessionId: 'worker' }] })
+  await expect(f.board.command('review', {}, 'worker')).rejects.toThrow()
+  expect(f.board.audience('review')).toBe('coordinator')
 })

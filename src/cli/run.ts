@@ -16,6 +16,8 @@ export const USAGE = [
   '                                            post a question or a result on your own card',
   '  fact --cycle <cycleId> --session <id> --evidence <id>',
   '                                            during a digest that names a cycle, answer a board fact for that session',
+  '  review [--input-file <path|->]            without input, close merged-only records and list checks to review;',
+  '                                            with {"review":{key,fingerprint,evidenceId,quote}}, close one finished check',
   '  plan, assign                              not in this version yet',
   '',
   'Options:',

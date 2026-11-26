@@ -24,6 +24,7 @@ import { MergeNotifications } from "./merge-notifications";
 import type { Command } from "../channel/names";
 import { coordinatorCommands, runCommand } from "./coordinator";
 import { BoardFacts } from "./board-facts";
+import { trackedReviewTool } from "./tracked-review";
 import { TrackedDecisionStore } from "./tracked-decisions";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
@@ -46,9 +47,15 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const reader = new ConversationReader();
   const prs = new ProjectPullRequests(prefs, pulls);
   const decisions = new DecisionSender(prefs, notes, reader, fleet);
+  const tracked = new TrackedDecisionStore(join(dataDir, "tracked-decisions.json"),
+    selected => {
+      let partial = false;
+      const items = readProjectDecisionSources(join(dataDir, "tracked-sources.json"), selected, () => { partial = true; });
+      return {items,partial};
+    });
   const facts = new BoardFacts(prefs, notes, reader, fleet);
   facts.register(server);
-  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool });
+  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()) });
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
@@ -64,12 +71,6 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     const id = [messageId.slice(0, 8), messageId.slice(8, 12), "4" + messageId.slice(13, 16), "8" + messageId.slice(17, 20), messageId.slice(20, 32)].join("-");
     await fleet.deliver({ messageId: id, to: sessionId as SessionId, text, subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse" });
   }
-  const tracked = new TrackedDecisionStore(join(dataDir, "tracked-decisions.json"),
-    selected => {
-      let partial = false;
-      const items = readProjectDecisionSources(join(dataDir, "tracked-sources.json"), selected, () => { partial = true; });
-      return {items,partial};
-    });
 
   const mergeNotifications = new MergeNotifications(prefs,(target,coordinator)=>tracked.mergeRecipient(target,coordinator),
     (sdk,target)=>prs.mergeScope(sdk,target), fleet);
