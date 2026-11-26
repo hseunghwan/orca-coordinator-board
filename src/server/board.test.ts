@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import { createCli } from '../orca/cli'
 import { createFleet } from '../orca'
-import { fixtureRunner, sid } from '../orca/fixtures/load'
+import { fixturePulls, fixtureRunner, sid } from '../orca/fixtures/load'
 import { contribute } from './board'
 import { rpcServer } from './rpc'
 
@@ -18,7 +18,7 @@ function board() {
   const calls: string[][] = []
   const fleet = createFleet(createCli(fixtureRunner(calls)))
   const handlers = new Map<string, (input: unknown) => Promise<unknown>>()
-  const live = contribute(rpcServer((name, fn) => handlers.set(name, fn), fleet.paseo), fleet, dir)
+  const live = contribute(rpcServer((name, fn) => handlers.set(name, fn), fleet.paseo), fleet, dir, fixturePulls)
   const request = (name: string, input: unknown = {}) => handlers.get(name)!(input) as Promise<any>
   return { request, calls, live }
 }
@@ -44,7 +44,8 @@ test('a selected project shows its sessions in Paseo lanes, with a plain-text qu
   expect(asked.evidenceId).toMatch(/^[0-9a-f]{24}$/)
   expect(snap.sessions.find((s: any) => s.id === sid(8)).detail).toBe('대화 종료')
   expect(snap.projects.map((p: any) => [p.title, p.selected, !!p.icon])).toEqual([['app', true, true], ['site', false, false], ['Notes', false, false]])
-  expect(await request('board.decision-count')).toEqual({ count: 4 })
+  expect(snap.pullRequests.items.map((pr: any) => [pr.repo, pr.number, pr.lane])).toEqual([['acme/app', 7, 'review']])
+  expect(await request('board.decision-count')).toEqual({ count: 5 })
   expect((await request('board.readiness')).decisionTitles).toEqual(['Ask about the release', 'Delete build cache', 'Pick a layout'])
 })
 

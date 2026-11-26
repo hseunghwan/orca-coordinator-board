@@ -25,11 +25,13 @@ function previewTitles(sessions: SessionRow[], notes: Record<string, Note>) {
     .slice(0, 3).map(row => row.title);
 }
 
-export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: string) {
+export type PullDeps = ConstructorParameters<typeof ProjectPullRequests>[1];
+
+export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: string, pulls?: PullDeps) {
   const notes = new NoteStore(join(dataDir, "notes.json"));
   const prefs = new PreferenceStore(join(dataDir, "scope.json"));
   const reader = new ConversationReader();
-  const prs = new ProjectPullRequests(prefs);
+  const prs = new ProjectPullRequests(prefs, pulls);
   let decisionTitles: string[] = [];
 
   server.handle(boardReadiness, async () => {

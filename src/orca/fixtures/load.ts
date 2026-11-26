@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Runner } from '../cli'
+import { parseOpenPulls } from '../../server/prs'
 import { buildWorld, repoList, worktreePs, type SessionId } from '../view'
 
 export const stdout = (name: string) => readFileSync(join(__dirname, name), 'utf8')
@@ -13,6 +14,16 @@ const READS: Record<string, string> = {
   [sid(1)]: 'agent-read-chat-question.json',
   [sid(2)]: 'agent-read-chat-done.json',
   [sid(7)]: 'agent-read-terminal-cut.json'
+}
+
+/** git and gh as the fixtures' one GitHub project would answer: one open pull request ready for review. */
+export const fixturePulls = {
+  localOrigin: async () => null,
+  githubPulls: async (repo: string) => parseOpenPulls(repo, JSON.stringify([{
+    number: 7, title: 'Add login', state: 'OPEN', updatedAt: '2026-11-20T00:00:00Z', isDraft: false, mergeable: 'MERGEABLE',
+    mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', checks: [], autoMerge: false
+  }])),
+  now: () => 0
 }
 
 /** Answers orca like the fixtures; an agent read of any other session fails as Orca does. */

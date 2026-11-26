@@ -26,15 +26,14 @@ function board(agents: RawAgent[], selected = ['p1']) {
 test('counts permission and reply waits; working sessions are counted apart', () => {
   const view = board([agent('a', 'blocked', 1), agent('b', 'waiting', 2), agent('c', 'working', 3), agent('d', 'done', 4)])
   assert.deepEqual(waitingCounts(view), { permission: 1, reply: 1, review: 0, working: 1 })
-  assert.deepEqual(statusItem(en, view).text, '2 waiting')
-  assert.equal(statusItem(en, view).tone, 'warning')
-  assert.equal(statusItem(ko, view).text, '기다림 2')
 })
 
-test('a quiet board, and one with no projects chosen yet', () => {
-  assert.deepEqual([statusItem(en, board([agent('c', 'working', 3)])).text, statusItem(en, board([agent('c', 'working', 3)])).tone], ['Nothing waiting', 'neutral'])
-  assert.equal(statusItem(en, board([], [])).text, 'Board')
+test('the status bar shows the decision count, a quiet board, no projects chosen, and a failed read', () => {
+  assert.deepEqual([statusItem(en, 2).text, statusItem(en, 2).tone], ['2 to decide', 'accent'])
+  assert.equal(statusItem(ko, 2).text, '내 결정 2')
+  assert.deepEqual([statusItem(en, 0).text, statusItem(en, 0).tone], ['Nothing to decide', 'neutral'])
   assert.equal(statusItem(en, null).text, 'Board')
+  assert.equal(statusItem(en, null, true).tone, 'warning')
 })
 
 test('a project card lists sessions that need someone first and keeps finished ones apart', () => {
