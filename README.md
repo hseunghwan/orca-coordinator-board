@@ -87,13 +87,16 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 ## 개발
 
 ```sh
-npm ci                  # typescript와 @types/node(타입 검사용)만 설치한다. 플러그인 실행에는 필요 없다
+npm ci                  # 개발 도구(typescript, esbuild, vitest 등)만 설치한다. 플러그인 실행에는 필요 없다
 orca plugin types .     # .orca/types 생성 (git에 올리지 않음)
+npm run build           # 워커와 대시보드를 dist/worker.mjs, dist/dashboard.js로 묶는다. 고치는 동안은 npm run watch
 npm run typecheck       # npx tsc -p .
-orca plugin test .      # 테스트
+orca plugin test .      # 테스트 (vitest)
 orca plugin check .     # 패널을 시나리오별로 그려 보고 대시보드를 정적 검사한다 (src/panel.check.ts)
 orca plugin validate .
 ```
+
+`dist/`는 저장소에 함께 올린다. git으로 설치하면 빌드 없이 돈다. `src/`를 고쳤으면 `npm run build` 결과도 같이 커밋한다. `src/paseo/`는 Paseo판 코드를 import 경로만 바꿔 옮긴 폴더다([src/paseo/UPSTREAM.md](src/paseo/UPSTREAM.md)).
 
 에이전트용 규칙은 [AGENTS.md](AGENTS.md)에 있다.
 
@@ -102,5 +105,6 @@ orca plugin validate .
 MIT 라이선스([LICENSE](LICENSE)).
 
 - 이 플러그인은 DevBrothers의 [paseo-coordinator-board](https://github.com/devbrother2024/paseo-coordinator-board)(MIT)를 Orca용으로 옮긴 것이다. 보드 구성과 결정 카드 순서, 전송 규칙(사람이 쓴 글만, 권한 대기 세션에는 보내지 않음), PR 분류와 제목 정리(`server/prs.ts`)를 의존성 없이 `src/`에 다시 썼다. 원저작권 표기는 LICENSE에 그대로 둔다.
+- `src/paseo/`는 같은 저장소의 판단 로직과 테스트를 그대로 옮긴 것이다. 함께 들어온 Marked와 Better Paseo의 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있다.
 - 기록은 그 저장소의 `orca/` 폴더에서 시작했고, 이 저장소로 옮길 때 커밋 기록을 유지했다.
 - `tsconfig.json` 등 뼈대는 Orca(stablyai/orca, MIT)의 `orca plugin create` 템플릿에서 시작했다. `.orca/types`는 `orca plugin types`가 만드는 Orca 타입이라 저장소에 넣지 않는다.
