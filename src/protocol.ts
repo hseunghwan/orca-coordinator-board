@@ -1,4 +1,6 @@
-// The panel <-> worker contract, declared once: src/panel.tsx and src/worker.ts both read it.
+// The first board's frame <-> worker contract. The worker no longer serves it (the board now speaks
+// Paseo's RPCs, src/paseo/shared/contract.ts); only the old dashboard frame in src/dashboard/ is
+// still typed against it, and it leaves with that frame.
 import type { BoardView, ProjectChoice, ReplyResult } from './model'
 
 declare module 'orca' {

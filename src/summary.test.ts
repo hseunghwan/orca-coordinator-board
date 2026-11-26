@@ -1,26 +1,25 @@
 import { assert } from 'orca/testing'
 import { test } from 'vitest'
 import { translator } from './i18n'
-import { buildBoard, type RawAgent } from './model'
+import type { AgentState, BoardView, SessionRow } from './model'
 import { ago, laneGroups, statusItem, waitingCounts, withExcludeLine, focusedWorkspace } from './summary'
 
 const en = translator('en')
 const ko = translator('ko')
-const agent = (terminalId: string, state: RawAgent['state'], stateStartedAt: number): RawAgent =>
-  ({ terminalId, title: terminalId, agent: 'claude', state, stateStartedAt })
+const agent = (terminalId: string, state: AgentState, since: number): SessionRow =>
+  ({ key: terminalId + '@' + since, terminalId, workspaceId: 'w1', workspaceName: 'main', branch: 'main', agent: 'claude', title: terminalId, state, since })
 
-function board(agents: RawAgent[], selected = ['p1']) {
-  return buildBoard({
-    projects: [{ id: 'p1', name: 'App', hostId: 'local', path: '/w/app' }],
-    selected,
-    workspaces: [{ id: 'w1', name: 'main', projectId: 'p1', branch: 'main' }],
-    agents: new Map([['w1', agents]]),
-    pulls: new Map(),
-    dismissed: new Set(),
+function board(sessions: SessionRow[]): BoardView {
+  const kind = { blocked: 'permission', waiting: 'reply' } as const
+  return {
+    at: 1000,
+    selected: ['p1'],
+    projects: [{ projectId: 'p1', name: 'App', sessions, closed: [], repo: null, pullStatus: 'ok', pulls: [] }],
+    decisions: sessions.flatMap((session) => session.state === 'blocked' || session.state === 'waiting'
+      ? [{ key: session.key, kind: kind[session.state], projectName: 'App', since: session.since, session }] : []),
     replies: [],
-    now: 1000,
     truncated: false
-  })
+  }
 }
 
 test('counts permission and reply waits; working sessions are counted apart', () => {
