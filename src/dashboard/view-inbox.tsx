@@ -26,7 +26,7 @@ function InboxListRow({ row: item, projectNames, selected, onPress }: { row: Inb
   </button>;
 }
 
-export function InboxView({ compact, entries, slots, projects }: BoardLayoutProps) {
+export function InboxView({ compact, entries, renderReceipt, slots, projects }: BoardLayoutProps) {
   const { t } = useBoardLanguage();
   const [tab, setTab] = useState<InboxTab>("decisions");
   const [box, width] = useWidth();
@@ -123,6 +123,7 @@ export function InboxView({ compact, entries, slots, projects }: BoardLayoutProp
             </div>}
             {permission && <p className="muted sm">{t("세션에서 승인: 이 세션은 권한 승인을 기다립니다. 보드는 권한을 기다리는 세션에 답장을 보내지 않으니 세션을 열어 승인하세요.",
               "Approve in session: this session is waiting for permission. The board does not send to a session that waits for permission, so open the session to approve.")}</p>}
+            {selectedEntry && selectedEntry.receipts.length > 0 && <div style={{ ...column, gap: space[2] }}>{selectedEntry.receipts.map(renderReceipt)}</div>}
             {entries.map(entry => entry.card === null ? null : <article key={entry.key} className="surface"
               style={{ display: entry.key === selected ? "flex" : "none", flexDirection: "column", gap: space[2], padding: compact ? space[3] : space[4], borderRadius: "var(--r-xl)" }}>
               {entry.card}

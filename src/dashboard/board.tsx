@@ -1,16 +1,25 @@
 /** @jsxImportSource react */
 // Paseo's BoardView (client/board.tsx): header, project filters, notices, settings and the classic stack,
-// and the decision entries every view places. Phase 1 is read-only, so no card holds a draft or a receipt.
-import { useState, type ReactNode } from "react";
+// and the decision entries every view places. A sent reply leaves an inline receipt in its row's place.
+import { useMemo, useState, type ReactNode } from "react";
 import { priorityLabel } from "../paseo/client/decision-priority";
+import { sessionRowKey, withReceiptPositions, type CompletedAction, type InlineReceipt } from "../paseo/client/decision-receipts";
 import { decisionRowSummary } from "../paseo/client/decision-row";
+import { decisionSummary } from "../paseo/client/decision-summary";
+import { historySessionLinks, type HistoryLinks } from "../paseo/client/history-sessions";
 import type { Card, Snapshot } from "../paseo/client/model";
+import { clarificationKey, clarificationRecipient, sessionClarificationCard, type ClarificationCard } from "../paseo/shared/clarifications";
 import type { PullRequestItem } from "../paseo/shared/prs";
 import type { BoardReadiness } from "../paseo/shared/readiness";
 import type { TrackedDecision } from "../paseo/shared/tracked-decisions";
 import type { BoardLayoutProps, DecisionEntry } from "./board-layout";
 import { boardModel, toggleFilter, type ProjectId } from "./board-model";
-import { DecisionCard, PullCard, RecordCard, type OpenSession } from "./cards";
+import { PullCard, RecordCard, type OpenSession } from "./cards";
+import { Clarification } from "./clarification";
+import { DecisionActions, type DecisionReceipt } from "./decision-actions";
+import { DecisionEditingRow, keepEditingPositions, useDecisionEditing } from "./decision-editing";
+import { InlineDecisionReceipt } from "./inline-receipt";
+import { ReplyHistory } from "./reply-history";
 import { Project } from "./project-kanban";
 import { SessionProgress } from "./session-progress";
 import { Button, column, Disclosure, fontSize, row, space } from "./ui/controls";
@@ -33,37 +42,75 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   const [showError, setShowError] = useState(false);
   const [manage, setManage] = useState(false);
   const [digestLimit, setDigestLimit] = useState(5);
+  const [inlineReceipts, setInlineReceipts] = useState<InlineReceipt[]>([]);
+  const [receipts, setReceipts] = useState<DecisionReceipt[]>([]);
+  const [historyOpen, setHistoryOpen] = useState<boolean | null>(null);
   const now = Date.now();
-  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now) : null;
+  const completed = new Set(inlineReceipts.map(receipt => receipt.actionKey));
+  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed) : null;
   const configured = model ? model.configured : readiness?.configured;
   const pickingProjects = !configured || (!settings && !snapshot?.coordinator);
   const layoutMode = !settings && snapshot && configured ? view.mode : "classic";
 
-  const renderDecision = (card: Card, embedded = false, priority?: string) =>
-    <DecisionCard key={JSON.stringify([card.session.projectId, card.session.id, card.session.decision?.version])}
-      card={card} hostLabel={hostLabel} priorityLabel={priority} open={onOpen} embedded={embedded} />;
-  const renderRecord = (item: TrackedDecision, priority?: string) => {
+  const rankedKeys = model?.ranked.map(row => row.key) ?? [];
+  const { positions, onEditing } = useDecisionEditing(rankedKeys);
+  const allKeys = keepEditingPositions(rankedKeys, positions);
+  const shownKeys = layoutMode === "classic" ? allKeys.slice(0, digestLimit) : allKeys;
+  const remaining = rankedKeys.length - shownKeys.length;
+  const scopedReceipts = model ? inlineReceipts.filter(receipt => receipt.projectIds.some(id => model.byProject.has(id) && model.inFilter(id))) : [];
+  const orderedKeys = withReceiptPositions(shownKeys, scopedReceipts);
+  function remember(action: CompletedAction) {
+    // The order is the one on screen when the person pressed send.
+    setInlineReceipts(previous => previous.some(entry => entry.actionKey === action.actionKey && entry.rowKey === action.rowKey)
+      ? previous : [...previous, { ...action, order: orderedKeys }]);
+  }
+  const matches = (receipt: DecisionReceipt, card: Card) => receipt.projectId === card.session.projectId && receipt.sessionId === card.session.id && receipt.version === card.session.decision?.version;
+
+  // Phase 2 asks only the session a card came from; ledger and pull request questions go to a coordinator.
+  function questionFor(card: ClarificationCard | null, title: string) {
+    if (!snapshot) return null;
+    const recipientId = card ? clarificationRecipient(card, snapshot) : null;
+    const recipientTitle = snapshot.sessions.find(session => session.id === recipientId)?.title;
+    return <Clarification key={card ? clarificationKey(card) : title} title={title} card={card} recipientId={recipientId}
+      recipientTitle={recipientTitle} entries={snapshot.clarifications ?? []} onRefresh={onRefresh} />;
+  }
+  const renderDecision = (card: Card, embedded = false, rowKey?: string, priority?: string) =>
+    <DecisionActions key={JSON.stringify([card.session.projectId, card.session.id, card.session.decision?.version])}
+      clarification={!embedded && questionFor(sessionClarificationCard(card.session, card.note), card.session.title)}
+      card={card} hostLabel={hostLabel} priorityLabel={priority} open={onOpen} embedded={embedded}
+      coordinator={snapshot?.coordinator ?? null} coordinatorTitle={snapshot?.sessions.find(session => session.id === snapshot.coordinator)?.title}
+      receipt={receipts.find(receipt => matches(receipt, card))}
+      onSent={result => {
+        if (rowKey && result.action === "reply") remember({
+          rowKey, actionKey: sessionRowKey(card), projectIds: [result.projectId], status: "sent", recipientId: result.recipientId,
+          title: decisionSummary(card, t).headline, detail: result.answer || result.recipient || undefined,
+        });
+        setReceipts(prior => [result, ...prior.filter(receipt => !(receipt.projectId === result.projectId && receipt.sessionId === result.sessionId))].slice(0, 20));
+        onRefresh();
+      }} />;
+  const renderRecord = (item: TrackedDecision, rowKey?: string, priority?: string) => {
     const native = model?.human.find(card => card.session.id === item.matchedSessionId);
     const linked = item.matchedSessionId || item.sessionId;
     const local = linked && !native && snapshot?.sessions.some(session => session.id === linked) ? linked : null;
     return <RecordCard key={item.key} item={item} priorityLabel={priority} linkedSession={local} open={onOpen}>
-      {native && renderDecision(native, true)}
+      {native && (!rowKey || !completed.has(sessionRowKey(native))) && renderDecision(native, true, rowKey)}
     </RecordCard>;
   };
   const renderPull = (pr: PullRequestItem, priority?: string) => <PullCard key={pr.url} pr={pr} priorityLabel={priority} />;
 
-  const rankedKeys = model?.ranked.map(row => row.key) ?? [];
-  const shownKeys = layoutMode === "classic" ? rankedKeys.slice(0, digestLimit) : rankedKeys;
-  const remaining = rankedKeys.length - shownKeys.length;
   const rowsByKey = new Map(model?.ranked.map(row => [row.key, row]));
   const activeRows = new Map<string, ReactNode>();
-  for (const key of shownKeys) {
+  shownKeys.forEach((key, position) => {
     const row = rowsByKey.get(key)!;
     const label = priorityLabel(row, t, now);
-    activeRows.set(key, row.kind === "pull" ? renderPull(row.pr, label)
-      : row.kind === "record" ? renderRecord(row.item, label)
-      : renderDecision(row.card, false, label));
-  }
+    const content = row.kind === "pull" ? renderPull(row.pr, label)
+      : row.kind === "record" ? renderRecord(row.item, key, label)
+      : renderDecision(row.card, false, key, label);
+    activeRows.set(key, <DecisionEditingRow rowKey={key} position={position} onEditing={onEditing}>{content}</DecisionEditingRow>);
+  });
+  const renderReceipt = (receipt: InlineReceipt) => <InlineDecisionReceipt key={receipt.actionKey} receipt={receipt} onOpen={onOpen}
+    onDismiss={() => setInlineReceipts(prior => prior.map(entry => entry === receipt ? { ...entry, hidden: true } : entry))} />;
+  const receiptsFor = (key: string) => scopedReceipts.filter(receipt => receipt.rowKey === key && !receipt.hidden);
 
   const pad = compact ? space[3] : space[6];
   const time = updatedAt && (language === "ko" ? `${updatedAt.toLocaleTimeString("ko-KR")} 갱신` : `Updated ${updatedAt.toLocaleTimeString("en-US")}`);
@@ -84,6 +131,11 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   const errorDetail = !!error && showError && <p className="danger" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{error}</p>;
 
   const filters = model?.filters ?? [];
+  const filteredHistory = model ? (snapshot?.replyHistory ?? []).filter(entry => model.inFilter(entry.projectId)) : [];
+  const showHistory = historyOpen ?? (model?.filteredTotal === 0 && !scopedReceipts.some(receipt => !receipt.hidden));
+  const historyRepos = useMemo(() => new Map(snapshot?.pullRequests?.projects.flatMap(project =>
+    project.repo && project.mode !== "off" ? [[project.projectId, project.repo] as const] : []) ?? []), [snapshot?.pullRequests?.projects]);
+  const historyLinks: HistoryLinks = entry => historySessionLinks(entry, { sessions: snapshot?.sessions ?? [], peers: [], repos: historyRepos });
   const filtersNode = model && !settings && configured && model.byProject.size > 0 ? <div role="group" aria-label={t("프로젝트 필터", "Project filters")}
     style={{ ...row, gap: space[2] }}>
     <Button size="sm" label={t(`전체 ${model.total}`, `All ${model.total}`)} selected={!filters.length} onPress={() => setChosenProjects([])} />
@@ -110,14 +162,18 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
       decisions={model.byProject.get(project.id) ?? 0} renderRecord={item => renderRecord(item)} renderPull={pr => renderPull(pr)} compact={compact} open={onOpen} sessionHostLabel={hostLabel} />)}
   </SessionProgress> : null;
 
+  const historyNode = model && snapshot && !settings && configured && filteredHistory.length > 0
+    ? <ReplyHistory entries={filteredHistory} links={historyLinks} open={onOpen} expanded={showHistory} onToggle={() => setHistoryOpen(!showHistory)} />
+    : null;
+
   if (layoutMode !== "classic" && model) {
-    const entries: DecisionEntry[] = shownKeys.map(key => {
-      const row = rowsByKey.get(key)!;
-      return { key, row, summary: decisionRowSummary(row, t), label: priorityLabel(row, t, now), card: activeRows.get(key) ?? null, receipts: [] };
+    const entries: DecisionEntry[] = orderedKeys.map(key => {
+      const row = rowsByKey.get(key) ?? null;
+      return { key, row, summary: row && decisionRowSummary(row, t), label: row && priorityLabel(row, t, now), card: activeRows.get(key) ?? null, receipts: receiptsFor(key) };
     });
     const props: BoardLayoutProps = {
-      compact, entries, total: model.total, filteredTotal: model.filteredTotal, filtered: filters.length > 0, incomplete: model.incomplete,
-      slots: { filters: filtersNode, notices: noticesNode, operations: operationsNode, history: null, progress: progressNode },
+      compact, entries, total: model.total, filteredTotal: model.filteredTotal, filtered: filters.length > 0, incomplete: model.incomplete, renderReceipt,
+      slots: { filters: filtersNode, notices: noticesNode, operations: operationsNode, history: historyNode, progress: progressNode },
       projects: { name: model.projectName },
     };
     const Layout = layoutMode === "inbox" ? InboxView : LaterView;
@@ -167,11 +223,13 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
       {!settings && model && configured && <div style={{ ...column, gap: compact ? space[3] : space[4] }}>
         <h2 style={{ margin: 0, fontSize: fontSize.base, fontWeight: 500 }}>{filters.length ? t(`내 결정 · ${model.filteredTotal}건 / 전체 ${model.total}건`, `My decisions · ${model.filteredTotal} of ${model.total}`) : t(`내 결정 · ${model.total}건`, `My decisions · ${model.total}`)}</h2>
         {noticesNode}
-        {shownKeys.map(key => <article key={key} className="surface" style={{ ...column, gap: space[2], padding: compact ? space[3] : space[4], borderRadius: "var(--r-xl)" }}>
+        {orderedKeys.map(key => <article key={key} className="surface" style={{ ...column, gap: space[2], padding: compact ? space[3] : space[4], borderRadius: "var(--r-xl)" }}>
+          {receiptsFor(key).map(renderReceipt)}
           {activeRows.get(key)}
         </article>)}
         {remaining > 0 && <div><Button label={t(`결정 ${remaining}건 더 보기`, `Show ${remaining} more decisions`)} onPress={() => setDigestLimit(model.total)} /></div>}
       </div>}
+      {historyNode}
       {!settings && snapshot && !configured && !snapshot.projects.length && <p className="muted">{t("표시할 세션이 없습니다. 워크스페이스에서 세션을 시작하면 여기에 나타납니다.", "Start a session in a workspace to see it here.")}</p>}
       {progressNode}
     </div>
