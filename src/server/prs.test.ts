@@ -1,11 +1,11 @@
 // @ts-nocheck
-// Adapted from paseo-coordinator-board test/prs.test.ts @ 2e9d128: vitest and import paths; the merge, lifecycle and mapping RPCs are not served yet, so their checks are left out and mappings are written straight to the store. Typed as loosely as upstream.
+// Ported from paseo-coordinator-board test/prs.test.ts @ 2e9d128: vitest, import paths and bun's toBeEmpty. Typed as loosely as upstream.
 import { afterEach, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectPullRequests, githubRepository, parseOpenPulls } from "./prs";
-import { pullRequestViewSchema, setProjectRepository } from "../paseo/shared/prs";
+import { pullRequestViewSchema, readPullLifecycle, setProjectRepository } from "../paseo/shared/prs";
 import { PreferenceStore } from "../paseo/server/preferences";
 
 const paths: string[] = [];
@@ -16,7 +16,7 @@ const raw = (number=1,extra={}) => ({
   ...extra,
 });
 const page = (entries:unknown[]) => ({entries,pageInfo:{hasMore:false,nextCursor:null}});
-function fixture(ids = ["root","checkout","runtime"]) {
+function fixture(ids = ["root","checkout","runtime"], lookupLifecycle?: ConstructorParameters<typeof ProjectPullRequests>[3]) {
   const dir = mkdtempSync(join(tmpdir(),"project-prs-"));paths.push(dir);
   const store = new PreferenceStore(join(dir,"prefs.json"));
   store.change(s=>{s.projects=ids;});
@@ -38,15 +38,13 @@ function fixture(ids = ["root","checkout","runtime"]) {
       log.gh.push(repo);log.active++;log.max=Math.max(log.max,log.active);
       try{await behavior.delay(repo);behavior.after();if(behavior.fail)throw Error("private host error");return parseOpenPulls(repo,JSON.stringify([raw()]));}finally{log.active--;}
     }};
-  const prs=new ProjectPullRequests(store,deps);
-  // The mapping RPC is not served yet; write the mapping as it would.
-  const update=async (input)=>store.change(s=>{
-    if (input.mode==="manual") s.projectRepositories[input.projectId]={mode:"manual",repo:input.repo.toLowerCase()};
-    if (input.mode==="off") s.projectRepositories[input.projectId]={mode:"off"};
-    if (input.mode==="auto") delete s.projectRepositories[input.projectId];
-  });
+  const prs=new ProjectPullRequests(store,deps,undefined,lookupLifecycle);
+  let onMapping, onLifecycle;
+  prs.register({handle:(rpc,fn)=>{if(rpc.name===setProjectRepository.name)onMapping=fn; if(rpc.name===readPullLifecycle.name)onLifecycle=fn;}});
+  const update=(input)=>onMapping(setProjectRepository.input.parse(input));
   const read=(refresh=false)=>prs.read(sdk,{refresh});
-  return {store,sdk,read,log,behavior,roots,spaces,update,tick:n=>{now+=n;}};
+  const lifecycle = (input) => onLifecycle(readPullLifecycle.input.parse(input), {paseo:sdk});
+  return {store,sdk,read,log,behavior,roots,spaces,update,lifecycle,tick:n=>{now+=n;}};
 }
 test("GitHub remotes normalize one owner/repo and reject credentials, extra components and shell input",()=>{
   for(const remote of ["https://github.com/Dev-Team/Repo.git","ssh://git@github.com/Dev-Team/Repo","git@github.com:Dev-Team/Repo.git"])
@@ -87,6 +85,8 @@ test("conflicting workspace origins need a mapping; manual/off/auto preserve oth
   expect(await f.read()).toMatchObject({items:[],projects:[{mode:"auto",status:"unmapped"}]});expect(f.log.gh).toHaveLength(0);
   await f.update({projectId:"checkout",mode:"manual",repo:"Org/Manual",expectedMode:"auto",expectedRepo:null});
   expect((await f.read()).items[0].repo).toBe("org/manual");
+  await expect(f.update({projectId:"unselected",mode:"off",expectedMode:"auto",expectedRepo:null})).rejects.toThrow();
+  await expect(f.update({projectId:"checkout",mode:"off",expectedMode:"manual",expectedRepo:"org/old"})).rejects.toThrow();
   await f.update({projectId:"checkout",mode:"off",expectedMode:"manual",expectedRepo:"org/manual"});
   expect(await f.read()).toMatchObject({items:[],projects:[{mode:"off",status:"off",repo:null}]});
   await f.update({projectId:"checkout",mode:"auto",expectedMode:"off",expectedRepo:null});
@@ -107,6 +107,23 @@ test("repository fetches observe the same host-wide concurrency cap across two o
   f.behavior.delay=async()=>{await new Promise(resolve=>setTimeout(resolve,3));};
   await Promise.all([f.read(),f.read()]);expect(f.log.max).toBe(3);expect(f.log.gh).toHaveLength(9);
 });
+
+test("tracked PR lifecycle reads distinguish merged, closed, open and unavailable outside the open-PR list", async () => {
+  const target = {repo:"org/example",number:170,projectId:"root"};
+  for (const state of ["MERGED", "CLOSED", "OPEN"] as const) {
+    const f = fixture(["root"], async input => { expect(input).toEqual(target); return state; });
+    expect(await f.lifecycle(target)).toEqual({state});
+  }
+  let calls = 0;
+  const f = fixture(["root"], async () => { calls++; throw Error("offline"); });
+  expect(await f.lifecycle(target)).toEqual({state:"UNKNOWN"});
+  expect(await f.lifecycle({...target,repo:"other/repo"})).toEqual({state:"UNKNOWN"});
+  expect(await f.lifecycle({...target,projectId:"unselected"})).toEqual({state:"UNKNOWN"});
+  expect(calls).toBe(1);
+  const moving = fixture(["root"], async () => { moving.store.change(s => {s.projects=[];}); return "MERGED"; });
+  expect(await moving.lifecycle(target)).toEqual({state:"UNKNOWN"});
+});
+
 
 test("a known repository starts loading while another project is still resolving its origin", async () => {
   const f = fixture(["checkout", "root"]);
@@ -171,5 +188,5 @@ test("conflicting workspace remotes avoid unnecessary git probes of other checko
   const result = await f.read();
   expect(result.projects[0].status).toBe("unmapped");
   expect(f.log.local).toEqual(["/missing"]);
-  expect(f.log.gh).toEqual([]);
+  expect(f.log.gh).toHaveLength(0);
 });

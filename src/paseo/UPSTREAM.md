@@ -38,6 +38,7 @@ Commit: `2e9d12884e8f1c312a956e47628a554c6874ce5a`
 - `shared/work-images.ts`
 - `shared/workspace-pull.ts`
 - `server/notes.ts`
+- `server/pr-merge.ts`
 - `server/preferences.ts`
 - `server/project-decision-sources.ts`
 - `server/reply-photos.ts`

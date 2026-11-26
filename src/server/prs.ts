@@ -1,10 +1,14 @@
-// Adapted from paseo-coordinator-board server/prs.ts @ 2e9d128: reading only (no merge, lifecycle or repository RPCs); git and gh run through src/github.ts.
-import type { PluginHandlerContext } from "../orca";
+// Adapted from paseo-coordinator-board server/prs.ts @ 2e9d128: git and gh run through src/github.ts
+// (shell:false, timeouts, prompts off, and Windows' missing APPDATA filled) instead of execCommand.
+import type { PluginHandlerContext, PluginServerContext } from "../orca";
 import { run } from "../github";
 import { stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { pullReason, pullUrl, repositorySlug, type PullRequestItem, type PullRequestView } from "../paseo/shared/prs";
+import { confirmPullRequestMerge, previewPullRequestMerge, pullLifecycle, pullReason, pullUrl, readPullLifecycle, repositorySlug, setProjectRepository,
+  type MergeTarget, type PullRequestItem, type PullRequestView } from "../paseo/shared/prs";
+import { mergeHistoryKey, type MergeNotifications } from "./merge-notifications";
+import { githubMergeApi, PullMerges } from "../paseo/server/pr-merge";
 import { githubRepository } from "../paseo/shared/github-repository";
 export { githubRepository } from "../paseo/shared/github-repository";
 import { readPages } from "./discovery";
@@ -73,6 +77,12 @@ const githubPulls = async (repo:string) => parseOpenPulls(repo,await run("gh",[
   "pr","list","--repo","github.com/"+repo,"--state","open","--limit",String(scanLimit+1),"--json",fields,"--jq",projection,
 ]));
 
+async function githubLifecycle(target: MergeTarget) {
+  const output = await run("gh", ["pr", "view", String(target.number), "--repo", "github.com/" + target.repo, "--json", "state,url"]);
+  const row = z.object({state:pullLifecycle, url:z.string()}).parse(JSON.parse(output));
+  return row.url.toLowerCase() === pullUrl(target.repo, target.number) ? row.state : "UNKNOWN";
+}
+
 type Mapping = {mode:"auto"|"manual"|"off";repo:string|null};
 function mapping(scope:Preferences, id:string):Mapping {
   const saved=Object.hasOwn(scope.projectRepositories,id)?scope.projectRepositories[id]:undefined;
@@ -85,7 +95,8 @@ export class ProjectPullRequests {
   private readonly discovery = new Map<string,{expires:number; value:Promise<string|null>}>();
   private readonly waiting: (() => void)[] = [];
   private running = 0;
-  constructor(private store:PreferenceStore,private readonly deps = {localOrigin,githubPulls,now:Date.now}) {}
+  constructor(private store:PreferenceStore,private readonly deps = {localOrigin,githubPulls,now:Date.now},
+    private readonly mergeApi=githubMergeApi(args=>run("gh",args)), private readonly lookupLifecycle=githubLifecycle) {}
 
   private async limited<T>(task:()=>Promise<T>):Promise<T> {
     if (this.running >= 3) await new Promise<void>(resolve=>this.waiting.push(resolve));
@@ -96,6 +107,73 @@ export class ProjectPullRequests {
       if (next) next();
       else this.running--;
     }
+  }
+
+  async lifecycle(paseo: Sdk, input: MergeTarget) {
+    try {
+      return await this.limited(async () => {
+        const current = await this.mergeScope(paseo, input);
+        if (!current()) return "UNKNOWN" as const;
+        const state = await this.lookupLifecycle(input);
+        return current() ? state : "UNKNOWN" as const;
+      });
+    } catch { return "UNKNOWN" as const; }
+  }
+
+  register(server:PluginServerContext,onInvalidated?:()=>void,notifications?:MergeNotifications) {
+    const merges = new PullMerges(this.mergeApi, this.deps.now, repo => {
+      this.sources.delete(repo);
+      onInvalidated?.();
+    }, entry => {
+      const {repo, number, status, mergeSha} = entry.pullMerge;
+      const key = mergeHistoryKey(repo,number);
+      this.store.change(scope => {
+        const previous = scope.pullMergeHistory[key];
+        if (!previous || (status === "merged" && previous.pullMerge.status !== "merged")) {
+          scope.pullMergeHistory[key] = entry;
+        } else if (!previous.pullMerge.mergeSha && mergeSha) {
+          previous.pullMerge.mergeSha = mergeSha;
+        }
+      });
+    });
+    server.handle(readPullLifecycle, async (input, {paseo}) => ({state: await this.lifecycle(paseo, input)}));
+    server.handle(previewPullRequestMerge,(input,{paseo})=>merges.preview(input,()=>this.mergeScope(paseo,input)));
+    server.handle(confirmPullRequestMerge,(input,{paseo})=>{
+      const owner = notifications?.owner(input);
+      return merges.confirm(input,()=>this.mergeScope(paseo,input),notifications && owner
+        ? entry => notifications.confirmed(paseo,entry,owner) : undefined);
+    });
+    server.handle(setProjectRepository,async input=>{
+      this.store.change(s=>{
+        if (!s.projects.includes(input.projectId)) throw Error("관리할 프로젝트를 먼저 선택하세요.");
+        const current=mapping(s,input.projectId);
+        if (current.mode!==input.expectedMode || (current.mode==="manual" && current.repo!==input.expectedRepo)) throw Error("저장소 연결이 변경되었습니다. 새로 고쳐 주세요.");
+        if (input.mode==="manual" && input.repo) s.projectRepositories[input.projectId]={mode:"manual",repo:input.repo};
+        if (input.mode==="off") s.projectRepositories[input.projectId]={mode:"off"};
+        if (input.mode==="auto") delete s.projectRepositories[input.projectId];
+      });
+      this.discovery.delete(input.projectId);
+      return {ok:true as const};
+    });
+  }
+
+  async mergeScope(paseo:Sdk,target:MergeTarget) {
+    const saved=this.store.read(), config=mapping(saved,target.projectId);
+    if(!saved.projects.includes(target.projectId) || config.mode==="off") throw Error("scope");
+    const current=()=>{
+      const live=this.store.read();
+      return live.projects.includes(target.projectId) && equal(config,mapping(live,target.projectId));
+    };
+    let repo=config.repo;
+    if(config.mode==="auto"){
+      const native=await paseo.projects.list();
+      const project=native.projects.find(p=>p.projectId===target.projectId);
+      if(!current()) throw Error("scope");
+      // Bypass the browsing cache when a person is about to change a GitHub PR.
+      repo=await this.discover(paseo,target.projectId,project?.projectRootPath);
+    }
+    if(repo!==target.repo || !current()) throw Error("scope");
+    return current;
   }
 
   private async discover(paseo:Sdk,id:string,root:string|undefined) {

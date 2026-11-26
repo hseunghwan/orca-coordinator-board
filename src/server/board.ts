@@ -1,7 +1,8 @@
 // Adapted from paseo-coordinator-board index.server.ts @ 2e9d128: the snapshot, decision count, readiness
 // and scope, board facts, the tracked decision ledger and its queue, and the session sends
 // (board.send-decision, board.ask-clarification, tracked replies) through fleet.deliver. Paseo's hooks
-// are Orca signals (src/orca/signals.ts) that the worker passes to signal(). Merge notices come later.
+// are Orca signals (src/orca/signals.ts) that the worker passes to signal(). Pull request mapping,
+// lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts.
 import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, PluginServerContext } from "../orca";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
@@ -19,6 +20,7 @@ import { decorateDecision, DecisionSender } from "./decisions";
 import { ClarificationSender, clarificationHistory, restoreClarifiedDecision } from "./clarifications";
 import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } from "./session-links";
 import { ProjectPullRequests } from "./prs";
+import { MergeNotifications } from "./merge-notifications";
 import type { Command } from "../channel/names";
 import { coordinatorCommands, runCommand } from "./coordinator";
 import { BoardFacts } from "./board-facts";
@@ -69,6 +71,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       return {items,partial};
     });
 
+  const mergeNotifications = new MergeNotifications(prefs,(target,coordinator)=>tracked.mergeRecipient(target,coordinator),
+    (sdk,target)=>prs.mergeScope(sdk,target), fleet);
+
   server.handle(boardReadiness, async () => {
     const scope = prefs.read();
     return { configured: scope.projects.length > 0, coordinator: scope.coordinator, decisionTitles: tracked.previewTitles(new Set(scope.projects)) };
@@ -87,6 +92,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     ]);
     const { choices, sessions, evidence, coordinatorRow } = sessionView;
     const latest = prefs.read();
+    // Loading the board should not wait on an idle check or a provider turn.
+    if (Object.values(latest.pullMergeHistory).some(entry => entry.pullMerge.notification?.status === "queued")) {
+      void mergeNotifications.resume(paseo).catch(() => console.warn("Could not resume queued merge notifications."));
+    }
     const visible = sessions.filter(row => isCurrentMembership(row, latest));
     const visibleNotes = notes.visible(new Set(visible.map(s => s.id)));
     facts.decorate(visible, evidence, visibleNotes);
@@ -237,15 +246,18 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       throw new Error(host.t()("사진 첨부는 아직 보낼 수 없습니다. 글로만 보내 주세요.", "Photos cannot be sent yet. Send text only."));
     }
   });
+  prs.register(server, invalidateCount, mergeNotifications);
   async function recipientAvailable(id: string) {
-    if (!tracked.hasWaitingReplies(id)) return;
-    await resumeReplies({ paseo: fleet.paseo }, id);
-    // A status event can precede the state a fresh read reports.
     if (tracked.hasWaitingReplies(id)) {
-      await new Promise(resolve => setTimeout(resolve, 250));
-      fleet.invalidate();
       await resumeReplies({ paseo: fleet.paseo }, id);
+      // A status event can precede the state a fresh read reports.
+      if (tracked.hasWaitingReplies(id)) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        fleet.invalidate();
+        await resumeReplies({ paseo: fleet.paseo }, id);
+      }
     }
+    await mergeNotifications.resume(fleet.paseo, id);
   }
   server.handle(boardSnapshot, (input, { paseo }) => {
     if (input.fresh) fleet.invalidate();
@@ -292,8 +304,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     },
     /** Retries every queue; the poll's catch-all for transitions no event reported. */
     async resumeWaiting(): Promise<boolean> {
-      if (!tracked.hasWaitingReplies()) return false;
-      await resumeReplies({ paseo: fleet.paseo });
+      const merges = Object.values(prefs.read().pullMergeHistory).some(entry => entry.pullMerge.notification?.status === "queued");
+      if (!tracked.hasWaitingReplies() && !merges) return false;
+      if (tracked.hasWaitingReplies()) await resumeReplies({ paseo: fleet.paseo });
+      if (merges) await mergeNotifications.resume(fleet.paseo);
       return true;
     },
     /** Orca reported a change: the next read sees it. */
