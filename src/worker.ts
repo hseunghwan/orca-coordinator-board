@@ -15,6 +15,7 @@ import { serveChannel } from './channel/server'
 import { run } from './github'
 import { translator } from './i18n'
 import { createFleet, workspaceKey, type Fleet, type SessionId, type World } from './orca'
+import { noSignals, reduceSignals, type Observation } from './orca/signals'
 import { hostCli, type OrcaCli } from './orca/cli'
 import { contribute, type PullDeps } from './server/board'
 import { rpcServer } from './server/rpc'
@@ -189,15 +190,39 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       }, (error: unknown) => orca.log(`coordinator adoption failed: ${error instanceof Error ? error.message : String(error)}`))
     }, CHANGE_DEBOUNCE_MS)
   }
-  orca.events.on('agent.status.changed', changed)
-  orca.events.on('workspace.removed', changed)
+  // Paseo drains its queues from turn, permission, close and archive hooks; Orca reports state changes.
+  let signalState = noSignals
+  function observe(observation: Observation): void {
+    const { state, signals } = reduceSignals(signalState, observation)
+    signalState = state
+    for (const signal of signals) {
+      void board.signal(signal).then(changed, (error: unknown) => orca.log(`queued reply check failed: ${error instanceof Error ? error.message : String(error)}`))
+    }
+  }
+  orca.events.on('agent.status.changed', (event) => {
+    changed()
+    const world = fleet.peek()
+    const session = world && [...world.sessions.values()].find((s) => s.paneKey === event.paneKey || (!!event.terminalId && s.handle === event.terminalId))
+    if (session) observe({ kind: 'status', session: session.id, state: event.state })
+  })
+  orca.events.on('workspace.removed', (event) => {
+    changed()
+    const world = fleet.peek()
+    if (!world) return
+    const key = workspaceKey({ id: event.workspaceId, path: event.path })
+    const gone = [...world.workspaces.values()].filter((w) => w.id === event.workspaceId || w.listId === event.workspaceListId || (key && workspaceKey(w) === key))
+    observe({ kind: 'workspace-removed', sessions: [...world.sessions.values()].filter((s) => gone.some((w) => w.id === s.worktree)).map((s) => s.id) })
+  })
 
   let seen: string | null = null
   async function poll(): Promise<void> {
     try {
-      const now = fingerprint(await fleet.view({ maxAgeMs: 0 }))
+      const world = await fleet.view({ maxAgeMs: 0 })
+      const now = fingerprint(world)
       if (seen !== null && now !== seen) changed()
       seen = now
+      observe({ kind: 'world', world })
+      void board.resumeWaiting().then((checked) => { if (checked) changed() }, (error: unknown) => orca.log(`queued reply check failed: ${error instanceof Error ? error.message : String(error)}`))
     } catch {
       // updateStatus reports the failure.
     }

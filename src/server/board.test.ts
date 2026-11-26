@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -20,11 +20,11 @@ function board() {
   const handlers = new Map<string, (input: unknown) => Promise<unknown>>()
   const live = contribute(rpcServer((name, fn) => handlers.set(name, fn), fleet.paseo), fleet, dir, fixturePulls)
   const request = (name: string, input: unknown = {}) => handlers.get(name)!(input) as Promise<any>
-  return { request, calls, live }
+  return { request, calls, live, dir }
 }
 
 test('a selected project shows its sessions in Paseo lanes, with a plain-text question as a human decision', async () => {
-  const { request } = board()
+  const { request, dir } = board()
   expect(await request('board.readiness')).toEqual({ configured: false, coordinator: null, decisionTitles: [] })
   await request('board.scope', { kind: 'project', projectId: APP, enabled: true })
   const snap = await request('board.snapshot', { fresh: true })
@@ -46,7 +46,14 @@ test('a selected project shows its sessions in Paseo lanes, with a plain-text qu
   expect(snap.projects.map((p: any) => [p.title, p.selected, !!p.icon])).toEqual([['app', true, true], ['site', false, false], ['Notes', false, false]])
   expect(snap.pullRequests.items.map((pr: any) => [pr.repo, pr.number, pr.lane])).toEqual([['acme/app', 7, 'review']])
   expect(await request('board.decision-count')).toEqual({ count: 5 })
-  expect((await request('board.readiness')).decisionTitles).toEqual(['Ask about the release', 'Delete build cache', 'Pick a layout'])
+  expect((await request('board.readiness')).decisionTitles).toEqual([])
+  writeFileSync(join(dir, 'tracked-decisions.json'), JSON.stringify({ version: 1, items: [
+    { source: 'ops', projectId: APP, id: 'later', title: 'Pick a launch week', urgency: 'week' },
+    { source: 'ops', projectId: APP, id: 'now', title: 'Approve the release', dueAt: '2000-01-01T00:00:00Z' },
+    { source: 'ops', projectId: 'elsewhere', id: 'hidden', title: 'Not this project' }
+  ] }))
+  expect((await request('board.readiness')).decisionTitles).toEqual(['Approve the release', 'Pick a launch week'])
+  expect((await request('board.snapshot', { fresh: true })).trackedDecisions.items.map((i: any) => i.title)).toEqual(['Pick a launch week', 'Approve the release'])
 })
 
 test('closed, working and waiting sessions are never read; a read is kept while its session is unchanged, a failed one is not', async () => {

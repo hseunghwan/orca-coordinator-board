@@ -1,6 +1,6 @@
 // Ported from paseo-coordinator-board test/clarification-routing.test.ts and the session parts of
 // test/clarification-integration.test.ts @ 2e9d128, onto a fake Orca behind the real Fleet. Routing
-// assertions are Paseo's. Sends to a coordinator are refused here until the coordinator phase.
+// assertions are Paseo's. Orca has no permission request ids, so a new request is a new updatedAt.
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -58,7 +58,7 @@ test('a question about a session card reaches that session, marked, with the ori
   expect(f.orca.writes).toHaveLength(1)
 })
 
-test('permission explanations would go to the coordinator, never the session waiting for consent; that waits for the coordinator phase', async () => {
+test('permission explanations reach the coordinator, never the session waiting for consent', async () => {
   const f = fixture()
   f.orca.find('worker')!.state = 'blocked'
   const live = (await f.sdk.agents.ref('worker').refresh())!.agent
@@ -69,9 +69,17 @@ test('permission explanations would go to the coordinator, never the session wai
   expect(sessionClarificationCard({ ...f.worker, permissionVersion: undefined })).toBeNull()
   expect(clarificationRecipient(card, f.view)).toBe('coordinator')
   expect(clarificationRecipient(card, { ...f.view, coordinator: 'worker' })).toBeNull()
-  await expect(f.sender.send(f.sdk, { ...f.request, card, recipientId: 'coordinator' })).rejects.toThrow('코디네이터')
-  expect(f.orca.writes).toEqual([])
-  expect(f.prefs.read().clarifications).toEqual({})
+  const input = { ...f.request, card, recipientId: 'coordinator' }
+  await f.sender.send(f.sdk, input)
+  expect(f.calls().map(c => c.id)).toEqual(['coordinator'])
+  expect(f.calls()[0].text).toContain('Export draft')
+  expect(f.calls()[0].text).toContain('"sourceSessionId":"worker"')
+  expect(f.orca.find('worker')!.state).toBe('blocked')
+  expect(f.prefs.read().answers).toEqual({})
+  expect(f.prefs.read().decisionReceipts).toEqual({})
+  f.orca.find('worker')!.updatedAt += 1
+  await expect(f.sender.send(f.sdk, { ...input, requestKey: 'fixture-new-clarification' })).rejects.toThrow()
+  expect(f.calls()).toHaveLength(1)
 })
 
 test('PR questions require a current review item and select a single verified workspace or the coordinator', () => {

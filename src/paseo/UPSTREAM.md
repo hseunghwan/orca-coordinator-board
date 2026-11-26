@@ -39,6 +39,9 @@ Commit: `2e9d12884e8f1c312a956e47628a554c6874ce5a`
 - `shared/workspace-pull.ts`
 - `server/notes.ts`
 - `server/preferences.ts`
+- `server/project-decision-sources.ts`
+- `server/reply-photos.ts`
+- `server/session-photos.ts`
 - `server/snapshot-reads.ts`
 - `client/decision-edit-order.ts`
 - `client/decision-priority.ts`
@@ -77,6 +80,8 @@ Commit: `2e9d12884e8f1c312a956e47628a554c6874ce5a`
 - `test/matrix.test.ts`
 - `test/merge-notification-label.test.ts`
 - `test/model.test.ts`
+- `test/project-decision-sources.test.ts`
+- `test/session-photos.test.ts`
 - `test/remote-running.test.ts`
 - `test/route-options.test.ts`
 - `test/send-shortcut.test.ts`
