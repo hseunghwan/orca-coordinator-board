@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "coordinator-board",
   "name": "Coordinator Board",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Group agent sessions by project and answer the ones waiting for you, from a sidebar panel or a full-width dashboard tab.",
   "engines": {
     "orca": ">=1.4.259"

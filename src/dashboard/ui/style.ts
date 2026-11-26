@@ -56,6 +56,10 @@ html.dark .surface{border-color:var(--border)}
 .btn:disabled{opacity:.5;pointer-events:none}
 .btn svg{width:16px;height:16px;flex:none}
 .btn-sm{height:32px;padding:0 12px;gap:6px}
+.btn-icon{width:36px;padding:0}
+.drop-zone{display:flex;flex-direction:column;gap:6px;border-radius:var(--r-md)}
+.drop-zone[data-dragging=true]{outline:2px dashed var(--ring);outline-offset:2px}
+.thumb{width:56px;height:56px;flex:none;object-fit:contain;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--muted)}
 .btn-xs{height:24px;padding:0 8px;gap:4px;font-size:12px}
 .btn-primary{background:var(--primary);color:var(--primary-fg)}
 .btn-primary:hover{background:color-mix(in oklab,var(--primary) 90%,transparent)}
@@ -102,6 +106,10 @@ html.dark .select{background:color-mix(in oklab,var(--input) 30%,transparent)}
 .send-wrap{position:relative;display:inline-flex;max-width:100%}
 .tooltip{position:absolute;bottom:100%;left:0;z-index:90;margin-bottom:6px;padding:6px 12px;border-radius:var(--r-md);background:var(--fg);color:var(--bg);font-size:12px;line-height:16px;white-space:nowrap;pointer-events:none}
 .tooltip[hidden]{display:none}
+.progress{height:8px;overflow:hidden;border-radius:9999px;background:color-mix(in oklab,var(--primary) 20%,transparent)}
+.progress>div{height:100%;border-radius:9999px;transition:width .3s ease-out}
+.dialog{width:min(512px,calc(100vw - 32px));max-height:calc(100vh - 32px);padding:24px;border:1px solid var(--border);border-radius:var(--r-xl);background:var(--bg);color:var(--fg);box-shadow:0 10px 15px -3px rgb(0 0 0/.1),0 4px 6px -4px rgb(0 0 0/.1)}
+.dialog::backdrop{background:rgb(0 0 0/.5)}
 .thread{display:flex;flex-direction:column;gap:7px;width:100%;padding:8px 12px;border-radius:var(--r-md);background:var(--muted)}
 .link{color:var(--link);text-decoration:underline;text-underline-offset:2px;cursor:pointer;background:none;border:0;padding:0;font:inherit}
 .chip{display:inline-flex;align-items:center;align-self:flex-start;gap:2px;flex:none;height:28px;max-width:100%;padding:0 8px 0 12px;border-radius:9999px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-size:12px;font-weight:500;line-height:16px;white-space:nowrap;cursor:pointer;box-shadow:var(--shadow-xs);outline:none}

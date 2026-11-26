@@ -5,9 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { z } from "zod";
 import { projectIconSources } from "../paseo/client/project-icon";
 import type { Snapshot } from "../paseo/client/model";
-import { boardScope, boardSnapshot } from "../paseo/shared/contract";
+import { boardScope, boardSnapshot, saveNote, setReporting } from "../paseo/shared/contract";
 import { boardReadiness, type BoardReadiness } from "../paseo/shared/readiness";
 import { BoardView } from "./board";
+import { EditNote, NoteEditor } from "./note-editor";
 import { call, openSession } from "./rpc";
 import { ProjectIconSources } from "./ui/controls";
 import { BoardLanguageProvider, useBoardLanguage } from "./ui/language";
@@ -44,6 +45,7 @@ function HostBoard() {
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [changing, setChanging] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
 
   const refresh = useCallback(async (reason: RefreshReason) => {
     if (!active.current || (pending.current && reason === "poll")) return;
@@ -86,6 +88,7 @@ function HostBoard() {
       await call(boardScope, input);
       setSnapshot(null);
       setReadiness(null);
+      setEditing(null);
       await refresh("manual");
     } catch (e) {
       setActionError(message(e));
@@ -102,12 +105,16 @@ function HostBoard() {
   }
 
   const icons = useMemo(() => projectIconSources(snapshot?.projects ?? []), [snapshot?.projects]);
-  return <ProjectIconSources.Provider value={icons}>
+  const session = editing ? snapshot?.sessions.find(row => row.id === editing) : undefined;
+  return <ProjectIconSources.Provider value={icons}><EditNote.Provider value={setEditing}>
     <BoardView snapshot={snapshot} readiness={readiness} hostLabel={t("이 기기", "This device")} compact={compact}
       error={actionError || error} loading={loading} updatedAt={updatedAt} changing={changing}
       onRefresh={() => void refresh("manual")} onProject={(projectId, enabled) => void updateScope({ kind: "project", projectId, enabled })}
       onCoordinator={sessionId => void updateScope({ kind: "coordinator", sessionId })} onOpen={open} />
-  </ProjectIconSources.Provider>;
+    {session && <NoteEditor key={session.id} session={session} note={snapshot?.notes[session.id]} onClose={() => setEditing(null)}
+      onSave={async input => { const result = await call(saveNote, input); await refresh("manual"); return result; }}
+      onSetReporting={async enabled => { const result = await call(setReporting, { sessionId: session.id, enabled }); await refresh("manual"); return result.ok; }} />}
+  </EditNote.Provider></ProjectIconSources.Provider>;
 }
 
 export function App() {

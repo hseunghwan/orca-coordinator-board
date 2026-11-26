@@ -57,6 +57,9 @@ export function fixtureSnapshot() {
         answer: "네, 넣어 주세요. 오류 코드마다 다시 시도해도 되는지 한 줄씩 적어 주세요.\n\n- 4xx는 다시 시도하지 않는다고 적어 주세요.\n- 5xx는 지수 백오프로 세 번까지라고 적어 주세요.\n- 429는 Retry-After 헤더를 따르라고 적어 주세요.",
         response: "표를 넣었습니다. 오류 코드 14개에 재시도 여부와 예시 응답을 붙였고, 문서 빌드를 통과했습니다.",
         origin: { sessionId: "s-refund", cardId: "s-refund", revision: "r7", questions: [] } },
+      { key: "h-photos", status: "sent", title: "결제 실패 화면 문구를 바꿀까요?", projectId: "billing", at: minutes(35),
+        recipientId: "s-webhook", recipientTitle: "웹훅 안정화", recipientState: "idle", canOpen: true, imageCount: 2, localPhotos: true,
+        answer: "첨부한 두 화면처럼 버튼 문구를 \"다시 결제\"로 바꿔 주세요." },
       { key: "h-captions", status: "pending", title: "자막 오탈자 사전에 고유명사를 더할까요?", projectId: "editor", at: minutes(130),
         recipientId: "s-captions", answer: "고유명사 목록은 제품 팀 문서에서 가져와 주세요." },
       { key: "h-links", status: "unsent", title: "깨진 외부 링크를 지울까요?", projectId: "docs", at: minutes(200),
@@ -128,15 +131,62 @@ export function fixtureLedger() {
   };
 }
 
+// Sessions the link picker lists: a few from the unmanaged mobile project, one already linked and one whose session is gone.
+export function fixtureSessionLinks() {
+  const entry = (sessionId: string, title: string, sourceProjectId: string, workspaceTitle: string, targetProjectId: string | null = null, available = true) => {
+    const source = projects.find(p => p.id === sourceProjectId)!;
+    return { sessionId, title, sourceProjectId, sourceProjectTitle: source.title, workspaceTitle, targetProjectId, available };
+  };
+  return [
+    entry("m-sync", "오프라인 동기화", "mobile", "feat-sync"),
+    entry("m-push", "푸시 알림 문구", "mobile", "main", "billing"),
+    entry("m-crash", "충돌 보고 정리", "mobile", "fix-crash"),
+    entry("m-gone", "예전 빌드 실험", "mobile", "exp-build", "editor", false),
+    ...Array.from({ length: 11 }, (_, i) => entry(`m-ui-${i + 1}`, `화면 다듬기 ${i + 1}`, "mobile", `ui-${i + 1}`)),
+    entry("s-refund", "환불 API 문서", "billing", "환불-api-문서"),
+  ];
+}
+
 // The coordinator joins the board only when a harness page asks for one.
 export const coordinatorSession = { ...base("s-coord", "billing", "코디네이터"), lane: "idle" as const, status: "idle", activityAt: minutes(2), detail: "다음 요청 대기" };
 
 export function fixtureOperations() {
+  const later = (n: number) => new Date(Date.now() + n * 60_000).toISOString();
+  const auto = { id: "auto", label: "자동 승인" };
   return {
-    catalog: [{ provider: "claude", model: "opus", label: "Claude Opus", efforts: ["high", "xhigh"], isDefault: true, coordinatorMode: { id: "auto", label: "자동 승인" } }],
-    providers: [{ id: "claude", label: "Claude Code", available: true, included: true, status: "ready", modelCount: 1 }],
-    coordinatorMode: { id: "auto", label: "자동 승인" },
-    routing: {},
+    catalog: [
+      { provider: "claude", model: "opus", label: "Claude Opus", efforts: ["high", "xhigh"], isDefault: true, coordinatorMode: auto },
+      { provider: "claude", model: "sonnet", label: "Claude Sonnet", efforts: ["medium", "high"], isDefault: false, coordinatorMode: auto },
+      { provider: "claude", model: "haiku", label: "Claude Haiku", efforts: [], isDefault: false, coordinatorMode: auto },
+      { provider: "codex", model: "gpt-5.5", label: "GPT-5.5", efforts: ["low", "medium", "high"], isDefault: true, coordinatorMode: { id: "auto-review", label: "자동 검토" } },
+      { provider: "codex", model: "gpt-5.5-mini", label: "GPT-5.5 mini", efforts: ["low", "medium"], isDefault: false, coordinatorMode: { id: "auto-review", label: "자동 검토" } },
+      { provider: "opencode", model: "qwen-coder", label: "Qwen Coder", efforts: [], isDefault: true, coordinatorMode: null },
+    ],
+    providers: [
+      { id: "claude", label: "Claude Code", available: true, included: true, status: "ready", modelCount: 3,
+        workerModes: [{ id: "default", label: "기본" }, { id: "auto", label: "자동 승인" }, { id: "bypassPermissions", label: "권한 건너뛰기" }] },
+      { id: "codex", label: "Codex", available: true, included: true, status: "ready", modelCount: 2,
+        workerModes: [{ id: "read-only", label: "읽기 전용" }, { id: "auto-review", label: "자동 검토" }, { id: "full-access", label: "Full Access" }] },
+      { id: "opencode", label: "OpenCode", available: true, included: false, status: "ready", modelCount: null },
+      { id: "gemini", label: "Gemini CLI", available: false, included: true, status: "unavailable", modelCount: null },
+    ],
+    workerModeOverrides: { codex: "full-access" } as Record<string, string>,
+    usage: [
+      { providerId: "claude", label: "Claude Code", plan: "Max", fetchedAt: minutes(3), status: "available",
+        windows: [{ id: "5h", label: "5시간 한도", remainingPct: 62, resetsAt: later(140), summary: true },
+          { id: "week", label: "주간 한도", remainingPct: 8, resetsAt: later(60 * 50), summary: false }], balances: [] },
+      { providerId: "codex", label: "Codex", plan: "Pro", fetchedAt: minutes(120), status: "available",
+        windows: [{ id: "5h", label: "5시간 한도", remainingPct: 40, resetsAt: minutes(10), summary: true },
+          { id: "week", label: "주간 한도", remainingPct: 71, resetsAt: later(60 * 90), summary: false }], balances: [] },
+      { providerId: "gemini", label: "Gemini CLI", plan: null, fetchedAt: null, status: "error", issue: "login", windows: [], balances: [] },
+    ],
+    displayUsage: [
+      { providerId: "opencode", label: "OpenCode", plan: null, fetchedAt: minutes(5), status: "available", windows: [],
+        balances: [{ id: "credit", label: "크레딧", remaining: 18.5, limit: 50, unit: "USD", resetsAt: null }] },
+    ],
+    usageRouting: true,
+    coordinatorMode: auto,
+    routing: { B: [{ provider: "claude", model: "sonnet", effort: "high" }, { provider: "codex", model: "gpt-5.5", effort: "medium" }, { provider: "gemini", model: "pro", effort: null }] } as Record<string, { provider: string; model: string; effort: string | null }[]>,
     revision: 1,
     workspaces: [
       { id: "w-billing-main", projectId: "billing", title: "main", focused: true },

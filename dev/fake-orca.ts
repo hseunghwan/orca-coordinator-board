@@ -5,18 +5,25 @@
 // coord=1 starts with a coordinator; fail=1 makes coordinator requests and setup fail.
 // ledger=1 adds the phase 5 ledger records; resolve=<status> answers every ledger reply with that status,
 // merge=<blocked|unconfirmed|changed> answers the merge preview or confirm that way, pull=<OPEN|CLOSED|MERGED|UNKNOWN>
-// is the lifecycle a merge record reads, repo=fail makes repository settings fail.
+// is the lifecycle a merge record reads, repo=fail makes repository settings fail, ops=conflict makes every
+// provider, usage and routing save fail with a revision conflict, photo=fail makes stored reply photos unreadable,
+// links=fail makes the session link list fail and links=conflict makes every link change fail. hosts=1 answers
+// board.hosts with three hosts and hosts=fail fails it; without it the method is unknown, like an older worker.
+// note=conflict makes the next note save find a newer note, note=fail makes note saves and report toggles fail.
 import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
-import { boardSnapshot } from "../src/paseo/shared/contract";
+import { boardSnapshot, saveNote, setReporting } from "../src/paseo/shared/contract";
+import { readReplyPhoto } from "../src/paseo/shared/reply-history";
 import { confirmPullRequestMerge, previewPullRequestMerge, readPullLifecycle, setProjectRepository } from "../src/paseo/shared/prs";
 import { cancelQueuedReply, resolveTrackedDecision } from "../src/paseo/shared/tracked-decisions";
 import { sendDecision } from "../src/paseo/shared/decision-actions";
-import { askDigest, requestWork } from "../src/paseo/shared/operations";
+import { askDigest, requestWork, setProviderInclusion, setWorkerMode, updateRouting } from "../src/paseo/shared/operations";
+import { setUsageRouting } from "../src/paseo/shared/usage-routing";
 import { requestRecommendation } from "../src/paseo/shared/recommendation";
 import { startCoordinator } from "../src/dashboard/rpc";
-import { coordinatorSession, fixtureLedger, fixtureOperations, fixtureSnapshot } from "./fixture";
+import { coordinatorSession, fixtureLedger, fixtureOperations, fixtureSessionLinks, fixtureSnapshot } from "./fixture";
+import { linkSession } from "../src/paseo/shared/session-links";
 
 const params = new URLSearchParams(location.search);
 const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -48,6 +55,10 @@ if (params.get("ledger")) {
 const resolveAs = params.get("resolve");
 const mergeAs = params.get("merge");
 let factReplies = false;
+let conflicted = false;
+const ops = fixtureOperations();
+const sessionLinks = fixtureSessionLinks();
+const stale = (expected: number) => { if (params.get("ops") === "conflict" || expected !== ops.revision) throw new Error("revision_conflict: 다른 곳에서 설정이 바뀌었습니다. 새로 고친 뒤 다시 저장해 주세요."); ops.revision++; };
 const sha = (seed: string) => seed.repeat(40).slice(0, 40);
 const failing = !!params.get("fail");
 const refuse = () => { throw Object.assign(new Error("delivery_uncertain: 코디네이터 세션이 작업 중이라 보내지 않았습니다."), { code: "delivery_uncertain" }); };
@@ -72,7 +83,38 @@ const handlers: Record<string, (input: any) => unknown> = {
     }
     return { ok: true };
   },
-  "board.operations": () => fixtureOperations(),
+  "board.operations": () => structuredClone(ops),
+  "board.set-worker-mode": async (raw: unknown) => {
+    const input = setWorkerMode.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    if (input.modeId === null) delete ops.workerModeOverrides[input.provider];
+    else ops.workerModeOverrides[input.provider] = input.modeId;
+    return { ok: true };
+  },
+  "board.set-provider-inclusion": async (raw: unknown) => {
+    const input = setProviderInclusion.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    const provider = ops.providers.find(row => row.id === input.provider);
+    if (provider) provider.included = input.included;
+    return { ok: true };
+  },
+  "board.set-usage-routing": async (raw: unknown) => {
+    const input = setUsageRouting.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    ops.usageRouting = input.enabled;
+    return { ok: true };
+  },
+  "board.update-routing": async (raw: unknown) => {
+    const input = updateRouting.input.parse(raw);
+    await settle();
+    stale(input.expectedRevision);
+    if (input.candidates.length) ops.routing[input.grade] = input.candidates;
+    else delete ops.routing[input.grade];
+    return { ok: true };
+  },
   "board.setup-coordinator": async (raw: unknown) => {
     const input = startCoordinator.input.parse(raw);
     await settle();
@@ -162,6 +204,58 @@ const handlers: Record<string, (input: any) => unknown> = {
     if (project) Object.assign(project, { mode: input.mode, repo: input.repo ?? (input.mode === "off" ? project.repo : null), status: input.mode === "off" ? "off" : "ok" });
     return { ok: true };
   },
+  "board.read-reply-photo": async (raw: unknown) => {
+    const input = readReplyPhoto.input.parse(raw);
+    await settle();
+    if (params.get("photo") === "fail") throw new Error("unavailable");
+    const data = (await photo(input.index + 1, 640, 360)).split(",")[1];
+    return { image: { mimeType: "image/png", data } };
+  },
+  "board.session-links": async () => {
+    await settle();
+    if (params.get("links") === "fail") throw new Error("unavailable");
+    return { sessions: structuredClone(sessionLinks) };
+  },
+  "board.link-session": async (raw: unknown) => {
+    const input = linkSession.input.parse(raw);
+    await settle();
+    const entry = sessionLinks.find(row => row.sessionId === input.sessionId);
+    if (params.get("links") === "conflict" || !entry || entry.targetProjectId !== input.expectedTargetProjectId) throw new Error("conflict");
+    entry.targetProjectId = input.targetProjectId;
+    return { ok: true };
+  },
+  ...(params.get("hosts") && { "board.hosts": async () => {
+    await settle();
+    if (params.get("hosts") === "fail") throw new Error("unavailable");
+    return { hosts: [
+      { id: "local", label: "작업용 데스크톱", status: "online", current: true },
+      { id: "laptop", label: "노트북", status: "offline", current: false },
+      { id: "build", label: "빌드 서버", status: "connecting", current: false },
+    ] };
+  } }),
+  "board.save-note": async (raw: unknown) => {
+    const input = saveNote.input.parse(raw);
+    await settle();
+    if (params.get("note") === "fail") throw new Error("unavailable");
+    const current = snapshot.notes[input.sessionId];
+    if (params.get("note") === "conflict" && !conflicted) {
+      conflicted = true;
+      snapshot.notes[input.sessionId] = { sessionId: input.sessionId, kind: "review", origin: "person", text: "다른 창에서 남긴 확인 요청입니다.", revision: (current?.revision ?? 0) + 1 };
+      return { ok: false, conflict: true };
+    }
+    if ((current?.revision ?? 0) !== input.expectedRevision) return { ok: false, conflict: true };
+    if (input.kind === "clear") delete snapshot.notes[input.sessionId];
+    else snapshot.notes[input.sessionId] = { sessionId: input.sessionId, kind: input.kind, origin: "person", text: input.text, revision: input.expectedRevision + 1, evidenceId: input.evidenceId };
+    return { ok: true, conflict: false };
+  },
+  "board.set-reporting": async (raw: unknown) => {
+    const input = setReporting.input.parse(raw);
+    await settle();
+    if (params.get("note") === "fail") throw new Error("unavailable");
+    const session = snapshot.sessions.find(row => row.id === input.sessionId);
+    if (session) session.reporting = input.enabled || undefined;
+    return { ok: !!session };
+  },
   "board.fact-reply-settings": (raw: unknown) => { factReplySettings.input.parse(raw); return { enabled: factReplies }; },
   "board.set-fact-auto-reply": async (raw: unknown) => {
     factReplies = setFactAutoReply.input.parse(raw).enabled;
@@ -187,7 +281,7 @@ const handlers: Record<string, (input: any) => unknown> = {
     await settle();
     const messageId = crypto.randomUUID();
     snapshot.clarifications = [...snapshot.clarifications ?? [], { cardKey: clarificationKey(input.card), messageId, recipientId: input.recipientId,
-      question: input.question, at: new Date().toISOString(), status: "sent" }];
+      question: input.question, at: new Date().toISOString(), status: "sent", imageCount: input.images?.length || undefined }];
     return { ok: true, recipientId: input.recipientId, messageId };
   },
 };
@@ -215,19 +309,49 @@ const disposable = { dispose() {} };
   on: () => disposable,
 };
 
+async function photo(n: number, width = 320, height = 200) {
+  const canvas = Object.assign(document.createElement("canvas"), { width, height });
+  const context = canvas.getContext("2d")!;
+  const gradient = context.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, ["#4f46e5", "#0d9488", "#d97706", "#db2777"][n % 4]);
+  gradient.addColorStop(1, "#e5e7eb");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = "#fff";
+  context.font = `600 ${Math.round(height / 3)}px sans-serif`;
+  context.fillText(String(n), width / 2 - height / 10, height / 2 + height / 8);
+  return canvas.toDataURL("image/png");
+}
+// "+<n>" attaches n generated screenshots to the first visible attach button, "+<n>/<k>" to the k-th,
+// "+bad" attaches a text file.
+async function attach(spec: string) {
+  const [count, nth] = spec.split("/");
+  const input = Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))
+    .filter(field => (field.nextElementSibling?.querySelector("button") as HTMLElement | null)?.offsetParent !== null)[Number(nth ?? 1) - 1];
+  if (!input) return;
+  const files = count === "bad" ? [new File(["notes"], "메모.txt", { type: "text/plain" })]
+    : await Promise.all(Array.from({ length: Number(count) }, async (_, i) =>
+      new File([await (await fetch(await photo(i + 1))).blob()], `화면-${i + 1}.png`, { type: "image/png" })));
+  const transfer = new DataTransfer();
+  files.forEach(file => transfer.items.add(file));
+  input.files = transfer.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
 // Every card stays mounted while hidden, so a press goes to the first visible button or label with that text.
 const presses = params.get("press")?.split(",") ?? [];
 // "@<label>=<text>" types into the visible text box with that accessible label instead of pressing.
 function type(label: string, text: string) {
-  const box = Array.from(document.querySelectorAll<HTMLTextAreaElement>("textarea"))
+  const box = Array.from(document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>("textarea, input"))
     .find(area => area.offsetParent !== null && area.getAttribute("aria-label")?.startsWith(label));
   if (!box) return;
-  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
+  const prototype = box instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(box, text);
   box.dispatchEvent(new Event("input", { bubbles: true }));
 }
 async function pressAll() {
   for (const label of presses) {
     await new Promise(resolve => setTimeout(resolve, 450));
+    if (label.startsWith("+")) { await attach(label.slice(1)); continue; }
     if (label.startsWith("@")) { const [name, ...text] = label.slice(1).split("="); type(name, text.join("=")); continue; }
     // "#<name>" matches the start of the accessible name, for buttons whose text starts with an icon.
     const named = label.startsWith("#") ? label.slice(1) : null;
