@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { OrcaCli, WriteResult } from './cli'
-import { agentRead, readMarked } from './conversation'
+import { agentRead, photoLines, readMarked } from './conversation'
 import type { SessionId, SessionRecord, TerminalHandle, World, WorkspaceRecord } from './view'
 
 /**
@@ -29,6 +29,8 @@ export interface Delivery {
   whenWorking: 'refuse'
   /** The session's updatedAt the caller checked; any other value refuses with "changed". */
   unchangedSince?: number
+  /** Absolute paths of image files the board saved for this message; each is named on a line after the marker. */
+  photos?: readonly string[]
 }
 
 export type Route = 'terminal-input' | 'mail'
@@ -51,7 +53,8 @@ const KEEP_RECORDS = 500
 /** How much of the head must agree; a terminal transcript keeps about 1 200 characters of an entry. */
 const MATCH_CHARS = 400
 
-export const stamp = (text: string, messageId: string) => `[cb:${messageId}]\n${text}`
+export const stamp = (text: string, messageId: string, photos: readonly string[] = []) =>
+  `[cb:${messageId}]\n${photos.length ? photoLines(photos) + '\n\n' : ''}${text}`
 
 const squash = (text: string) => text.replace(/\r\n/g, '\n').trim()
 
@@ -203,7 +206,7 @@ export function createDeliver(deps: DeliverDeps) {
   }
 
   async function deliverNow(d: Delivery): Promise<DeliveryOutcome> {
-    const text = stamp(d.text, d.messageId)
+    const text = stamp(d.text, d.messageId, d.photos)
     const digest = createHash('sha256').update(text).digest('hex')
     const earlier = outbox.get(d.messageId)
     if (earlier) {

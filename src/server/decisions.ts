@@ -1,9 +1,10 @@
 // Adapted from paseo-coordinator-board server/decisions.ts @ 2e9d128. Sending goes through fleet.deliver
 // instead of agent.send: a refused send leaves nothing behind and drops its pending receipt, and a
 // pending receipt is settled by fleet.reconcile, which never sends again. A coordinate action waits for
-// an idle coordinator, as Orca cannot steer a running turn. Photos and board facts come in later phases
-// and are refused or left out here.
+// an idle coordinator, as Orca cannot steer a running turn. Photos are saved as Paseo saves them and
+// named by path in the message (./photo-files.ts), as Orca cannot attach them.
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, SessionId } from "../orca";
 import type { Decision, DecisionInput } from "../paseo/shared/decision-actions";
 import type { Note, SessionRow } from "../paseo/shared/contract";
@@ -14,6 +15,9 @@ import { restoreClarifiedDecision } from "./clarifications";
 import { sessionReplyMessage } from "./decision-message";
 import { canReceiveBoardInput, discoverSessions } from "./discovery";
 import { isCurrentMembership, managedSessions } from "./session-links";
+import { SessionPhotoStore } from "../paseo/server/session-photos";
+import { describePhotos, photoReceiptId } from "../paseo/server/reply-photos";
+import { photoFiles } from "./photo-files";
 
 type Sdk = PluginHandlerContext["paseo"];
 type Receipt = { ok: true; recipientId: string; messageId: string };
@@ -21,7 +25,6 @@ type Sending = Pick<Fleet, "deliver" | "reconcile">;
 const changed = "결정 카드 또는 수신자가 바뀌었습니다. 보드를 새로 고쳐 주세요.";
 const blocked = "이 세션의 현재 상태에서는 보낼 수 없습니다. 원래 세션에서 권한 요청과 작업 상태를 확인하세요.";
 const uncertain = "전송 결과를 확인하지 못했습니다. 같은 요청을 다시 확인하거나 수신 세션을 열어 주세요.";
-export const noPhotos = "사진 첨부는 아직 보낼 수 없습니다. 글로만 보내 주세요.";
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export function decorateDecision(row: SessionRow, note: Note | undefined, prefs: Preferences, evidence?: Evidence) {
@@ -73,12 +76,19 @@ function messageUuid(key: string) {
 export class DecisionSender {
   private active = new Map<string, { fingerprint: string; result: Promise<Receipt> }>();
   private sendingCards = new Set<string>();
-  constructor(private store: PreferenceStore, private notes: NoteStore, private reader: ConversationReader, private fleet: Sending) {}
+  private photoDirectory: string;
+  private sessionPhotos: SessionPhotoStore;
+  constructor(private store: PreferenceStore, private notes: NoteStore, private reader: ConversationReader, private fleet: Sending) {
+    this.photoDirectory = join(store.directory, "session-photos");
+    this.sessionPhotos = new SessionPhotoStore(this.photoDirectory);
+  }
 
   send(paseo: Sdk, input: DecisionInput): Promise<Receipt> {
-    if (input.images?.length) return Promise.reject(Error(noPhotos));
     const messageId = messageUuid(input.requestKey);
-    const fingerprint = hash([input.projectId, input.sessionId, input.recipientId, input.version, input.action, input.text]);
+    const photos = describePhotos(input.images);
+    const content = [input.projectId, input.sessionId, input.recipientId, input.version, input.action, input.text];
+    // Keep text-only keys compatible with receipts written before photo support.
+    const fingerprint = hash(photos.length ? [...content, photos] : content);
     const running = this.active.get(messageId);
     if (running) {
       if (running.fingerprint === fingerprint) return running.result;
@@ -97,6 +107,7 @@ export class DecisionSender {
   private async deliver(paseo: Sdk, input: DecisionInput, messageId: string, fingerprint: string): Promise<Receipt> {
     const scope = this.store.read();
     requireScope(scope, input);
+    messageId = photoReceiptId(messageId, !!input.images?.length, scope.decisionReceipts);
     const requestId = messageId;
     let earlier = scope.decisionReceipts[messageId];
     if (!earlier) {
@@ -162,18 +173,22 @@ export class DecisionSender {
       restoreClarifiedDecision(row, note, current, evidence);
       if (!row.decision || row.decision.source === "permission" || row.decision.version !== input.version) throw Error(changed);
       text = sessionReplyMessage(row, input);
+      if (input.images?.length) this.sessionPhotos.save(input.recipientId, messageId, input.images);
       current.decisionReceipts[messageId] = {
+        ...(input.images?.length ? {messageId} : {}),
         messageHash: hash(text),
         activity: { origin: { sessionId: row.id, cardId: row.id, revision: input.version, questions: [{ id: input.version }] },
           title: row.decision.question || row.title, at: new Date().toISOString(), projectId: input.projectId,
+          ...(input.images?.length ? {imageCount:input.images.length} : {}),
           answer: input.text, recipientId: input.recipientId, coordinator: input.action === "coordinate" },
         fingerprint, sessionId: row.id, version: input.version, evidenceId: evidence.id, status: "pending", beforeAnswer: current.answers[row.id]?.version, ...(note?.kind === "question" ? { noteRevision: note.revision } : {}),
       };
     });
     let outcome;
     try {
+      const photos = input.images?.length ? photoFiles(this.photoDirectory, input.recipientId, messageId, input.images) : [];
       outcome = await this.fleet.deliver({ messageId, to: input.recipientId as SessionId, text, subject: row.title,
-        from: { kind: "person" }, whenWorking: "refuse", unchangedSince: recipientAt });
+        from: { kind: "person" }, whenWorking: "refuse", unchangedSince: recipientAt, photos });
     } catch {
       throw Error(uncertain);
     }

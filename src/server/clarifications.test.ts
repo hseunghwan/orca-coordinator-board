@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import { createCli } from '../orca/cli'
-import { readMarked } from '../orca/conversation'
+import { readMarked, unframe } from '../orca/conversation'
 import { fakeOrca } from '../orca/fixtures/fake-orca'
 import { fixturePulls } from '../orca/fixtures/load'
 import { createFleet } from '../orca'
@@ -117,11 +117,17 @@ test('a source update, revoked project, or changed recipient during refresh cann
   }
 })
 
-test('photos are refused before anything is sent', async () => {
+test('a photo goes with the question as a file path after the marker, and the receipt counts it', async () => {
   const f = fixture()
   const png = { mimeType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOYvLAHAAOLAcF4E9p3AAAAAElFTkSuQmCC' }
-  expect(() => f.sender.send(f.sdk, { ...f.request, images: [png] })).toThrow('사진')
-  expect(f.orca.writes).toEqual([])
+  const { messageId } = await f.sender.send(f.sdk, { ...f.request, images: [png] })
+  expect(messageId.startsWith('c0bdf070')).toBe(true)
+  const mail = f.calls()
+  expect(mail).toHaveLength(1)
+  expect(mail[0].text.startsWith('[Coordinator Board · 추가 질문]')).toBe(true)
+  const sentBody = unframe(f.orca.transcripts.get('worker')!.at(-1)!.text).split('\n')
+  expect(sentBody[1]).toMatch(/^\[사진 1\] .+\.png$/)
+  expect(f.prefs.read().clarifications[messageId]).toMatchObject({ status: 'sent', imageCount: 1 })
 })
 
 test('classifying an explanation as informational cannot clear the original question', async () => {

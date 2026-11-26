@@ -1,6 +1,6 @@
-// Adapted from paseo-coordinator-board server/tracked-decisions.ts @ 2e9d128: import paths, and register()
-// takes a check run on each resolve input first (the board refuses photos to a recipient, as Orca cannot
-// attach them yet). The ledger, receipts and queue are Paseo's.
+// Adapted from paseo-coordinator-board server/tracked-decisions.ts @ 2e9d128: import paths, register() takes
+// an optional check run on each resolve input first, and a send Orca refused before anything left (NotSent)
+// returns the reply to the queue instead of leaving it unconfirmed. The ledger, receipts and queue are Paseo's.
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, parse } from "node:path";

@@ -62,7 +62,17 @@ export function unframe(text: string): string {
   return lines.join('\n')
 }
 
-/** The board message a transcript user entry carries, if it starts with a marker. */
+const PHOTO_LINE = /^\[사진 \d+\] \S/
+
+/**
+ * Orca cannot attach an image to a message, so a board message names each image file on its own line
+ * right after the marker, where a cut transcript entry still keeps them, and a blank line ends them.
+ */
+export function photoLines(paths: readonly string[]): string {
+  return paths.map((path, i) => `[사진 ${i + 1}] ${path}`).join('\n')
+}
+
+/** The board message a transcript user entry carries, if it starts with a marker. The body leaves out the photo lines. */
 export function readMarked(entry: string): { messageId: string; body: string; cut: boolean } | null {
   let text = unframe(entry)
   const cut = text.endsWith(TRUNCATED)
@@ -71,7 +81,11 @@ export function readMarked(entry: string): { messageId: string; body: string; cu
   const first = (newline < 0 ? text : text.slice(0, newline)).trim()
   const marker = MARKER.exec(first)
   if (!marker) return null
-  return { messageId: marker[1].toLowerCase(), body: newline < 0 ? '' : text.slice(newline + 1), cut }
+  const lines = newline < 0 ? [] : text.slice(newline + 1).split('\n')
+  let photos = 0
+  while (photos < lines.length && PHOTO_LINE.test(lines[photos])) photos++
+  const body = photos && lines[photos] === '' ? lines.slice(photos + 1) : lines
+  return { messageId: marker[1].toLowerCase(), body: body.join('\n'), cut }
 }
 
 /**

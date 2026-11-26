@@ -1,6 +1,6 @@
 // The tracked reply queue on Orca: a busy recipient queues, a turn's end (src/orca/signals.ts) sends it once,
 // a vanished recipient stops it, and a queued reply can be canceled.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -95,11 +95,18 @@ test('a queued reply can be canceled, and stops when its recipient is gone', asy
   expect(snap.replyHistory.find((r: any) => r.title === 'Deploy window')).toMatchObject({ status: 'unsent' })
 })
 
-test('photos to a recipient are refused before anything is queued or sent', async () => {
+test('a queued photo reply goes out with the photo named by its file path', async () => {
   const f = await setup()
-  const image = { mimeType: 'image/png', data: 'iVBORw0KGgo=' }
-  await expect(f.resolve({ images: [image] })).rejects.toThrow('Photos cannot be sent yet')
-  expect(f.typed()).toEqual([])
+  const image = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOYvLAHAAOLAcF4E9p3AAAAAElFTkSuQmCC' }
+  expect(await f.resolve({ images: [image] })).toEqual({ status: 'queued' })
+  f.orca.find('coord')!.state = 'done'
+  await f.board.signal({ kind: 'turn-ended', session: 'coord' as SessionId })
+  expect(f.typed()).toHaveLength(1)
+  const lines = f.orca.transcripts.get('coord')!.at(-1)!.text.split('\n')
+  const path = /^\[사진 1\] (.+\.png)$/.exec(lines[1])![1]
+  expect(readFileSync(path).toString('base64')).toBe(image.data)
+  const snap = await f.request('board.snapshot', { fresh: true })
+  expect(snap.replyHistory.find((r: any) => r.title === 'Deploy window')).toMatchObject({ status: 'sent', imageCount: 1 })
 })
 
 test('the coordinator\'s review command lists ledger checks from its own session and refuses anyone else', async () => {

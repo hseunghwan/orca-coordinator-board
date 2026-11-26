@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -117,7 +117,25 @@ test('digest and work requests reach an idle coordinator once; a working one is 
   const work = { coordinator: 'coord', requestKey: 'work-000000001', text: 'Split the release notes.' }
   expect(await f.request('board.request-work', work)).toEqual({ ok: true })
   expect(received()[1]).toBe('Split the release notes.')
-  await expect(f.request('board.request-work', { ...work, text: 'Something else.' })).rejects.toThrow('text changed')
+  await expect(f.request('board.request-work', { ...work, text: 'Something else.' })).rejects.toThrow('text or photos changed')
+})
+
+test('a work request with a photo names its file after the marker, and the session photo reads back', async () => {
+  const f = setup([{ id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'acme' }])
+  await f.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
+  const png = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOYvLAHAAOLAcF4E9p3AAAAAElFTkSuQmCC' }
+  const work = { coordinator: 'coord', requestKey: 'work-photo-0001', text: 'Match this screen.', images: [png] }
+  expect(await f.request('board.request-work', work)).toEqual({ ok: true })
+  const entry = f.orca.transcripts.get('coord')!.at(-1)!.text
+  const marked = readMarked(entry)!
+  expect(marked.messageId.startsWith('c0bdf070')).toBe(true)
+  expect(marked.body).toBe('Match this screen.')
+  const path = /^\[사진 1\] (.+\.png)$/.exec(entry.split('\n')[1])![1]
+  expect(readFileSync(path).toString('base64')).toBe(png.data)
+  expect(await f.request('board.read-session-photo', { sessionId: 'coord', messageId: marked.messageId, index: 0 })).toEqual({ count: 1, image: png })
+  expect(await f.request('board.request-work', work)).toEqual({ ok: true })
+  expect(f.orca.transcripts.get('coord')).toHaveLength(1)
+  await expect(f.request('board.request-work', { ...work, images: [] })).rejects.toThrow('text or photos changed')
 })
 
 test('a digest that handles board facts names the cycle, and the coordinator\'s fact command mails the answer signed by its terminal', async () => {
