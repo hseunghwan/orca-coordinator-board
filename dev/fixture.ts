@@ -83,3 +83,21 @@ export function fixtureSnapshot() {
     },
   };
 }
+
+// The coordinator joins the board only when a harness page asks for one.
+export const coordinatorSession = { ...base("s-coord", "billing", "코디네이터"), lane: "idle" as const, status: "idle", activityAt: minutes(2), detail: "다음 요청 대기" };
+
+export function fixtureOperations() {
+  return {
+    catalog: [{ provider: "claude", model: "opus", label: "Claude Opus", efforts: ["high", "xhigh"], isDefault: true, coordinatorMode: { id: "auto", label: "자동 승인" } }],
+    providers: [{ id: "claude", label: "Claude Code", available: true, included: true, status: "ready", modelCount: 1 }],
+    coordinatorMode: { id: "auto", label: "자동 승인" },
+    routing: {},
+    revision: 1,
+    workspaces: [
+      { id: "w-billing-main", projectId: "billing", title: "main", focused: true },
+      { id: "w-editor-main", projectId: "editor", title: "main" },
+      { id: "w-docs-search", projectId: "docs", title: "feat-search" },
+    ],
+  };
+}

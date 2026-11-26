@@ -1,10 +1,14 @@
 // A stand-in for Orca's frame API: the worker answers from the fixture, storage lives in memory.
 // URL parameters: theme=light|dark, view=inbox|focus|matrix|classic, lang=ko|en, empty=1, press=<button text>,...
 // send=<n> starts the reply outcomes at the n-th of: confirmed, unconfirmed delivery, a receipt for another recipient.
+// coord=1 starts with a coordinator; fail=1 makes coordinator requests and setup fail.
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { boardSnapshot } from "../src/paseo/shared/contract";
 import { sendDecision } from "../src/paseo/shared/decision-actions";
-import { fixtureSnapshot } from "./fixture";
+import { askDigest, requestWork } from "../src/paseo/shared/operations";
+import { requestRecommendation } from "../src/paseo/shared/recommendation";
+import { startCoordinator } from "../src/dashboard/rpc";
+import { coordinatorSession, fixtureOperations, fixtureSnapshot } from "./fixture";
 
 const params = new URLSearchParams(location.search);
 const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -16,6 +20,14 @@ if (params.get("empty")) {
   snapshot.trackedDecisions = { status: "ok", items: [] };
   snapshot.pullRequests = undefined;
 }
+function assignCoordinator(sessionId: string | null) {
+  if (sessionId === coordinatorSession.id && !snapshot.sessions.some(session => session.id === sessionId)) snapshot.sessions.push(structuredClone(coordinatorSession));
+  snapshot.coordinator = sessionId;
+}
+if (params.get("coord")) assignCoordinator(coordinatorSession.id);
+const failing = !!params.get("fail");
+const refuse = () => { throw Object.assign(new Error("delivery_uncertain: 코디네이터 세션이 작업 중이라 보내지 않았습니다."), { code: "delivery_uncertain" }); };
+
 const storage = new Map<string, unknown>([
   ["device-setting:board-view", { mode: params.get("view") ?? "inbox" }],
   ["device-setting:board-language", { language: params.get("lang") ?? "ko" }],
@@ -27,11 +39,41 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 300));
 
 const handlers: Record<string, (input: any) => unknown> = {
   "board.snapshot": () => structuredClone(snapshot),
-  "board.readiness": () => ({ configured: true, coordinator: null }),
-  "board.scope": (input: { projectId: string; enabled: boolean }) => {
-    const project = snapshot.projects.find(p => p.id === input.projectId);
-    if (project) project.selected = input.enabled;
+  "board.readiness": () => ({ configured: true, coordinator: snapshot.coordinator }),
+  "board.scope": (input: { kind: "project"; projectId: string; enabled: boolean } | { kind: "coordinator"; sessionId: string | null }) => {
+    if (input.kind === "coordinator") assignCoordinator(input.sessionId);
+    else {
+      const project = snapshot.projects.find(p => p.id === input.projectId);
+      if (project) project.selected = input.enabled;
+    }
     return { ok: true };
+  },
+  "board.operations": () => fixtureOperations(),
+  "board.setup-coordinator": async (raw: unknown) => {
+    const input = startCoordinator.input.parse(raw);
+    await settle();
+    if (failing) throw new Error("setup_failed: 워크스페이스에서 터미널을 열지 못했습니다.");
+    console.info("setup-coordinator", input.workspaceId);
+    assignCoordinator(coordinatorSession.id);
+    return { sessionId: coordinatorSession.id, workspaceId: input.workspaceId ?? null, reused: false };
+  },
+  "board.request-work": async (raw: unknown) => {
+    requestWork.input.parse(raw);
+    await settle();
+    if (failing) refuse();
+    return { ok: true };
+  },
+  "board.request-digest": async (raw: unknown) => {
+    askDigest.input.parse(raw);
+    await settle();
+    if (failing) refuse();
+    return { ok: true };
+  },
+  "board.request-recommendation": async (raw: unknown) => {
+    const input = requestRecommendation.input.parse(raw);
+    await settle();
+    if (failing) refuse();
+    return { ok: true, recipientId: input.coordinator, messageId: crypto.randomUUID() };
   },
   "board.open-session": (input: { sessionId: string }) => {
     console.info("open-session", input.sessionId);
@@ -41,6 +83,7 @@ const handlers: Record<string, (input: any) => unknown> = {
     const input = sendDecision.input.parse(raw);
     await settle();
     const outcome = outcomes[sends++ % outcomes.length];
+    if (input.action === "coordinate" && outcome === "confirmed") return { ok: true, recipientId: input.recipientId, messageId: crypto.randomUUID() };
     if (outcome === "uncertain") throw Object.assign(new Error("delivery_uncertain"), { code: "delivery_uncertain" });
     if (outcome === "other-recipient") return { ok: true, recipientId: "s-other", messageId: crypto.randomUUID() };
     const session = snapshot.sessions.find(row => row.id === input.sessionId)!;
@@ -85,9 +128,18 @@ const disposable = { dispose() {} };
 
 // Every card stays mounted while hidden, so a press goes to the first visible button with that text.
 const presses = params.get("press")?.split(",") ?? [];
+// "@<label>=<text>" types into the visible text box with that accessible label instead of pressing.
+function type(label: string, text: string) {
+  const box = Array.from(document.querySelectorAll<HTMLTextAreaElement>("textarea"))
+    .find(area => area.offsetParent !== null && area.getAttribute("aria-label")?.startsWith(label));
+  if (!box) return;
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+}
 async function pressAll() {
   for (const label of presses) {
     await new Promise(resolve => setTimeout(resolve, 450));
+    if (label.startsWith("@")) { const [name, ...text] = label.slice(1).split("="); type(name, text.join("=")); continue; }
     const target = Array.from(document.querySelectorAll<HTMLElement>("button"))
       .find(button => button.offsetParent !== null && button.textContent?.trim().startsWith(label));
     target?.click();
