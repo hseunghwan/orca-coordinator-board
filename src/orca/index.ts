@@ -93,7 +93,8 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
 
   function view(options: { maxAgeMs?: number } = {}): Promise<World> {
     const maxAge = options.maxAgeMs ?? VIEW_MAX_AGE_MS
-    if (current && now() - current.at <= maxAge) return current.world
+    // 0 means read now: a view begun in the same millisecond may predate the change the caller saw.
+    if (current && maxAge > 0 && now() - current.at <= maxAge) return current.world
     const at = now()
     const world = Promise.all([
       cli.read('worktree ps', ['--limit', '500'], parsePs),
