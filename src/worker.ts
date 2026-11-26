@@ -14,7 +14,7 @@ import { EXIT, type ChannelReply, type ChannelRequest } from './channel/protocol
 import { serveChannel } from './channel/server'
 import { run } from './github'
 import { translator } from './i18n'
-import { createFleet, workspaceKey, type Fleet, type SessionId, type World } from './orca'
+import { createFleet, workspaceKey, type Fleet, type SessionId, type World, type WorkspaceRecord } from './orca'
 import { noSignals, reduceSignals, type Observation } from './orca/signals'
 import { createCli, hostCli, type OrcaCli, type Runner } from './orca/cli'
 import { contribute, type PullDeps } from './server/board'
@@ -103,35 +103,45 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   // orchestration send from the worker, a process in no Orca terminal, needs --from. The board opens one
   // quiet shell terminal of its own and reuses it while it lives; replies to its mail land in its
   // mailbox. It lives in the coordinator's workspace, and moves there when the coordinator does;
-  // before there is a coordinator, in the workspace the person is looking at (where the dashboard opens).
-  async function coordinatorWorkspace(): Promise<string | null> {
-    const id = board.coordinator()
-    if (!id) return null
-    const world = await fleet.view()
-    const session = world.sessions.get(id as SessionId)
-    const ws = session ? world.workspaces.get(session.worktree) : undefined
+  // before there is a coordinator, in the board's coordinator home, so it never opens in a person's project.
+  async function hostWorkspace(ws: WorkspaceRecord | null | undefined): Promise<string | null> {
     if (!ws || (ws.hostId && ws.hostId !== 'local')) return null
     if (ws.listId) return ws.listId
     const { workspaces } = await orca.host.call('workspace.list', {})
     const key = workspaceKey(ws)
     return workspaces.find((w) => key && workspaceKey(w) === key)?.id ?? null
   }
+  async function coordinatorWorkspace(): Promise<string | null> {
+    const id = board.coordinator()
+    if (!id) return null
+    const world = await fleet.view()
+    const session = world.sessions.get(id as SessionId)
+    return hostWorkspace(session ? world.workspaces.get(session.worktree) : undefined)
+  }
+  async function homeWorkspace(): Promise<string | null> {
+    if (!fleet.home) return null
+    await fleet.home.ensure()
+    fleet.invalidate()
+    return hostWorkspace(fleet.home.workspace(await fleet.view({ maxAgeMs: 0 })))
+  }
   async function mailSender(): Promise<string | null> {
     const saved = await orca.storage.get(MAILBOX).catch(() => null) as { terminalId?: unknown; workspaceId?: unknown } | null
-    const home = await coordinatorWorkspace().catch(() => null)
+    const target = await coordinatorWorkspace().catch(() => null) ?? await homeWorkspace().catch((error: unknown) => {
+      orca.log(`coordinator home failed: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    })
     let alive = false
     if (typeof saved?.terminalId === 'string' && typeof saved.workspaceId === 'string') {
       const listed = await orca.host.call('terminal.list', { workspaceId: saved.workspaceId }).catch(() => null)
       alive = !!listed?.terminals.some((terminal) => terminal.id === saved.terminalId)
-      if (alive && (!home || home === saved.workspaceId)) return saved.terminalId as string
+      if (alive && (!target || target === saved.workspaceId)) return saved.terminalId as string
       if (alive) await orca.host.call('terminal.close', { terminalId: saved.terminalId as string }).catch(() => undefined)
     }
-    const target = home ?? (await orca.host.call('workspace.readContext', {}).catch(() => null))?.workspaceId
     if (!target) return null
     try {
       const { terminalId } = await orca.host.call('terminal.create', { workspaceId: target, title: MAILBOX_TITLE })
       await orca.storage.set(MAILBOX, { terminalId, workspaceId: target })
-      orca.log(alive ? 'moved the board mail terminal to the coordinator\'s workspace' : 'opened the board mail terminal')
+      orca.log(alive ? 'moved the board mail terminal' : 'opened the board mail terminal')
       return terminalId
     } catch (error) {
       orca.log(`board mail terminal failed: ${error instanceof Error ? error.message : String(error)}`)

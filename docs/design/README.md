@@ -70,7 +70,17 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 - 훅이 PATH에 붙인 bin 폴더는 에이전트 프로세스에 닿지 않는다. 훅을 고친 뒤 새로 뜬 작업자 `claude.exe`도 PATH 키는 `PATH` 하나이고 bin 폴더가 없다. `CB_*` 변수는 들어온다. Claude의 Bash 도구가 띄운 `bash.exe`에는 `CB_*`도 없다. CLI는 자기 위치에서 pipe 이름을 계산하므로 절대 경로로 부르면 동작한다. 그래서 charter의 절대 경로가 실제 경로다.
 - 코디네이터 셸에서 실행한 `orca agent launch`로 띄운 작업자의 `parentPaneKey`는 `null`이었다. Orca 화면에 "코디네이터가 넘김"으로 묶이지 않는다. 보드는 부모를 자기 저장소에 기록한다.
 
+## 실기 확인: 코디네이터 운영 폴더 (2026-11-26, Orca 1.4.277)
+
+- `orca repo add --path <폴더> --kind folder --json`은 `result.repo`에 `id path displayName badgeColor addedAt kind gitUsername hookSettings`를 준다. `kind`는 `folder`, `displayName`은 폴더 이름(`coordinator`), `path`는 넘긴 경로를 그대로(Windows에서는 역슬래시) 돌려준다. 보드는 이 답을 쓰지 않고 `repo list`를 다시 읽어 경로로 찾는다.
+- 같은 확인을 새 프로세스로 한 번 더 돌리면 `repo add`를 부르지 않는다(`repo list`에서 경로로 찾음). 한 프로세스 안의 두 번째 `ensure`도 마찬가지다.
+- 폴더 프로젝트의 워크스페이스는 `worktree ps`에 `<repoId>::<경로>` id로 바로 나오고, `address.worktree`는 `identity:...`가 아니라 `id:<repoId>::<경로>` 선택자다. 그래서 `listId`로 쓰지 않고 host `workspace.list`에서 경로로 찾는다.
+- 이 폴더에 `orca agent launch --agent claude --model haiku --surface terminal --worktree path:<폴더>`로 띄운 시험 세션은 결과의 `worktreeId`와 `worktree ps`의 행이 모두 이 프로젝트였고, "준비됨"만 답했다. 시험 뒤 `orca terminal close`로 닫았고, 살아 있던 코디네이터는 건드리지 않았다.
+- 등록한 폴더 프로젝트는 `Fleet.paseo.projects.list`에서 빠진다(관리 프로젝트 후보에 없음).
+
 ## 확인할 것
+
+- host `workspace.list`가 폴더 프로젝트 워크스페이스를 어떤 id와 경로로 주는가. 보드 메일 터미널을 코디네이터 운영 폴더에 열 때 경로로 맞춰 찾는다. 경로가 다르게 오면 메일 터미널을 열지 못하고 `no-board-sender`로 거절한다.
 
 - 코디네이터 셸에서 돌린 `orca agent launch`가 Orca 화면에 코디네이터가 넘긴 것으로 나오는가, 새 작업자에게 훅의 작업자 권한 인자와 PATH의 bin이 들어가는가(`probe-dispatch.mjs send`, `verify`, `scripts/probe-path.mjs --match <표식>`).
 - 받는 에이전트(Claude Code, Codex)가 `[사진 n] <경로>` 줄의 파일을 실제로 여는가.

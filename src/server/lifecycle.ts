@@ -3,8 +3,8 @@
 // so the board keeps a launch journal instead: written before `orca agent launch`, holding the
 // terminal handle once it starts and Orca's operationId when the answer is lost. A retry adopts the
 // session that terminal reports, or settles the lost launch with --retry-launch, and never starts a
-// second agent while the first is uncertain. Orca has no plugin-owned folder workspace and no pin, so
-// the coordinator starts in a workspace the person picks and is never pinned.
+// second agent while the first is uncertain. Paseo's plugin-owned workspace is the board's coordinator
+// home here (src/orca/home.ts), registered only when a new coordinator needs it; Orca has no pin.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +16,9 @@ import { type Preferences, PreferenceStore, setCoordinator } from "../paseo/serv
 
 type Pending = NonNullable<Preferences["pendingCoordinator"]>;
 type Start = {
-  expectedCoordinator: string | null; replace: boolean; config: Pending["config"]; workspace: WorkspaceRecord | null;
+  expectedCoordinator: string | null; replace: boolean; config: Pending["config"];
+  /** Where a new coordinator starts; asked only when one is launched. */
+  workspace: () => Promise<WorkspaceRecord | null>;
   verifyRoute?: (scope: Preferences) => void;
 };
 export type Started = { sessionId: string; workspaceId: string | null; reused: boolean; pinFailed?: boolean };
@@ -176,11 +178,12 @@ export class CoordinatorLifecycle {
       journal = null;
     }
     if (!journal) {
-      if (!workspace) throw new Error(t("코디네이터를 시작할 워크스페이스를 하나 고르거나, 이 컴퓨터의 워크스페이스를 연 뒤 다시 누르세요.", "Pick a workspace for the coordinator, or open a workspace on this computer, then try again."));
-      if (workspace.hostId && workspace.hostId !== "local") throw new Error(t("코디네이터는 이 컴퓨터의 워크스페이스에서만 시작할 수 있습니다.", "The coordinator can only start in a workspace on this computer."));
+      const target = await workspace();
+      if (!target) throw new Error(t("코디네이터를 시작할 워크스페이스를 하나 고르거나, 이 컴퓨터의 워크스페이스를 연 뒤 다시 누르세요.", "Pick a workspace for the coordinator, or open a workspace on this computer, then try again."));
+      if (target.hostId && target.hostId !== "local") throw new Error(t("코디네이터는 이 컴퓨터의 워크스페이스에서만 시작할 수 있습니다.", "The coordinator can only start in a workspace on this computer."));
       const [agent, ...model] = config.provider.split("/");
       journal = { id: pending.id, agent, model: model.join("/"), effort: config.thinkingOptionId ?? null, modeId: config.modeId ?? null,
-        worktree: workspace.id, state: "launching", handle: null, operationId: null, at: Date.now() };
+        worktree: target.id, state: "launching", handle: null, operationId: null, at: Date.now() };
       this.journal.write(journal);
     }
     const outcome = await this.fleet.launch({

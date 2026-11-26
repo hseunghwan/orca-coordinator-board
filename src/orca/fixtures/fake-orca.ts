@@ -45,8 +45,12 @@ export function fakeOrca(sessions: FakeSession[]) {
     rateLimits: {} as Record<string, unknown>,
     /** orca host list rows, and what agent list --environment answers per environment id ('fail': it does not answer). */
     hosts: [{ kind: 'local', name: 'this machine', id: 'local' }] as Record<string, unknown>[],
-    remote: {} as Record<string, Record<string, unknown>[] | 'fail'>
+    remote: {} as Record<string, Record<string, unknown>[] | 'fail'>,
+    /** repo add: register the folder, register it and lose the answer, or refuse. */
+    repoAdd: 'add' as 'add' | 'lose' | 'refuse'
   }
+  /** Folder projects added with repo add: { id, path } as Orca prints it, with forward slashes. */
+  const folders: { id: string; path: string }[] = []
   const launches: { operationId: string; session: FakeSession; hiddenFor: number }[] = []
   let mails = 0
   const find = (id: string) => sessions.find((s) => s.id === id)
@@ -58,22 +62,29 @@ export function fakeOrca(sessions: FakeSession[]) {
   }
 
   function ps() {
-    const projects = [...new Set(sessions.map((s) => s.project ?? 'acme'))]
+    const projects = [...new Set(sessions.map((s) => s.project ?? 'acme'))].filter((p) => !folders.some((f) => f.id === p))
     return ok({
-      worktrees: projects.map((project, i) => ({
+      worktrees: [...folders.map((f) => ({
+        worktreeId: `${f.id}::${f.path}`, repoId: f.id, hostId: 'local', path: f.path, branch: null, displayName: 'coordinator', repo: 'coordinator',
+        isArchived: false, address: { worktree: `id:${f.id}::${f.path}` }, agents: agentsIn(f.id)
+      })), ...projects.map((project, i) => ({
         worktreeId: `${project}::/w/${project}`, repoId: project, hostId: sessions.find((s) => (s.project ?? 'acme') === project)?.hostId ?? 'local',
         path: `/w/${project}`, branch: 'refs/heads/main', displayName: project, repo: project, isArchived: false,
         address: { worktree: `identity:wt2:local:${i}` },
-        agents: sessions.filter((s) => (s.project ?? 'acme') === project).map((s) => ({
-          paneKey: s.surface === 'chat' ? `structured-agent-session-${s.id}:p` : `tab-${s.id}:leaf`,
-          address: s.surface === 'chat' ? 'orca_session_id:' + s.id : s.handle ?? null,
-          orcaSessionId: s.id, state: s.state, agentType: 'claude', toolName: null, toolInput: null, conversationName: s.title ?? s.id,
-          lastAssistantMessage: transcripts.get(s.id)!.filter((e) => e.role === 'assistant').at(-1)?.text ?? null,
-          stateStartedAt: s.updatedAt, updatedAt: s.updatedAt, hasLivePty: s.livePty ?? true,
-          mainAgent: { outcome: 'success' }, activity: { listed: true, unread: false }
-        }))
-      }))
+        agents: agentsIn(project)
+      }))]
     })
+  }
+
+  function agentsIn(project: string) {
+    return sessions.filter((s) => (s.project ?? 'acme') === project).map((s) => ({
+      paneKey: s.surface === 'chat' ? `structured-agent-session-${s.id}:p` : `tab-${s.id}:leaf`,
+      address: s.surface === 'chat' ? 'orca_session_id:' + s.id : s.handle ?? null,
+      orcaSessionId: s.id, state: s.state, agentType: 'claude', toolName: null, toolInput: null, conversationName: s.title ?? s.id,
+      lastAssistantMessage: transcripts.get(s.id)!.filter((e) => e.role === 'assistant').at(-1)?.text ?? null,
+      stateStartedAt: s.updatedAt, updatedAt: s.updatedAt, hasLivePty: s.livePty ?? true,
+      mainAgent: { outcome: 'success' }, activity: { listed: true, unread: false }
+    }))
   }
 
   const runner: Runner = async (args) => {
@@ -91,7 +102,10 @@ export function fakeOrca(sessions: FakeSession[]) {
       const remote = behavior.remote[flag('--environment')]
       return !remote || remote === 'fail' ? fail('unreachable', 'environment did not answer') : ok({ agents: remote })
     }
-    if (verb === 'repo list') return ok({ repos: [...new Set(sessions.map((s) => s.project ?? 'acme'))].map((id) => ({ id, path: '/w/' + id, displayName: id })) })
+    if (verb === 'repo list') {
+      const repos = [...new Set(sessions.map((s) => s.project ?? 'acme'))].filter((id) => !folders.some((f) => f.id === id)).map((id) => ({ id, path: '/w/' + id, displayName: id }))
+      return ok({ repos: [...repos, ...folders.map((f) => ({ ...f, displayName: 'coordinator', kind: 'folder' }))] })
+    }
     if (verb === 'agent read') {
       const id = args[2].replace('orca_session_id:', '')
       const s = find(id)
@@ -122,6 +136,12 @@ export function fakeOrca(sessions: FakeSession[]) {
       if (behavior.launch === 'lose') return 'Error: lost'
       if (behavior.launch === 'lose-with-id') return fail('timeout', 'launch reply lost; re-issue with --retry-launch op-' + n)
       return ok({ outcome: { kind: 'terminal', handle: session.handle }, operationId: 'op-' + n })
+    }
+    if (verb === 'repo add') {
+      if (behavior.repoAdd === 'refuse') return fail('invalid_argument', 'path is not a directory')
+      const id = 'home-' + (folders.length + 1)
+      folders.push({ id, path: flag('--path').replace(/\\/g, '/') })
+      return behavior.repoAdd === 'lose' ? 'Error: lost' : ok({ repo: { id, path: flag('--path'), kind: 'folder' } })
     }
     if (verb === 'orchestration send') {
       const id = flag('--to').replace('orca_session_id:', '')

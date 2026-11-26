@@ -11,8 +11,8 @@ export const openSession = defineRpc({
   output: z.object({ opened: z.boolean() }),
 });
 
-/** Orca has no plugin-owned folder, so a new coordinator starts in a workspace the person picks. */
-export const coordinatorWorkspace = workspaceChoiceSchema.extend({ focused: z.boolean().optional() });
+/** Where a new coordinator may start: the board's coordinator home (home), or a workspace the person picks. */
+export const coordinatorWorkspace = workspaceChoiceSchema.extend({ focused: z.boolean().optional(), home: z.boolean().optional() });
 export const operations = defineRpc({
   name: operationState.name,
   input: operationState.input,

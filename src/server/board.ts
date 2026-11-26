@@ -3,7 +3,8 @@
 // (board.send-decision, board.ask-clarification, tracked replies) through fleet.deliver. Paseo's hooks
 // are Orca signals (src/orca/signals.ts) that the worker passes to signal(). Pull request mapping,
 // lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts. Notes and the reporting
-// flag (./reporting.ts, as Orca has no agent metadata) are saved as Paseo saves them.
+// flag (./reporting.ts, as Orca has no agent metadata) are saved as Paseo saves them. The coordinator
+// home's project is never a project choice; its coordinator stays known as the board's coordinator.
 import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, PluginServerContext } from "../orca";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
@@ -90,6 +91,8 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const mergeNotifications = new MergeNotifications(prefs,(target,coordinator)=>tracked.mergeRecipient(target,coordinator),
     (sdk,target)=>prs.mergeScope(sdk,target), fleet);
 
+  // The coordinator home holds the board's own coordinator, never managed work (src/orca/home.ts).
+  const homeProject = async () => fleet.home?.project(await fleet.view()) ?? null;
   server.handle(boardReadiness, async () => {
     const scope = prefs.read();
     return { configured: scope.projects.length > 0, coordinator: scope.coordinator, decisionTitles: tracked.previewTitles(new Set(scope.projects)) };
@@ -167,13 +170,14 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   async function buildSessionView(paseo: Sdk, catalog: Awaited<ReturnType<Sdk["projects"]["list"]>>,
     rows: Awaited<ReturnType<typeof discoverSessions>>) {
     const scope = prefs.read();
+    const home = await homeProject();
     const icons = await Promise.all(catalog.projects.map(p => projectIcons.read(p.projectRootPath, p.icon)));
     const choices = new Map(catalog.projects.map((p, i) => {
       const id = p.projectId;
       return [id, { id, title: p.projectCustomName || p.projectDisplayName, path: p.projectRootPath, selected: scope.projects.includes(id), icon: icons[i] }] as const;
     }));
     for (const row of rows) {
-      if (!choices.has(row.projectId)) choices.set(row.projectId, { id: row.projectId, title: row.projectTitle, path: "", selected: scope.projects.includes(row.projectId), icon: undefined });
+      if (!choices.has(row.projectId) && row.projectId !== home) choices.set(row.projectId, { id: row.projectId, title: row.projectTitle, path: "", selected: scope.projects.includes(row.projectId), icon: undefined });
     }
     const titles = new Map([...choices].map(([id, p]) => [id, p.title]));
     const sessions = managedSessions(rows, scope, titles);
@@ -304,6 +308,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   server.handle(boardScope, async (change, { paseo }) => {
     const rows = await discoverSessions(paseo);
     if (change.kind === "project") {
+      if (change.enabled && change.projectId === await homeProject()) throw new Error("코디네이터 운영 폴더는 관리 프로젝트로 고를 수 없습니다.");
       if (change.enabled && !rows.some(r => r.projectId === change.projectId)) {
         const catalog = await paseo.projects.list();
         if (!catalog.projects.some(p => p.projectId === change.projectId)) throw new Error("이 호스트에서 프로젝트를 찾을 수 없습니다.");

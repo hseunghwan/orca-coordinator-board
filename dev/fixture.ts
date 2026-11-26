@@ -189,6 +189,7 @@ export function fixtureOperations() {
     routing: { B: [{ provider: "claude", model: "sonnet", effort: "high" }, { provider: "codex", model: "gpt-5.5", effort: "medium" }, { provider: "gemini", model: "pro", effort: null }] } as Record<string, { provider: string; model: string; effort: string | null }[]>,
     revision: 1,
     workspaces: [
+      { id: "w-coordinator-home", projectId: "coordinator-home", title: "Coordinator home", home: true },
       { id: "w-billing-main", projectId: "billing", title: "main", focused: true },
       { id: "w-editor-main", projectId: "editor", title: "main" },
       { id: "w-docs-search", projectId: "docs", title: "feat-search" },
