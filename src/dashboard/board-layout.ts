@@ -7,8 +7,8 @@ import type { PullRequestItem } from "../paseo/shared/prs";
 import type { TrackedDecision } from "../paseo/shared/tracked-decisions";
 import type { DecisionEntry as PaseoEntry } from "../paseo/view-types";
 import type { ProjectId } from "./board-model";
-import type { OpenSession } from "./cards";
 
+export type OpenSession = (sessionId: string) => void;
 export type DecisionEntry = PaseoEntry & { card: ReactNode };
 
 // Paseo's ProjectBundle without peer hosts: an Orca board only sees the sessions of this device.

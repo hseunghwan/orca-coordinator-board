@@ -1,13 +1,17 @@
 /** @jsxImportSource react */
-// Paseo's per-project kanban (client/project-kanban.tsx), read-only: no note editor yet.
+// Paseo's per-project kanban (client/project-kanban.tsx) without the note editor.
 import { useMemo, useState, type ReactNode } from "react";
 import { COLUMN_GAP, columnWidth } from "../paseo/client/lane-width";
 import { classifyProject } from "../paseo/client/matrix";
 import { factStatus, laneLabel, noteLabel, sessionDetail, type Card, type Lane } from "../paseo/client/model";
 import { plainDecisionTitle } from "../paseo/client/decision-summary";
+import type { HistoryLinks } from "../paseo/client/history-sessions";
 import type { PullRequestItem } from "../paseo/shared/prs";
+import type { ReplyEntry } from "../paseo/shared/reply-history";
 import type { TrackedDecision } from "../paseo/shared/tracked-decisions";
-import type { OpenSession } from "./cards";
+import type { OpenSession } from "./board-layout";
+import { ReplyCard } from "./reply-history";
+import { TrackedSessionChips, type TrackedSessionLinks } from "./tracked-session-chips";
 import { useWidth } from "./use-width";
 import { Button, column, ProjectText, row, RunningMark, SessionChip } from "./ui/controls";
 import { ChevronDown, ChevronUp } from "./ui/icons";
@@ -69,13 +73,16 @@ export function CardView({ card, open, sessionHostLabel }: { card: Card; open: O
 
 type Entry = { key: string; content: ReactNode };
 
-function RecordPreview({ item, render }: { item: TrackedDecision; render: (item: TrackedDecision) => ReactNode }) {
+function RecordPreview({ item, render, links }: { item: TrackedDecision; render: (item: TrackedDecision) => ReactNode; links: TrackedSessionLinks }) {
   const [expanded, setExpanded] = useState(false);
   const { t } = useBoardLanguage();
   const title = useMemo(() => plainDecisionTitle(item.title), [item.title]);
   return <div style={{ ...column, gap: 4 }}>
     <Button label={expanded ? t("결정 카드 접기", "Hide decision card") : title}
-      accessibilityLabel={t(`결정 카드 · ${title}`, `Decision card · ${title}`)} onPress={() => setExpanded(v => !v)} />
+      accessibilityLabel={t(`결정 카드 · ${title}`, `Decision card · ${title}`)} expanded={expanded} onPress={() => setExpanded(v => !v)} />
+    {!expanded && (links.owner || links.source) && <div style={{ ...row, gap: 6 }}>
+      <TrackedSessionChips title={title} links={links} />
+    </div>}
     {expanded && render(item)}
   </div>;
 }
@@ -96,16 +103,19 @@ function Column({ lane, entries }: { lane: ColumnKind; entries: Entry[] }) {
 
 const order: ColumnKind[] = ["running", "review", "human", "history", "idle", "done", "unknown"];
 
-export function Project({ projectId, title, decisions, cards, records, requests, renderRecord, renderPull, compact, open, sessionHostLabel }: {
-  projectId: string; title: string; decisions: number; cards: Card[]; records: TrackedDecision[]; requests: PullRequestItem[];
-  renderRecord: (item: TrackedDecision) => ReactNode; renderPull: (pr: PullRequestItem, projectId: string) => ReactNode;
+export function Project({ projectId, title, decisions, cards, records, history = [], historyLinks, requests, renderRecord, renderPull, recordLinks, compact, open, sessionHostLabel }: {
+  projectId: string; title: string; decisions: number; cards: Card[]; records: TrackedDecision[]; history?: ReplyEntry[]; historyLinks: HistoryLinks; requests: PullRequestItem[];
+  renderRecord: (item: TrackedDecision) => ReactNode; renderPull: (pr: PullRequestItem, projectId: string) => ReactNode; recordLinks: (item: TrackedDecision) => TrackedSessionLinks;
   compact: boolean; open: OpenSession; sessionHostLabel: string;
 }) {
   const { t } = useBoardLanguage();
   const [ref, width] = useWidth();
-  const groups: Record<ColumnKind, Entry[]> = { history: [], running: [], review: [], human: [], idle: [], done: [], unknown: [] };
+  const groups: Record<ColumnKind, Entry[]> = {
+    history: history.map(entry => ({ key: entry.key, content: <ReplyCard entry={entry} links={historyLinks} open={open} /> })),
+    running: [], review: [], human: [], idle: [], done: [], unknown: [],
+  };
   for (const entry of classifyProject({ records, cards, pulls: requests })) {
-    const content = entry.kind === "record" ? <RecordPreview item={entry.item} render={renderRecord} />
+    const content = entry.kind === "record" ? <RecordPreview item={entry.item} render={renderRecord} links={recordLinks(entry.item)} />
       : entry.kind === "session" ? <CardView card={entry.card} open={open} sessionHostLabel={sessionHostLabel} />
       : renderPull(entry.pr, projectId);
     groups[entry.lane].push({ key: entry.key, content });

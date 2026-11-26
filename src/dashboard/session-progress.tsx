@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { z } from "zod";
 import type { Card } from "../paseo/client/model";
 import { defineSettings } from "../paseo/plugin-shim";
-import type { OpenSession } from "./cards";
+import type { OpenSession } from "./board-layout";
 import { useDeviceSetting } from "./device-setting";
 import type { ProjectId } from "./board-model";
 import { Button, column, ProjectText, row, RunningMark, SessionChip } from "./ui/controls";
