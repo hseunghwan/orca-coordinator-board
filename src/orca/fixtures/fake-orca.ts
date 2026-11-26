@@ -55,6 +55,8 @@ export function fakeOrca(sessions: FakeSession[]) {
   const folders: { id: string; path: string; displayName: string; workspaceName: string; visibility: string }[] = []
   const launches: { operationId: string; session: FakeSession; hiddenFor: number }[] = []
   let mails = 0
+  /** Every mail Orca took, as the recipient's mailbox holds it. */
+  const mailbox: { to: string; body: string }[] = []
   const find = (id: string) => sessions.find((s) => s.id === id)
   const bump = (s: FakeSession) => { s.updatedAt += 1 }
 
@@ -172,11 +174,14 @@ export function fakeOrca(sessions: FakeSession[]) {
       if (!args.includes('--from')) return fail('invalid_argument', 'Could not determine the calling terminal for this orchestration command. Pass --from with your own terminal\'s handle.')
       const body = readFileSync(flag('--body-file'), 'utf8')
       const mail = 'msg_' + String(++mails).padStart(12, '0')
-      if (!behavior.dropText) say(id, 'user', [`──── From: ${flag('--from').toUpperCase()} (${flag('--from')}) (${flag('--type')}) ────`, 'Subject: ' + flag('--subject'), body,
+      mailbox.push({ to: id, body })
+      // A terminal agent gets only a notice to run the check command (observed 2026-11-26).
+      if (!behavior.dropText && find(id)!.surface === 'terminal') say(id, 'user', `You have 1 orchestration message. Run \`orca orchestration check --terminal ${find(id)!.handle}\`.`)
+      else if (!behavior.dropText) say(id, 'user', [`──── From: ${flag('--from').toUpperCase()} (${flag('--from')}) (${flag('--type')}) ────`, 'Subject: ' + flag('--subject'), body,
         `[Reply: orca orchestration reply --id ${mail} --body "..."]`, '─'.repeat(60)].join('\n'))
       return behavior.loseAnswer ? 'Error: lost' : ok({ messageId: mail })
     }
     return fail('unknown', 'not faked: ' + verb)
   }
-  return { runner, sessions, transcripts, writes, behavior, say, find, launches }
+  return { runner, sessions, transcripts, writes, behavior, say, find, launches, mailbox }
 }

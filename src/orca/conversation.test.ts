@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import { agentRead, timelinePage, TRUNCATED } from './conversation'
 import { fixtureWorld, result, sid } from './fixtures/load'
+import { excerpt } from '../server/conversation'
 
 const read = (name: string) => agentRead.parse(result(name))
 const session = (n: number) => fixtureWorld().sessions.get(sid(n))!
@@ -31,4 +32,15 @@ test('an unfinished turn is a gap, so no excerpt is built from it', () => {
   const raw = { ...read('agent-read-chat-question.json'), state: 'working' as const }
   expect(timelinePage(raw, session(1)).gap).toBe(true)
   expect(timelinePage(raw, session(1)).entries.at(-1)!.timestamp).toBeUndefined()
+})
+
+test('mail to a terminal agent shows only as Orca\'s check notice, which is later input and not a person\'s turn', () => {
+  const notice = 'You have 1 orchestration message. Run `orca orchestration check --terminal term_0000aaaa-0000-4000-8000-000000000000`.'
+  const raw = agentRead.parse({ orcaSessionId: sid(7), state: 'done', entries: [
+    { kind: 'message', role: 'assistant', text: 'Which version should I tag?' },
+    { kind: 'message', role: 'user', text: notice }
+  ] })
+  const evidence = excerpt(timelinePage(raw, session(7)))
+  expect(evidence.turns.map((t) => t.text)).toEqual(['Which version should I tag?'])
+  expect(evidence.laterInput).toBe(true)
 })

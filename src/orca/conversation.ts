@@ -29,6 +29,8 @@ export interface TimelinePage {
  * user message, with the board's marker as its messageId.
  */
 function userItem(text: string, sentText: (messageId: string) => string | undefined, senderOf: (handle: string) => string | undefined): TimelineItem {
+  // Paseo's excerpt counts a heartbeat as input that is not a person's turn, which is what this notice is.
+  if (MAIL_NOTICE.test(text.trim())) return { type: 'tool_call', name: 'heartbeat', status: 'completed', callId: 'orca-mail-notice' }
   const marked = readMarked(text)
   const full = marked?.cut ? readMarked(sentText(marked.messageId) ?? '')?.body : undefined
   const body = marked ? (full?.startsWith(marked.body) ? full : marked.body) : null
@@ -50,6 +52,11 @@ const MAIL_HEAD = /^─+ From: .* ─+$/
 const MAIL_SENDER = /^─+ From: .* \((term_[^()\s]+)\) \([^()]*\) ─+$/
 const MAIL_RULE = /^─+$/
 const MAIL_REPLY = /^\[Reply: orca orchestration reply /
+/**
+ * A terminal agent does not get the mail itself: Orca types this notice, and the body reaches the agent
+ * only through the check command's output, never as a transcript message (observed 2026-11-26, Orca 1.4.277).
+ */
+const MAIL_NOTICE = /^You have \d+ orchestration messages?\. Run `orca orchestration check --terminal term_[^`\s]+`\.$/
 
 /** A transcript user entry without Orca's mail framing (From line, Subject line, Reply hint, closing rule). */
 export function unframe(text: string): string {

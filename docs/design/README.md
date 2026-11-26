@@ -54,7 +54,7 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 
 - 서명한 메일: 어느 터미널에도 속하지 않은 프로세스(WMI로 띄움, 워커와 같은 경우)가 `fleet.deliver`의 agent 발신자로 시험 채팅에 사실 묶음 하나를 보냈다. 명령은 `orchestration send --from <코디네이터 터미널 핸들> --type status`였고 결과는 `delivered`(메일 id)였다. 받는 쪽 기록의 From 줄에는 코디네이터 터미널 핸들과 `(status)`가 남았다. 보드의 기록 변환은 이 항목을 Paseo의 에이전트 메시지(`paseo-agent-message:<messageId>`)로 읽었고, 발신자는 코디네이터 세션 id, 본문 해시는 보낸 묶음과 같았다. 그래서 `BoardFacts.decorate`가 불확실한 전송을 받는 쪽 기록으로 확정할 수 있다. 받은 채팅은 턴을 하나 돌았고 답장 메일은 보내지 않았다(`scripts/probe-ledger.mjs mail`).
 - 보드 메일 터미널 명의(병합 알림)는 따로 보내지 않았다. 지금 열린 보드 메일 터미널이 없었고, 프로브가 터미널을 새로 열 수 없다. 같은 `--from <보드 터미널>` 경로는 2단계에서 채팅 답장으로 확인했다.
-- 터미널 세션에 `orchestration send`로 보낸 메일이 받는 쪽 기록에 어떤 모양으로 남는지는 실기로 보지 않았다. 가짜 Orca는 채팅과 같은 메일 머리로 둔다.
+- 터미널 세션에 `orchestration send`로 보낸 메일의 모양은 아래 "운영 폴더 이름, 터미널 메일, 사진"에서 확인했다. 가짜 Orca는 이제 터미널 세션에 확인 알림만 남긴다.
 - PR: 보드가 고른 프로젝트 7개 가운데 GitHub 저장소 3개가 auto로 연결됐고 4개는 `unmapped`였다(GitHub이 아닌 원격). 열린 PR은 없었다. 병합된 PR 하나에 `board.read-pull-lifecycle`은 `MERGED`, `board.preview-pull-request-merge`(GraphQL 읽기)는 `merged`를 돌려줬고 바우처는 나오지 않았다. 병합 확정은 실기로 부르지 않았다(`scripts/probe-ledger.mjs prs`).
 - 코디네이터의 `review`: 살아 있는 코디네이터에게 터미널 입력으로 요청 하나를 보냈다(`delivered`, `terminal-input`). 코디네이터는 명령을 한 번 실행했고 CLI는 종료 코드 2(파이프에 닿지 못함)를 냈다. 원인은 명령 줄에 직접 쓴 파이프 이름으로 본다(추정). 이 에이전트의 셸 도구(Claude Code, Git Bash)에 같은 명령 글을 넘기면 `\\`가 `\`로 줄어 `\\.\pipe\…`가 `\.\pipe\…`가 되고, 같은 종료 코드 2가 났다. 같은 명령을 스크립트 파일로 Git Bash에서 돌리면 이 브랜치의 워커에 닿아 `{"closed":[],"reviewable":[…]}`를 돌려줬다. 실제 코디네이터는 `CB_PIPE`를 실행 환경에서 물려받으므로 이 줄임을 겪지 않는다(3단계에서 `read`로 확인). 프로브는 이제 명령을 스크립트 파일로 넘긴다.
 - PATH: 코디네이터의 `claude.exe` 환경 블록을 읽기만 해서 봤다(`scripts/probe-path.mjs`). `CB_BIN CB_CALLER_TOKEN CB_NODE CB_PIPE CB_TERMINAL`은 있었고, PATH 키는 `PATH` 하나뿐이며 bin 폴더가 들어 있지 않았다. 코디네이터의 Bash 도구 기록에는 `coordinator-board: command not found`(127)가 남았고, charter의 절대 경로로는 실행됐다. 훅은 이제 Windows에서 같은 값을 `PATH` 키에도 쓰고, 실행마다 `event.env`의 PATH 키 이름만 로그에 남긴다. `event.env`에 `Path`가 왔는지, `PATH`가 왔는지, 아예 없었는지는 새 실행 없이는 볼 수 없어서 확인하지 못했다.
@@ -78,15 +78,21 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 - 이 폴더에 `orca agent launch --agent claude --model haiku --surface terminal --worktree path:<폴더>`로 띄운 시험 세션은 결과의 `worktreeId`와 `worktree ps`의 행이 모두 이 프로젝트였고, "준비됨"만 답했다. 시험 뒤 `orca terminal close`로 닫았고, 살아 있던 코디네이터는 건드리지 않았다.
 - 등록한 폴더 프로젝트는 `Fleet.paseo.projects.list`에서 빠진다(관리 프로젝트 후보에 없음).
 
+## 실기 확인: 운영 폴더 이름, 터미널 메일, 사진 (2026-11-26, Orca 1.4.277)
+
+- 운영 폴더 맞춤: 실제 운영 폴더에 `CoordinatorHome.ensure`(보드 언어 ko)를 새 프로세스로 돌렸다. 첫 실행은 `project setup-update --setup <repo id> --display-name 코디네이터 보드`와 `worktree set --worktree id:<repo id>::<경로> --display-name 코디네이터 운영`을 썼고 둘 다 `ok`였다. 프로젝트 이름은 `project setups`와 `repo list`의 `displayName`에 함께 바뀌었다(설정 id가 repo id와 같다). 다음 실행은 아무것도 쓰지 않았다. 살아 있던 코디네이터 세션은 그대로 남았다.
+- `repo list`의 `externalWorktreeVisibility`는 등록 직후부터 `show`였다. `repo set --external-worktree-visibility show`가 `ok`로 끝난 뒤에도 `externalWorktreeVisibilityLegacy`는 `true`로 남았다. 그래서 이 값은 설정 여부를 뜻하지 않고, 보드는 `externalWorktreeVisibility`만 비교한다.
+- 터미널 세션 메일: 운영 폴더에 haiku 터미널 세션 하나를 띄우고 에이전트 셸에서 `orca orchestration send --to <term 핸들> --type status --subject "보드 메일 시험" --body-file <첫 줄이 [cb:<uuid>]인 파일>`을 보냈다. 결과는 `messageId`와 "terminal-only mailbox라 그 터미널이 닫히면 전달이 보장되지 않는다"는 경고였다. 받는 쪽 `agent read`에는 메일 머리도 본문도 표식도 없고, user 항목 하나 `You have 1 orchestration message. Run \`orca orchestration check --terminal <term 핸들>\`.`만 남았다. 본문은 에이전트가 그 명령을 실행해야 도구 출력으로만 읽는다(이 시험 세션은 명령 실행을 금지해서 읽지 않았다). 채팅과 모양이 다르다.
+- 그래서 `src/orca/conversation.ts`는 이 알림을 사람의 턴이 아니라 Paseo의 heartbeat처럼 나중 입력으로 읽는다. 터미널 세션에 보낸 서명 메일은 받는 쪽 기록에 표식이 남지 않으므로, 응답이 끊긴 전송은 기록으로 확정되지 않고 `unconfirmed`로 남는다(다시 보내지 않는다).
+- 사진: 같은 세션에 `orca terminal send --enter`로 첫 줄 `[cb:<uuid>]`, 둘째 줄 `[사진 1] <임시 폴더의 2x2 빨간 PNG 절대 경로>`, 빈 줄, "이 사진의 색과 크기를 한 문장으로 답하세요"를 보냈다(`input_accepted`, `turn_started`). 받는 쪽 기록의 user 항목은 보낸 글 그대로였다. 에이전트는 Read 도구로 그 파일을 열고 "빨간색 픽셀로 이루어진 가로 2px × 세로 2px 크기의 PNG"라고 맞게 답했다. 시험 뒤 `orca terminal close`로 닫았다.
+
 ## 확인할 것
 
 - host `workspace.list`가 폴더 프로젝트 워크스페이스를 어떤 id와 경로로 주는가. 보드 메일 터미널을 코디네이터 운영 폴더에 열 때 경로로 맞춰 찾는다. 경로가 다르게 오면 메일 터미널을 열지 못하고 `no-board-sender`로 거절한다.
 
-- 코디네이터 셸에서 돌린 `orca agent launch`가 Orca 화면에 코디네이터가 넘긴 것으로 나오는가, 새 작업자에게 훅의 작업자 권한 인자와 PATH의 bin이 들어가는가(`probe-dispatch.mjs send`, `verify`, `scripts/probe-path.mjs --match <표식>`).
-- 받는 에이전트(Claude Code, Codex)가 `[사진 n] <경로>` 줄의 파일을 실제로 여는가.
+- Codex가 `[사진 n] <경로>` 줄의 파일을 여는가(Claude Code는 연다).
 
 - host `terminal.create`가 돌려주는 `terminalId`를 CLI `--from`에 그대로 쓸 수 있는가, 지금 권한으로 열 수 있는가.
 - `agent.launch.before`의 `event.env`에 PATH가 어떤 키로 들어오는가. 다음 코디네이터 실행 때 워커 로그의 `launch hook: PATH keys in the launch env` 줄과 `scripts/probe-path.mjs`로 확인한다. 아예 없다면 훅은 PATH를 두고 `CB_BIN`과 charter의 절대 경로로만 CLI를 알린다.
-- 터미널 세션이 `orchestration send` 메일을 기록에 어떤 모양으로 남기는가(보드 사실과 병합 알림이 터미널 세션에 갈 때).
 - 실제 훅의 `event.command`가 `orca terminal list`의 `preview`와 같은 모양인가.
 - 워커 env에서 `orca.exe`가 런타임을 찾는가.

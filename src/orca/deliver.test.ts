@@ -139,14 +139,26 @@ test('matching wants the same marker and the same head', () => {
   expect(isSameMessage(long.slice(0, TERMINAL_CUT) + TRUNCATED, ID(1), long)).toBe(true)
 })
 
-test('an agent sender mails from its own terminal, even to a terminal session, and the recipient reads it as that agent\'s message', async () => {
+test('an agent sender mails from its own terminal, even to a terminal session, which sees only Orca\'s check notice', async () => {
   const COORD = ID(20) as SessionId
   const f = setup([{ id: COORD, surface: 'terminal', state: 'working', updatedAt: 1, handle: 'term_coord', title: 'Coordinator' }])
   const fact = JSON.stringify({ type: 'coordinator-board.fact', answer: 'Managed project: acme.' })
   expect(await f.send(TERM, fact, 1, { from: { kind: 'agent', session: COORD } })).toEqual({ status: 'delivered', route: 'mail', proof: 'mail-id' })
   expect(f.orca.writes[0].slice(0, 8)).toEqual(['orchestration', 'send', '--to', 'orca_session_id:' + TERM, '--from', 'term_coord', '--type', 'status'])
+  expect(readMarked(f.orca.mailbox[0].body)!.body).toBe(fact)
   f.orca.say(TERM, 'assistant', 'Thanks.')
   const page = await f.fleet.paseo.agents.ref(TERM).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
+  expect(page.entries[0].item).toMatchObject({ type: 'tool_call', name: 'heartbeat' })
+  expect(excerpt(page).deliveries).toBeUndefined()
+})
+
+test('an agent\'s mail to a chat session reads as that agent\'s message', async () => {
+  const COORD = ID(20) as SessionId
+  const f = setup([{ id: COORD, surface: 'terminal', state: 'working', updatedAt: 1, handle: 'term_coord', title: 'Coordinator' }])
+  const fact = JSON.stringify({ type: 'coordinator-board.fact', answer: 'Managed project: acme.' })
+  expect(await f.send(CHAT, fact, 1, { from: { kind: 'agent', session: COORD } })).toEqual({ status: 'delivered', route: 'mail', proof: 'mail-id' })
+  f.orca.say(CHAT, 'assistant', 'Thanks.')
+  const page = await f.fleet.paseo.agents.ref(CHAT).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
   expect(page.entries[0].item).toEqual({ type: 'tool_call', name: 'agent_message', status: 'completed', callId: 'paseo-agent-message:' + ID(1),
     agentMessage: { event: 'message', sender: { id: COORD }, text: fact } })
   expect(excerpt(page).deliveries).toEqual([{ id: ID(1), sender: COORD, bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/) }])
@@ -163,10 +175,10 @@ test('an agent without a live local terminal cannot sign mail, and nothing goes 
   expect(f.orca.writes).toEqual([])
 })
 
-test('the board sender mails a terminal session from the board terminal, which is no session, so it stays a user turn', async () => {
+test('the board sender mails from the board terminal, which is no session, so a chat reads it as a user turn', async () => {
   const f = setup()
-  expect(await f.send(TERM, 'PR #7 merged.', 1, { from: { kind: 'board' } })).toEqual({ status: 'delivered', route: 'mail', proof: 'mail-id' })
+  expect(await f.send(CHAT, 'PR #7 merged.', 1, { from: { kind: 'board' } })).toEqual({ status: 'delivered', route: 'mail', proof: 'mail-id' })
   expect(f.orca.writes[0].slice(4, 8)).toEqual(['--from', 'term_board', '--type', 'status'])
-  const page = await f.fleet.paseo.agents.ref(TERM).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
+  const page = await f.fleet.paseo.agents.ref(CHAT).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
   expect(page.entries[0].item).toEqual({ type: 'user_message', text: 'PR #7 merged.', messageId: ID(1) })
 })
