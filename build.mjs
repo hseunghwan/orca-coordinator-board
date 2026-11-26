@@ -6,7 +6,10 @@ const watch = process.argv.includes("--watch");
 const common = { bundle: true, logLevel: "info", sourcemap: false, minify: false };
 const targets = [
   { ...common, entryPoints: ["src/worker.ts"], outfile: "dist/worker.mjs", platform: "node", format: "esm", target: "node20" },
-  { ...common, entryPoints: ["src/dashboard/main.ts"], outfile: "dist/dashboard.js", platform: "browser", format: "esm", target: "es2022" },
+  {
+    ...common, entryPoints: ["src/dashboard/main.tsx"], outfile: "dist/dashboard.js", platform: "browser", format: "esm", target: "es2022",
+    jsx: "automatic", jsxImportSource: "react", define: { "process.env.NODE_ENV": '"production"' },
+  },
 ];
 
 if (watch) {
