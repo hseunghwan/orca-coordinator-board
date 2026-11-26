@@ -66,7 +66,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 ## 코디네이터
 
 - **만들기**: 설정에서 고른 모델로 코디네이터를 `orca agent launch --surface terminal`로 띄운다. Orca에는 플러그인 전용 폴더가 없어서, 고른 워크스페이스(고르지 않으면 지금 보고 있는 곳)에서 시작한다. 응답이 끊겨도 같은 실행을 `--retry-launch`로만 다시 확인하고 두 개를 띄우지 않는다. 터미널이 첫 응답을 하면 보드가 코디네이터로 지정한다. 워크스페이스 고정은 Orca에 없어서 하지 않는다.
-- **권한 모드**: 코디네이터 실행에만 Paseo와 같은 모드를 붙인다(claude `auto`, codex `auto-review`). 에이전트 설정이 붙인 권한 우회 인자는 코디네이터 실행에서 뺀다.
+- **권한 모드**: 코디네이터는 권한 우회 모드로 띄운다(claude `--dangerously-skip-permissions`, codex `--dangerously-bypass-approvals-and-sandbox`). 에이전트 설정이 이미 붙였으면 그대로 두고, 없으면 한 번 붙인다. Paseo판의 자동 모드(`auto`, `auto-review`)와 다른 점이다.
 - **보고 명령**: Orca 플러그인은 MCP 도구를 줄 수 없어서, 코디네이터는 셸 명령 `coordinator-board`로 보드를 읽고 판단을 남긴다. 모든 에이전트 실행에 `agent.launch.before` 훅이 `PATH`와 `CB_*` 변수, 그 터미널 전용 토큰을 넣는다. 명령은 `read [--session]`, `classify`, `report`이고 `plan`, `assign`, `fact`, `review`는 아직 없다. 자세한 쓰임은 `coordinator-board --help`.
 - **요청**: 다이제스트, 작업 요청, 추천 요청을 코디네이터에게 보낸다. Orca는 실행 중인 턴에 끼워 넣을 수 없어서 코디네이터가 대기 중일 때만 보낸다. 보드가 쓴 요청에는 `[coordinator-board]` 머리말이 붙는다.
 - **채팅 코디네이터**: 기존 채팅 세션을 코디네이터로 고르면 보드가 명령 경로를 한 번 알린다. 채팅은 실행 훅을 거치지 않아 `report`만 쓸 수 있다.

@@ -29,7 +29,7 @@ test('a launch without PATH, or with a POSIX one on Windows, keeps its PATH; no 
   expect(noTerminal).not.toHaveProperty('CB_TERMINAL')
 })
 
-test('only the marked coordinator launch gets its permission mode, before the prompt, and never a bypass', () => {
+test('only the marked coordinator launch gets its permission mode, before the prompt; a non-bypass mode drops the bypass flag', () => {
   const marked = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, { launchId: 'L1', modeId: agent === 'codex' ? 'auto-review' : 'auto' }).command
   const prompt = "'" + launchMarker('L1') + "\nRun coordinator-board read; never use --permission-mode bypassPermissions'"
   // The shape Orca 1.4.277 printed for a claude terminal launch.
@@ -42,4 +42,14 @@ test('only the marked coordinator launch gets its permission mode, before the pr
   expect(marked('claude', "claude '--permission-mode' 'default' " + prompt)).toBe("claude '--permission-mode' 'default' " + prompt)
   expect(marked('gemini', 'gemini ' + prompt)).toBe('gemini ' + prompt)
   expect(withChannel(launch({ command: "claude '--dangerously-skip-permissions' " + prompt }), channel).command).toBe("claude '--dangerously-skip-permissions' " + prompt)
+})
+
+test('the bypass coordinator mode keeps the agent setting\'s bypass flag, or adds it once before the prompt', () => {
+  const bypass = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, { launchId: 'L1', modeId: 'bypass' }).command
+  const prompt = "'" + launchMarker('L1') + "\nRun coordinator-board read'"
+  expect(bypass('claude', "claude '--dangerously-skip-permissions' '--model' 'haiku' '--' " + prompt))
+    .toBe("claude '--dangerously-skip-permissions' '--model' 'haiku' '--' " + prompt)
+  expect(bypass('claude', "claude '--model' 'haiku' '--' " + prompt)).toBe("claude '--model' 'haiku' --dangerously-skip-permissions '--' " + prompt)
+  expect(bypass('codex', 'codex -- ' + prompt)).toBe('codex --dangerously-bypass-approvals-and-sandbox -- ' + prompt)
+  expect(bypass('claude', "claude 'another prompt'")).toBe("claude 'another prompt'")
 })

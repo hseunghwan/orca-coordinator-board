@@ -39,15 +39,17 @@ export function tokenMatches(secret: string, terminalId: string, token: string):
 }
 
 /**
- * Paseo's coordinator modes (server/dispatch.ts), first one preferred, as each CLI's own flags
- * (claude --help, codex --help, 2026-11-26). No bypass flag is ever added.
+ * Coordinator modes as each CLI's own flags (claude --help, codex --help, 2026-11-26), first one
+ * preferred. The person chose bypass for the coordinator, ahead of Paseo's modes (server/dispatch.ts).
  */
 export const COORDINATOR_MODES: Readonly<Record<string, readonly { id: string; label: string; args: readonly string[] }[]>> = {
   claude: [
+    { id: 'bypass', label: 'Bypass permissions', args: ['--dangerously-skip-permissions'] },
     { id: 'auto', label: 'Auto', args: ['--permission-mode', 'auto'] },
     { id: 'default', label: 'Default', args: ['--permission-mode', 'default'] }
   ],
   codex: [
+    { id: 'bypass', label: 'Bypass approvals and sandbox', args: ['--dangerously-bypass-approvals-and-sandbox'] },
     { id: 'auto-review', label: 'Auto review', args: ['--approve-for-me'] },
     { id: 'auto', label: 'Auto', args: ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request'] }
   ]
@@ -88,11 +90,14 @@ export function withChannel(event: LaunchEvent, channel: ChannelEnv, coordinator
   const at = coordinator?.modeId ? command.indexOf(launchMarker(coordinator.launchId)) : -1
   const mode = COORDINATOR_MODES[event.agent]?.find((m) => m.id === coordinator?.modeId)
   if (mode && at > 0) {
-    // Only the words before the prompt: the charter itself may mention flags. A coordinator never
-    // runs with permissions bypassed, as in Paseo, whatever the agent setting says.
-    const head = command.slice(0, at).replace(BYPASS_FLAGS, '')
-    command = head + command.slice(at)
-    if (!PERMISSION_FLAGS.test(head)) command = beforePrompt(command, head.length, mode.args)
+    // Only the words before the prompt: the charter itself may mention flags.
+    if (mode.id === 'bypass') {
+      if (!new RegExp(BYPASS_FLAGS.source).test(command.slice(0, at))) command = beforePrompt(command, at, mode.args)
+    } else {
+      const head = command.slice(0, at).replace(BYPASS_FLAGS, '')
+      command = head + command.slice(at)
+      if (!PERMISSION_FLAGS.test(head)) command = beforePrompt(command, head.length, mode.args)
+    }
   }
   return { ...event, env, command }
 }

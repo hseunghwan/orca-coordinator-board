@@ -40,7 +40,7 @@ test('the operations catalog lists installed agents with suggested models, the c
   }
   expect(ops.providers.map(p => [p.id, p.status])).toEqual([['claude', 'ready'], ['codex', 'ready'], ['grok', 'empty']])
   expect(ops.catalog.some(m => m.provider === 'claude' && m.model === 'claude-opus-5-5')).toBe(true)
-  expect(ops.coordinatorMode).toEqual({ id: 'auto', label: 'Auto' })
+  expect(ops.coordinatorMode).toEqual({ id: 'bypass', label: 'Bypass permissions' })
   expect(ops.workspaces).toEqual([{ id: 'acme::/w/acme', projectId: 'acme', title: 'acme', focused: true }])
 })
 
@@ -66,7 +66,7 @@ test('setup launches one terminal coordinator in the focused workspace, marked f
   const flag = (name: string) => args[args.indexOf(name) + 1]
   expect([flag('--agent'), flag('--worktree'), flag('--surface'), flag('--model'), flag('--effort')]).toEqual(['claude', 'id:acme::/w/acme', 'terminal', 'claude-opus-5-5', 'high'])
   const launch = pendingDuringLaunch as { launchId: string; modeId: string }
-  expect(launch.modeId).toBe('auto')
+  expect(launch.modeId).toBe('bypass')
   expect(flag('--prompt').startsWith(launchMarker(launch.launchId) + '\n')).toBe(true)
   expect(flag('--prompt')).toContain('/plugin/bin')
   expect(f.board.pendingLaunch()).toBeUndefined()
