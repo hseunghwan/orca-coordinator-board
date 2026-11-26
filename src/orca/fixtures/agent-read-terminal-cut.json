@@ -1,0 +1,34 @@
+{
+  "id": "r7",
+  "ok": true,
+  "result": {
+    "orcaSessionId": "5e550007-0000-4000-8000-000000000000",
+    "kind": "terminal",
+    "agent": "claude",
+    "source": "transcript",
+    "limited": false,
+    "state": "done",
+    "entries": [
+      {
+        "kind": "message",
+        "role": "user",
+        "text": "Draft the release notes."
+      },
+      {
+        "kind": "message",
+        "role": "assistant",
+        "text": "",
+        "tools": [
+          {
+            "name": "Edit"
+          }
+        ]
+      },
+      {
+        "kind": "message",
+        "role": "assistant",
+        "text": "Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafted and the changelog is updated. Release notes are drafte\n… (truncated)"
+      }
+    ]
+  }
+}
