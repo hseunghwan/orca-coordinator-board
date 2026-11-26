@@ -1,4 +1,5 @@
-import { assert, test } from 'orca/testing'
+import { assert } from 'orca/testing'
+import { test } from 'vitest'
 import { translator } from './i18n'
 import { buildBoard, type RawAgent } from './model'
 import { ago, laneGroups, statusItem, waitingCounts, withExcludeLine, focusedWorkspace } from './summary'

@@ -1,5 +1,6 @@
 // Runs the worker over a mock Orca host and a fake GitHub, so no git or gh process starts.
-import { assert, mockHost, mountWorker, test } from 'orca/testing'
+import { assert, mockHost, mountWorker } from 'orca/testing'
+import { test } from 'vitest'
 import { activateWith, OPEN_DASHBOARD, type FileDeps, type GithubDeps } from './worker'
 
 const github: GithubDeps = {

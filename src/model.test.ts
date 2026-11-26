@@ -1,4 +1,5 @@
-import { assert, test } from 'orca/testing'
+import { assert } from 'orca/testing'
+import { test } from 'vitest'
 import { buildBoard, cleanTail, closedSessions, replyGuard, resumeGuard, CLOSED_MAX_AGE, type RawAgent, type RawHistorySession } from './model'
 
 const agent = (over: Partial<RawAgent>): RawAgent => ({ terminalId: 't1', title: 'fix login', agent: 'claude', state: 'waiting', stateStartedAt: 100, ...over })

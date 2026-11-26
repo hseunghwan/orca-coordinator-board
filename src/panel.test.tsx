@@ -1,4 +1,5 @@
-import { assert, mockHost, mount, test } from 'orca/testing'
+import { assert, mockHost, mount } from 'orca/testing'
+import { test } from 'vitest'
 import type { BoardView } from './model'
 import * as panel from './panel'
 

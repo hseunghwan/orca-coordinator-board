@@ -1,4 +1,5 @@
-import { assert, test } from 'orca/testing'
+import { assert } from 'orca/testing'
+import { test } from 'vitest'
 import { commandEnv, githubRepository, parseOpenPulls } from './github'
 
 test('reads GitHub.com remotes only', () => {
