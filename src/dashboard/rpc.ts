@@ -1,6 +1,8 @@
 // The frame side of the worker contract: Paseo's RPC definitions, called through orca.plugin.request.
 import { z, type ZodType } from "zod";
 import { defineRpc, type PluginRpcContract } from "../paseo/plugin-shim";
+import { workspaceChoiceSchema } from "../paseo/shared/dispatch";
+import { operationState, setupCoordinator } from "../paseo/shared/operations";
 
 type Request = (name: string, input?: unknown) => Promise<unknown>;
 const request: Request = (name, input) => (orca.plugin.request as unknown as Request).call(orca.plugin, name, input);
@@ -17,4 +19,18 @@ export const openSession = defineRpc({
   name: "board.open-session",
   input: z.object({ sessionId: z.string().min(1) }),
   output: z.object({ opened: z.boolean() }),
+});
+
+// Orca-only: the workspace a new coordinator starts in. A worker that lists candidates adds them to
+// board.operations and gets the chosen id back; without a list it starts in the focused workspace.
+export const coordinatorWorkspace = workspaceChoiceSchema.extend({ focused: z.boolean().optional() });
+export const operations = defineRpc({
+  name: operationState.name,
+  input: operationState.input,
+  output: operationState.output.extend({ workspaces: z.array(coordinatorWorkspace).optional() }),
+});
+export const startCoordinator = defineRpc({
+  name: setupCoordinator.name,
+  input: setupCoordinator.input.extend({ workspaceId: z.string().min(1).max(256).optional() }),
+  output: setupCoordinator.output,
 });
