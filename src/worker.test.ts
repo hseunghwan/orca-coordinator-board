@@ -10,6 +10,10 @@ import { fakeOrca } from './orca/fixtures/fake-orca'
 import { activateWith, OPEN_DASHBOARD, STATUS_ITEM, type FileDeps } from './worker'
 import { randomUUID } from 'node:crypto'
 import { runCli } from './cli/run'
+import { boardModel } from './dashboard/board-model'
+import type { FocusDeck } from './contract'
+import { focusQueue } from './paseo/client/focus-queue'
+import { boardSnapshot } from './paseo/shared/contract'
 
 const APP = 'aaaa1111-0000-4000-8000-000000000000'
 const opened: string[] = []
@@ -55,6 +59,18 @@ test('serves the Paseo snapshot, count and readiness for the chosen projects', a
   assert.equal(snapshot.coordinator, null)
   assert.deepEqual(await mounted.request('board.decision-count', {}), { count: 5 })
   assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: [] })
+  await mounted.deactivate()
+})
+
+test('the sidebar cards start with the decision the dashboard Focus view shows first', async () => {
+  const mounted = await mountWorker(worker(), { host: host() })
+  await mounted.request('board.scope', { kind: 'project', projectId: APP, enabled: true })
+  const snapshot = boardSnapshot.output.parse(await mounted.request('board.snapshot', { fresh: true }))
+  const deck = await mounted.request('board.focus-cards', {}) as FocusDeck
+  const entries = boardModel(snapshot, [], (_ko, en) => en).ranked.map(row => ({ key: row.key, row, receipts: [] }))
+  assert.equal(deck.cards.length, 5)
+  assert.deepEqual(deck.cards.map(card => card.key), focusQueue(entries, []))
+  assert.equal(deck.configured, true)
   await mounted.deactivate()
 })
 
