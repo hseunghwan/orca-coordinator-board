@@ -39,6 +39,7 @@ import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked
 import { canReceiveBoardInput } from "./discovery";
 import type { Signal } from "../orca/signals";
 import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operations";
+import { cliPath } from "../channel/hook";
 import { translator } from "../i18n";
 import { createHash } from "node:crypto";
 import type { SessionId } from "../orca";
@@ -71,14 +72,14 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const workers = new WorkerJournal(join(dataDir, "workers.json"));
   const reporting = new ReportingStore(join(dataDir, "reporting.json"), id => workers.worker(id)?.reports === true);
   const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()),
-    ...dispatchCommands(prefs, { fleet, journal: workers }) }, id => reporting.enabled(id));
+    ...dispatchCommands(prefs, { fleet, journal: workers, bin: host.bin }) }, id => reporting.enabled(id));
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
     const session = (await fleet.view({ maxAgeMs: 0 })).sessions.get(sessionId as SessionId);
     if (session?.surface !== "chat") return;
     const t = host.t();
-    const cli = host.bin ? host.bin.replace(/[\\/]$/, "") + (process.platform === "win32" ? "\\coordinator-board.cmd" : "/coordinator-board") : "coordinator-board";
+    const cli = host.bin ? cliPath(host.bin) : "coordinator-board";
     const text = BOARD_PREFIX + "\n" + t(
       "이 채팅이 Coordinator Board의 코디네이터로 지정되었습니다. 채팅에서는 보드 명령 가운데 report만 쓸 수 있습니다. 사람이 결정할 일이나 확인할 결과는 셸에서 다음처럼 보고하세요. 글은 표준 입력으로 넘깁니다.\n",
       "This chat is now the Coordinator Board's coordinator. From a chat only the report command works. Report a decision for the person, or a result to check, from a shell like this, with the text on standard input:\n",

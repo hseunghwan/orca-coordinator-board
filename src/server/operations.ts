@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Fleet, SessionId, World, WorkspaceRecord, WorktreeId } from "../orca";
-import { workspaceKey } from "../orca";
+import { homeNames, workspaceKey } from "../orca";
 import type { T } from "../i18n";
 import { setUsageRouting } from "../paseo/shared/usage-routing";
 import { askDigest, coordinatorPinSettings, operationState, pinCurrentCoordinator, requestWork, setCoordinatorAutoPin,
@@ -52,13 +52,12 @@ export function coordinatorWorkspaces(world: World, focusedId: string | null, se
     .sort((a, b) => Number(!!b.home) - Number(!!a.home) || Number(selected.includes(b.projectId)) - Number(selected.includes(a.projectId)) || a.title.localeCompare(b.title));
 }
 
-const homeTitle = (t: T) => t("코디네이터 운영", "Coordinator home");
 
 /** The coordinator home's workspace, registering the folder with Orca the first time. */
 async function homeWorkspace(fleet: Fleet, t: T): Promise<WorkspaceRecord> {
   const fail = (detail: string) => new Error(t("코디네이터 운영 폴더를 Orca 프로젝트로 열지 못했습니다. ", "Could not open the coordinator home as an Orca project. ") + detail);
   if (!fleet.home) throw fail("");
-  await fleet.home.ensure().catch((error: unknown) => { throw fail(error instanceof Error ? error.message : String(error)); });
+  await fleet.home.ensure(t).catch((error: unknown) => { throw fail(error instanceof Error ? error.message : String(error)); });
   fleet.invalidate();
   const workspace = fleet.home.workspace(await fleet.view({ maxAgeMs: 0 }));
   if (!workspace) throw fail(t("Orca가 이 폴더의 워크스페이스를 아직 보여 주지 않습니다. 잠시 뒤 다시 누르세요.", "Orca does not list the folder's workspace yet. Try again in a moment."));
@@ -155,7 +154,7 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
       providers: directory.providers.map(p => ({ ...p, included: !scope.excludedProviders.includes(p.id) })),
       catalog, coordinatorMode: catalog.find(m => m.provider === coordinator?.provider)?.coordinatorMode ?? null,
       routing: scope.routing, revision: scope.routingRevision,
-      workspaces: coordinatorWorkspaces(world, focused, scope.projects, { project: fleet.home?.project(world) ?? null, title: homeTitle(deps.t()) }),
+      workspaces: coordinatorWorkspaces(world, focused, scope.projects, { project: fleet.home?.project(world) ?? null, title: homeNames(deps.t()).workspace }),
     };
   });
   server.handle(setUsageRouting, async input => {
@@ -229,7 +228,7 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
     const mode = catalog.find(m => m.provider === input.expectedRoute.provider)?.coordinatorMode;
     if (!mode || (input.expectedModeId !== undefined && input.expectedModeId !== mode.id))
       throw new Error("코디네이터 권한 모드를 확인할 수 없거나 바뀌었습니다. 설정에서 실행기·모델을 새로 고쳐 주세요.");
-    const candidates = coordinatorWorkspaces(world, focused, initial.projects, { project: fleet.home?.project(world) ?? null, title: homeTitle(t) });
+    const candidates = coordinatorWorkspaces(world, focused, initial.projects, { project: fleet.home?.project(world) ?? null, title: homeNames(t).workspace });
     const picked = input.workspaceId ? candidates.find(w => w.id === input.workspaceId) : undefined;
     if (input.workspaceId && !picked) throw new Error(t("고른 워크스페이스를 이 컴퓨터에서 찾을 수 없습니다. 목록을 새로 고쳐 주세요.", "The chosen workspace is not on this computer any more. Refresh the list."));
     return lifecycle.ensure({

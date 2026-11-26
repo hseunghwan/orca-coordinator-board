@@ -199,7 +199,7 @@ test('a digest that handles board facts names the cycle, and the coordinator\'s 
   expect(await f.board.command('fact', { cycleId, sessionId: 'worker', evidenceId }, 'coord')).toEqual({ text: expect.stringContaining('accepted') })
   const mail = f.orca.writes.find(w => w[0] === 'orchestration')!
   expect(mail.slice(2, 8)).toEqual(['--to', 'orca_session_id:worker', '--from', 'term_c', '--type', 'status'])
-  expect(JSON.parse(readMarked(f.orca.transcripts.get('worker')!.at(-1)!.text)!.body)).toMatchObject({ type: 'coordinator-board.fact', answer: 'Observed Orca session status: idle.' })
+  expect(JSON.parse(readMarked(f.orca.mailbox.at(-1)!.body)!.body)).toMatchObject({ type: 'coordinator-board.fact', answer: 'Observed Orca session status: idle.' })
   await f.request('board.set-fact-auto-reply', { enabled: false })
   expect(await f.request('board.fact-reply-settings')).toEqual({ enabled: false })
   expect(f.prefs.read().factCycle).toBeUndefined()

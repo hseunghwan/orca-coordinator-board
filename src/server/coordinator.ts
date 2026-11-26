@@ -2,7 +2,7 @@
 // plugins cannot give an agent MCP tools, so each tool is a coordinator-board command answered over the
 // channel (src/channel/), and the agent is the session the channel verified. The tool bodies are
 // Paseo's. report needs the caller on the board and its reporting flag, which the board keeps
-// (./reporting.ts) as Orca sessions have no metadata. fact and review are served from ./board-facts.ts and ./tracked-review.ts, plan and assign from ./dispatch.ts.
+// (./reporting.ts) as Orca sessions have no metadata. read marks the caller's own row "self": true. fact and review are served from ./board-facts.ts and ./tracked-review.ts, plan and assign from ./dispatch.ts.
 import { z } from "zod";
 import type { PluginHandlerContext } from "../orca";
 import type { OrcaCli } from "../orca/cli";
@@ -67,7 +67,7 @@ export function coordinatorCommands(prefs: PreferenceStore, reader: Conversation
           needsRecommendation = j.evidenceId === evidence?.id;
         }
         listing.push({ id:r.id, projectId:r.projectId, sourceProjectId:r.sourceProjectId, project:r.projectTitle, title:r.title,
-          status:r.status, activityAt:r.activityAt, ...(needsRecommendation ? {needsRecommendation:true}:{}),
+          status:r.status, activityAt:r.activityAt, ...(r.id === agent.id ? {self:true}:{}), ...(needsRecommendation ? {needsRecommendation:true}:{}),
           ...(current.factCycle?.coordinator === agent.id && current.factCycle.expires > Date.now() && current.factCycle.candidates[r.id] ? {factCandidate:true} : {}) });
       }
       const final = prefs.read();

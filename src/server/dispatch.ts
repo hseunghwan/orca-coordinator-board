@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { launchAgent, type Fleet, type World, type WorkspaceRecord, type WorktreeId } from "../orca";
 import type { OrcaCli } from "../orca/cli";
-import { launchMarker, type PendingLaunch } from "../channel/hook";
+import { CLI_PATH_NOTE, cliCommand, launchMarker, type PendingLaunch } from "../channel/hook";
 import {
   dispatchInputSchema, effectiveWorkerMode, includedCatalog, resolveRoute, routeChoiceSchema, sameRoute, workerGradeSchema,
   type DispatchInput, type RoutePolicy, type WorkspaceChoice,
@@ -121,7 +121,12 @@ export function managedWorkspaces(world: World, projects: readonly string[]): Wo
 
 const uncertain = "이전 작업자 실행 결과를 확인하지 못했습니다. 두 개가 뜨지 않게 같은 요청으로는 다시 띄우지 않습니다. 워크스페이스의 터미널을 확인한 뒤 필요하면 새 requestKey로 배정하세요.";
 
-export type DispatchDeps = { fleet: Pick<Fleet, "view" | "cli" | "invalidate">; journal: WorkerJournal; sleep?: (ms: number) => Promise<void> };
+/** bin: the plugin's bin folder, named in the worker's prompt for its report command. */
+export type DispatchDeps = { fleet: Pick<Fleet, "view" | "cli" | "invalidate">; journal: WorkerJournal; bin?: string; sleep?: (ms: number) => Promise<void> };
+
+/** What the board adds under the coordinator's prompt: a board worker reports on its own card (Paseo's report_to_board). */
+export const workerNote = (bin: string) =>
+  "보드에 결정할 일이나 확인할 결과를 보고할 때는 절대 경로로 `" + cliCommand(bin) + " report --kind question --text-file -`(확인할 결과는 `--kind review`)를 실행하고 글은 표준 입력으로 넘기세요. " + CLI_PATH_NOTE;
 
 export async function dispatchWorker(deps: DispatchDeps, caller: OrcaCli | null | undefined, request: DispatchInput, getScope: () => DispatchScope) {
   const input = dispatchInputSchema.parse(request);
@@ -195,7 +200,7 @@ async function dispatchOnce(deps: DispatchDeps, caller: OrcaCli | null | undefin
     }
     const outcome = await launchAgent(caller, {
       agent: route.provider, worktree: target.id, model: route.model, effort: route.effort,
-      prompt: launchMarker(launch.launchId) + "\n" + input.prompt, retryLaunch: launch.operationId,
+      prompt: launchMarker(launch.launchId) + "\n" + input.prompt + (deps.bin ? "\n\n" + workerNote(deps.bin) : ""), retryLaunch: launch.operationId,
     });
     if (outcome.kind === "refused") {
       deps.journal.change(j => { delete j.launches[input.requestKey]; });

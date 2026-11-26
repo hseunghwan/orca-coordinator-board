@@ -28,6 +28,17 @@ export const ENV = {
   pipe: 'CB_PIPE', bin: 'CB_BIN', node: 'CB_NODE', terminal: 'CB_TERMINAL', token: 'CB_CALLER_TOKEN'
 } as const
 
+/** The coordinator-board shim in the bin folder, as an absolute path an agent can run without PATH. */
+export const cliPath = (bin: string, platform: NodeJS.Platform = process.platform) =>
+  bin.replace(/[\\/]$/, '') + (platform === 'win32' ? '\\coordinator-board.cmd' : '/coordinator-board')
+
+/**
+ * The CLI as the board names it to an agent: Orca on Windows does not hand the hook's PATH to the agent
+ * (measured 2026-11-26: the bare name exited 127 on every first try), so always the absolute path.
+ */
+export const cliCommand = (bin: string) => bin ? '"' + cliPath(bin) + '"' : 'coordinator-board'
+export const CLI_PATH_NOTE = 'Windows의 Orca는 PATH를 에이전트에 넘기지 않아 이름만으로는 찾지 못합니다(PowerShell에서는 앞에 `&`를 붙입니다).'
+
 export function callerToken(secret: string, terminalId: string): string {
   return createHmac('sha256', secret).update(terminalId).digest('hex')
 }

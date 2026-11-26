@@ -10,14 +10,15 @@ export { locateOrca } from './locate'
 
 export type ReadVerb = 'worktree ps' | 'repo list' | 'agent read' | 'agent installed' | 'account list' | 'host list' | 'agent list'
 /** Commands that send something. A write never shares a run, is never cached and never retried. */
-export type WriteVerb = 'terminal send' | 'orchestration send' | 'agent launch' | 'repo add'
+export type WriteVerb = 'terminal send' | 'orchestration send' | 'agent launch' | 'repo add' | 'repo set' | 'project setup-update' | 'worktree set'
 
 // terminal send waits up to 10 s for the prompt to start a turn. Paseo gives account usage 3 s.
 const TIMEOUT_MS: Readonly<Record<ReadVerb | WriteVerb, number>> = {
   'worktree ps': 10_000, 'repo list': 10_000, 'agent read': 10_000, 'agent installed': 10_000, 'account list': 3_000,
   // agent list --environment asks another machine; a host that does not answer soon counts as offline.
   'host list': 10_000, 'agent list': 5_000,
-  'terminal send': 30_000, 'orchestration send': 20_000, 'agent launch': 60_000, 'repo add': 20_000
+  'terminal send': 30_000, 'orchestration send': 20_000, 'agent launch': 60_000, 'repo add': 20_000,
+  'repo set': 10_000, 'project setup-update': 10_000, 'worktree set': 10_000
 }
 
 /**

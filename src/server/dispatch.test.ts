@@ -12,7 +12,8 @@ import { launchMarker, type PendingLaunch } from '../channel/hook'
 import { PreferenceStore } from '../paseo/server/preferences'
 import type { DispatchInput } from '../paseo/shared/dispatch'
 import { contribute } from './board'
-import { dispatchWorker, WorkerJournal } from './dispatch'
+import { dispatchWorker, WorkerJournal, workerNote } from './dispatch'
+import { translator } from '../i18n'
 import { rpcServer } from './rpc'
 
 const dirs: string[] = []
@@ -33,7 +34,8 @@ function setup() {
   const callerRunner: Runner = (args, ms) => { shell.push([...args]); return orca.runner(args, ms) }
   const caller = createCli(callerRunner)
   const handlers = new Map<string, (input: unknown) => Promise<unknown>>()
-  const board = contribute(rpcServer((name, fn) => handlers.set(name, fn), fleet.paseo), fleet, dir)
+  const board = contribute(rpcServer((name, fn) => handlers.set(name, fn), fleet.paseo), fleet, dir, undefined,
+    { t: () => translator('en'), bin: '/plugin/bin', focusedWorkspace: async () => null })
   const prefs = new PreferenceStore(join(dir, 'scope.json'))
   prefs.change(s => { s.projects = ['acme']; s.coordinator = 'coord'; s.routing = { C: [sol] } })
   const journal = new WorkerJournal(join(dir, 'workers.json'))
@@ -44,6 +46,13 @@ function setup() {
   const launches = () => orca.writes.filter(w => w[0] === 'agent' && w[1] === 'launch')
   return { orca, fleet, board, prefs, caller, shell, deps, state, task, launches, journal }
 }
+
+test('read marks the calling session as itself, so a coordinator does not take another running session for itself', async () => {
+  const f = setup()
+  f.prefs.change(s => { s.projects = ['acme', 'beta'] })
+  const listing = JSON.parse((await f.board.command('read', {}, 'coord')).text) as { id: string; self?: boolean }[]
+  expect(listing.map(r => [r.id, r.self ?? false])).toEqual([['coord', true], ['other', false]])
+})
 
 test('plan lists the managed workspaces and the route and worker mode of each grade', async () => {
   const f = setup()
@@ -69,7 +78,8 @@ test('assign starts one worker from the coordinator\'s own shell, marked for the
   const flag = (name: string) => args[args.indexOf(name) + 1]
   expect([flag('--agent'), flag('--worktree'), flag('--surface'), flag('--model'), flag('--effort')]).toEqual(['codex', 'id:acme::/w/acme', 'terminal', sol.model, 'high'])
   expect(pending).toEqual([{ launchId: expect.any(String), modeId: 'auto-review', role: 'worker' }])
-  expect(flag('--prompt')).toBe(launchMarker(pending[0].launchId) + '\n' + f.task.prompt)
+  expect(flag('--prompt')).toBe(launchMarker(pending[0].launchId) + '\n' + f.task.prompt + '\n\n' + workerNote('/plugin/bin'))
+  expect(workerNote('/plugin/bin')).toMatch(/^.*절대 경로로 `"\/plugin\/bin[\\/]coordinator-board(\.cmd)?" report --kind question --text-file -`/)
   expect(f.board.pendingLaunches()).toEqual([])
   expect(f.board.worker('launched-1')).toEqual({ requestKey: f.task.requestKey, reports: true, intent: expect.stringMatching(/^[a-f0-9]{64}$/), grade: 'C', parent: 'coord', mode: 'auto-review' })
   expect(await f.board.command('report', { kind: 'review', text: 'Ready.' }, 'launched-1')).toEqual({ text: 'Reported on your own Coordinator Board card.' })

@@ -47,12 +47,16 @@ export function fakeOrca(sessions: FakeSession[]) {
     hosts: [{ kind: 'local', name: 'this machine', id: 'local' }] as Record<string, unknown>[],
     remote: {} as Record<string, Record<string, unknown>[] | 'fail'>,
     /** repo add: register the folder, register it and lose the answer, or refuse. */
-    repoAdd: 'add' as 'add' | 'lose' | 'refuse'
+    repoAdd: 'add' as 'add' | 'lose' | 'refuse',
+    /** The non-Orca worktree visibility a new folder project gets (Orca 1.4.277 showed 'show'). */
+    folderVisibility: 'show'
   }
-  /** Folder projects added with repo add: { id, path } as Orca prints it, with forward slashes. */
-  const folders: { id: string; path: string }[] = []
+  /** Folder projects added with repo add, path as Orca prints it with forward slashes, and their sidebar settings. */
+  const folders: { id: string; path: string; displayName: string; workspaceName: string; visibility: string }[] = []
   const launches: { operationId: string; session: FakeSession; hiddenFor: number }[] = []
   let mails = 0
+  /** Every mail Orca took, as the recipient's mailbox holds it. */
+  const mailbox: { to: string; body: string }[] = []
   const find = (id: string) => sessions.find((s) => s.id === id)
   const bump = (s: FakeSession) => { s.updatedAt += 1 }
 
@@ -65,7 +69,7 @@ export function fakeOrca(sessions: FakeSession[]) {
     const projects = [...new Set(sessions.map((s) => s.project ?? 'acme'))].filter((p) => !folders.some((f) => f.id === p))
     return ok({
       worktrees: [...folders.map((f) => ({
-        worktreeId: `${f.id}::${f.path}`, repoId: f.id, hostId: 'local', path: f.path, branch: null, displayName: 'coordinator', repo: 'coordinator',
+        worktreeId: `${f.id}::${f.path}`, repoId: f.id, hostId: 'local', path: f.path, branch: null, displayName: f.workspaceName, repo: f.displayName,
         isArchived: false, address: { worktree: `id:${f.id}::${f.path}` }, agents: agentsIn(f.id)
       })), ...projects.map((project, i) => ({
         worktreeId: `${project}::/w/${project}`, repoId: project, hostId: sessions.find((s) => (s.project ?? 'acme') === project)?.hostId ?? 'local',
@@ -104,7 +108,8 @@ export function fakeOrca(sessions: FakeSession[]) {
     }
     if (verb === 'repo list') {
       const repos = [...new Set(sessions.map((s) => s.project ?? 'acme'))].filter((id) => !folders.some((f) => f.id === id)).map((id) => ({ id, path: '/w/' + id, displayName: id }))
-      return ok({ repos: [...repos, ...folders.map((f) => ({ ...f, displayName: 'coordinator', kind: 'folder' }))] })
+      return ok({ repos: [...repos, ...folders.map((f) => ({ id: f.id, path: f.path, displayName: f.displayName, kind: 'folder',
+        externalWorktreeVisibility: f.visibility }))] })
     }
     if (verb === 'agent read') {
       const id = args[2].replace('orca_session_id:', '')
@@ -140,8 +145,27 @@ export function fakeOrca(sessions: FakeSession[]) {
     if (verb === 'repo add') {
       if (behavior.repoAdd === 'refuse') return fail('invalid_argument', 'path is not a directory')
       const id = 'home-' + (folders.length + 1)
-      folders.push({ id, path: flag('--path').replace(/\\/g, '/') })
+      // A new folder project is named after its folder (observed on Orca 1.4.277).
+      folders.push({ id, path: flag('--path').replace(/\\/g, '/'), displayName: 'coordinator', workspaceName: 'coordinator', visibility: behavior.folderVisibility })
       return behavior.repoAdd === 'lose' ? 'Error: lost' : ok({ repo: { id, path: flag('--path'), kind: 'folder' } })
+    }
+    if (verb === 'repo set') {
+      const f = folders.find((x) => 'id:' + x.id === flag('--repo'))
+      if (!f) return fail('not_found', 'no such repo')
+      f.visibility = flag('--external-worktree-visibility')
+      return ok({ repo: { id: f.id } })
+    }
+    if (verb === 'project setup-update') {
+      const f = folders.find((x) => x.id === flag('--setup'))
+      if (!f) return fail('not_found', 'no such setup')
+      f.displayName = flag('--display-name')
+      return ok({ setup: { id: f.id, displayName: f.displayName } })
+    }
+    if (verb === 'worktree set') {
+      const f = folders.find((x) => `id:${x.id}::${x.path}` === flag('--worktree'))
+      if (!f) return fail('not_found', 'no such worktree')
+      f.workspaceName = flag('--display-name')
+      return ok({ worktree: { displayName: f.workspaceName } })
     }
     if (verb === 'orchestration send') {
       const id = flag('--to').replace('orca_session_id:', '')
@@ -150,11 +174,14 @@ export function fakeOrca(sessions: FakeSession[]) {
       if (!args.includes('--from')) return fail('invalid_argument', 'Could not determine the calling terminal for this orchestration command. Pass --from with your own terminal\'s handle.')
       const body = readFileSync(flag('--body-file'), 'utf8')
       const mail = 'msg_' + String(++mails).padStart(12, '0')
-      if (!behavior.dropText) say(id, 'user', [`──── From: ${flag('--from').toUpperCase()} (${flag('--from')}) (${flag('--type')}) ────`, 'Subject: ' + flag('--subject'), body,
+      mailbox.push({ to: id, body })
+      // A terminal agent gets only a notice to run the check command (observed 2026-11-26).
+      if (!behavior.dropText && find(id)!.surface === 'terminal') say(id, 'user', `You have 1 orchestration message. Run \`orca orchestration check --terminal ${find(id)!.handle}\`.`)
+      else if (!behavior.dropText) say(id, 'user', [`──── From: ${flag('--from').toUpperCase()} (${flag('--from')}) (${flag('--type')}) ────`, 'Subject: ' + flag('--subject'), body,
         `[Reply: orca orchestration reply --id ${mail} --body "..."]`, '─'.repeat(60)].join('\n'))
       return behavior.loseAnswer ? 'Error: lost' : ok({ messageId: mail })
     }
     return fail('unknown', 'not faked: ' + verb)
   }
-  return { runner, sessions, transcripts, writes, behavior, say, find, launches }
+  return { runner, sessions, transcripts, writes, behavior, say, find, launches, mailbox }
 }

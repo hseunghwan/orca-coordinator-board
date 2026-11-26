@@ -83,11 +83,11 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - **만들기**: 설정에서 고른 모델로 코디네이터를 `orca agent launch --surface terminal`로 띄운다. 기본 위치는 보드의 코디네이터 운영 폴더다(아래). 설정의 "시작할 워크스페이스"에서 다른 워크스페이스를 고르면 그곳에서 시작한다. 응답이 끊겨도 같은 실행을 `--retry-launch`로만 다시 확인하고 두 개를 띄우지 않는다. 터미널이 첫 응답을 하면 보드가 코디네이터로 지정한다. 워크스페이스 고정은 Orca에 없어서 하지 않는다.
 - **권한 모드**: 코디네이터는 권한 우회 모드로 띄운다(claude `--dangerously-skip-permissions`, codex `--dangerously-bypass-approvals-and-sandbox`). 에이전트 설정이 이미 붙였으면 그대로 두고, 없으면 한 번 붙인다. Paseo판의 자동 모드(`auto`, `auto-review`)와 다른 점이다.
 - **작업자 권한 모드**: 보드가 배정한 작업자는 Paseo의 추천 모드로 띄운다(claude `auto`, codex `auto-review`). 설정에서 claude `default`, codex `auto`, `full-access`로 바꿀 수 있다. 작업자에게는 우회 모드를 주지 않고, 에이전트 설정이 붙인 우회 인자도 뺀다. codex `full-access`(`--sandbox danger-full-access --ask-for-approval never`)만 Paseo처럼 예외로 둔다. 코디네이터의 우회 모드는 사람이 고른 것이고 작업자에게는 넘어가지 않는다.
-- **작업자 배정**: `coordinator-board plan`이 관리 프로젝트, 워크스페이스, 등급별 모델과 작업자 권한 모드를 알려 주고, `coordinator-board assign`이 작업자 하나를 띄운다. 실행은 코디네이터 자신의 셸에서 `orca agent launch`로 돌아서 Orca에는 코디네이터가 넘긴 것으로 남는다. 같은 `requestKey`는 두 번 띄우지 않고, 응답이 끊기면 `--retry-launch`로만 다시 확인한다. 작업자의 등급, 부모(코디네이터), 권한 모드는 보드 데이터 폴더의 `workers.json`에 그 세션 id로 남는다.
-- **보고 명령**: Orca 플러그인은 MCP 도구를 줄 수 없어서, 코디네이터는 셸 명령 `coordinator-board`로 보드를 읽고 판단을 남긴다. 모든 에이전트 실행에 `agent.launch.before` 훅이 `CB_*` 변수와 그 터미널 전용 토큰을 넣는다. Windows의 Orca 1.4.277은 훅이 바꾼 PATH를 에이전트 프로세스에 반영하지 않아서, 코디네이터와 작업자는 charter에 적힌 절대 경로(`CB_BIN` 폴더)로 명령을 실행한다. 명령은 `read [--session]`, `classify`, `report`, `fact`(다이제스트가 허락한 사실 답장), `review`(병합된 단독 병합 기록 정리와 완료 확인), `plan`, `assign`(작업자 배정)이다. 자세한 쓰임은 `coordinator-board --help`.
+- **작업자 배정**: `coordinator-board plan`이 관리 프로젝트, 워크스페이스, 등급별 모델과 작업자 권한 모드를 알려 주고, `coordinator-board assign`이 작업자 하나를 띄운다. 실행은 코디네이터 자신의 셸에서 `orca agent launch`로 돈다. 같은 `requestKey`는 두 번 띄우지 않고, 응답이 끊기면 `--retry-launch`로만 다시 확인한다. 작업자의 등급, 부모(코디네이터), 권한 모드는 보드 데이터 폴더의 `workers.json`에 그 세션 id로 남는다.
+- **보고 명령**: Orca 플러그인은 MCP 도구를 줄 수 없어서, 코디네이터는 셸 명령 `coordinator-board`로 보드를 읽고 판단을 남긴다. 모든 에이전트 실행에 `agent.launch.before` 훅이 `CB_*` 변수와 그 터미널 전용 토큰을 넣는다. Windows의 Orca 1.4.277은 훅이 바꾼 PATH를 에이전트 프로세스에 반영하지 않는다. 그래서 charter와 보드가 배정한 작업자의 프롬프트는 명령을 처음부터 절대 경로(`CB_BIN` 폴더의 `coordinator-board`)로 실행하라고 적는다. 명령은 `read [--session]`(목록에서 `"self": true`인 행이 부른 세션 자신), `classify`, `report`, `fact`(다이제스트가 허락한 사실 답장), `review`(병합된 단독 병합 기록 정리와 완료 확인), `plan`, `assign`(작업자 배정)이다. 자세한 쓰임은 `coordinator-board --help`.
 - **요청**: 다이제스트, 작업 요청, 추천 요청을 코디네이터에게 보낸다. Orca는 실행 중인 턴에 끼워 넣을 수 없어서 코디네이터가 대기 중일 때만 보낸다. 보드가 쓴 요청에는 `[coordinator-board]` 머리말이 붙는다.
 - **채팅 코디네이터**: 기존 채팅 세션을 코디네이터로 고르면 보드가 명령 경로를 한 번 알린다. 채팅은 실행 훅을 거치지 않아 `report`만 쓸 수 있다.
-- **코디네이터 운영 폴더**: Paseo판이 플러그인 전용 워크스페이스에서 코디네이터를 만드는 것처럼, 보드는 데이터 폴더 아래 `coordinator` 폴더를 Orca의 폴더 프로젝트로 한 번 등록하고(`orca repo add --kind folder`) 새 코디네이터를 거기서 띄운다. 이미 등록돼 있으면 경로로 찾아 다시 등록하지 않는다. 사이드바에서 숨기지 않으므로 코디네이터를 바로 볼 수 있다. 이 프로젝트는 관리 프로젝트 목록과 세션 레인에 나오지 않지만, 보드가 만든 코디네이터는 그대로 코디네이터로 남는다.
+- **코디네이터 운영 폴더**: Paseo판이 플러그인 전용 워크스페이스에서 코디네이터를 만드는 것처럼, 보드는 데이터 폴더 아래 `coordinator` 폴더를 Orca의 폴더 프로젝트로 한 번 등록하고(`orca repo add --kind folder`) 새 코디네이터를 거기서 띄운다. 이미 등록돼 있으면 경로로 찾아 다시 등록하지 않는다. 쓸 때마다 Orca가 보여 주는 값을 읽고, 다를 때만 워크트리 표시를 `show`로, 프로젝트 이름을 "코디네이터 보드", 워크스페이스 이름을 "코디네이터 운영"(보드 언어가 영어면 "Coordinator Board", "Coordinator home")으로 맞춘다. 이 프로젝트는 관리 프로젝트 목록과 세션 레인에 나오지 않지만, 보드가 만든 코디네이터는 그대로 코디네이터로 남는다.
 - 채팅 메일을 보내는 보드 터미널은 코디네이터의 워크스페이스에 두고, 코디네이터가 없으면 코디네이터 운영 폴더에 둔다. 사람의 프로젝트에는 열지 않는다.
 
 ## 전송 규칙
@@ -99,10 +99,14 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - 실패해도 다시 보내지 않는다.
 - 보드가 스스로 만든 문장(사실 답, 병합 알림)은 `[coordinator-board]` 머리말을 붙여 서명한 메일로만 보낸다. 사실 답은 코디네이터 터미널, 병합 알림은 보드 메일 터미널이 서명한다. 서명할 수 없으면 보내지 않는다([AGENTS.md](AGENTS.md) 참고).
 
-## Paseo판에 있고 여기엔 아직 없는 것
+## Paseo판과 다른 점
 
-[Paseo판](https://github.com/devbrother2024/paseo-coordinator-board)에 있는 기능 가운데 아래는 아직 없다.
+[Paseo판](https://github.com/devbrother2024/paseo-coordinator-board)과 아래가 다르다. Orca가 그 기능을 주지 않아서이고, 보드에서 더 할 일은 없다.
 
+- 워크스페이스 고정: 플러그인 API와 CLI에 고정이 없다. 코디네이터 운영 폴더는 사람이 Orca 사이드바 메뉴의 **고정**으로 직접 고정한다.
+- 코디네이터가 작업자에게 넘긴 연결: Orca는 다른 에이전트의 셸에서 띄운 에이전트에 부모를 기록하지 않는다. 보드가 부모를 `workers.json`에 따로 남긴다.
+- 끼워 넣기(steer): 실행 중인 턴에 끼워 넣을 수 없다. 받는 세션이 대기 중일 때만 보낸다.
+- 터미널 세션에 보내는 서명 메일(사실 답, 병합 알림): Orca는 본문 대신 `orca orchestration check`를 실행하라는 알림만 입력한다. 받는 에이전트가 그 명령을 실행해야 본문을 읽고, 보드는 받는 쪽 기록으로 전송을 대조하지 못한다.
 - 다른 호스트의 세션 목록 넘겨 보기와 호스트 숨기기. 다른 Orca 환경의 행에는 저장소 이름이 없어서 원격 세션은 같은 저장소 id일 때만 프로젝트에 붙는다.
 - 작업자 생성 뒤 권한 모드 확인(`currentModeId`). Orca는 터미널 에이전트의 권한 모드를 알려 주지 않아, 보드는 요청한 모드만 기록한다.
 
