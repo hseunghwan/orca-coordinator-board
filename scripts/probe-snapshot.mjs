@@ -50,6 +50,18 @@ try {
   const snapshot = await request('board.snapshot', { fresh: true })
   const wall = performance.now() - start
   const { count } = await request('board.decision-count')
+  const nonJson = []
+  const walk = (v, path) => {
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return
+    if (typeof v === 'number') { if (!Number.isFinite(v)) nonJson.push(path + ' = ' + v); return }
+    if (v === undefined || typeof v === 'function' || typeof v === 'bigint' || typeof v === 'symbol') { nonJson.push(path + ' : ' + typeof v); return }
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, path + '[' + i + ']')); return }
+    const proto = Object.getPrototypeOf(v)
+    if (proto !== Object.prototype && proto !== null) { nonJson.push(path + ' : ' + (v.constructor?.name ?? 'object')); return }
+    for (const [k, x] of Object.entries(v)) walk(x, path + '.' + k)
+  }
+  walk(snapshot, 'snapshot')
+  console.log('non-JSON values:', nonJson.length, nonJson.slice(0, 15))
 
   const tally = (pick) => snapshot.sessions.reduce((acc, row) => ({ ...acc, [pick(row)]: (acc[pick(row)] ?? 0) + 1 }), {})
   const byVerb = calls.reduce((acc, c) => {

@@ -100,7 +100,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 ```sh
 npm ci                  # 개발 도구(typescript, esbuild, vitest 등)만 설치한다. 플러그인 실행에는 필요 없다
 orca plugin types .     # .orca/types 생성 (git에 올리지 않음)
-npm run build           # 워커와 대시보드를 dist/worker.mjs, dist/dashboard.js로 묶는다. 고치는 동안은 npm run watch
+npm run build           # 워커와 대시보드를 dist/worker.mjs, dist/dashboard.js로 묶고, 대시보드 탭이 여는 dist/dashboard.html을 쓴다. 고치는 동안은 npm run watch
 npm run typecheck       # npx tsc -p .
 orca plugin test .      # 테스트 (vitest)
 orca plugin check .     # 패널을 시나리오별로 그려 보고 대시보드를 정적 검사한다 (src/panel.check.ts)

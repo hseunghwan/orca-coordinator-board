@@ -24,9 +24,9 @@ function worker(calls: string[][] = []) {
   }
 }
 
-function host() {
+function host(storage: Record<string, string | string[]> = { locale: 'en' }) {
   return mockHost({
-    storage: { locale: 'en' },
+    storage,
     results: {
       'workspace.list': {
         workspaces: [
@@ -127,5 +127,14 @@ test('does not write the key file into a workspace on another host', async () =>
   const mounted = await mountWorker(worker(), { host: h, commands: [OPEN_DASHBOARD] })
   assert.match(String(await mounted.command(OPEN_DASHBOARD)), /another host/)
   assert.deepEqual(opened, [])
+  await mounted.deactivate()
+})
+
+test('takes the projects chosen in version 0.1 once, then forgets the old key', async () => {
+  const h = host({ locale: 'en', selectedProjects: [APP] })
+  const mounted = await mountWorker(worker(), { host: h })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: [] })
+  assert.equal(Object.hasOwn(h.data().storage, 'selectedProjects'), false)
   await mounted.deactivate()
 })

@@ -30,6 +30,7 @@ export type WorkerDeps = {
 }
 
 const LOCALE = 'locale'
+const LEGACY_SELECTION = 'selectedProjects'
 export const STATUS_ITEM = 'waiting'
 export const OPEN_DASHBOARD = 'open-dashboard'
 const POLL_MS = 30_000
@@ -79,6 +80,13 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   const board = contribute(rpcServer((name, handler) => orca.panels.handle(name, handler), fleet.paseo), fleet, deps.dataDir, deps.pulls)
   let locale = 'en'
   let stopped = false
+  void orca.storage.get(LEGACY_SELECTION).then(async (value) => {
+    if (Array.isArray(value) && board.adoptLegacySelection(value)) {
+      orca.log(`took ${value.length} project(s) chosen in version 0.1`)
+      changed()
+    }
+    await orca.storage.delete(LEGACY_SELECTION)
+  }, () => undefined)
   const readLocale = () => orca.storage.get(LOCALE).then((value) => { if (typeof value === 'string' && value) locale = value }, () => undefined)
   void readLocale()
   const localeWatch = orca.storage.onDidChange((change) => { if (change.key === LOCALE) void readLocale() })

@@ -7,7 +7,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 ## Operational Commands
 
 - 개발 의존성: `npm ci`(typescript, @types/node, esbuild, zod, vitest, react, react-dom). 잠금 파일은 `package-lock.json` 하나다.
-- 빌드: `npm run build`(`dist/worker.mjs`, `dist/dashboard.js`). 고치는 동안은 `npm run watch`.
+- 빌드: `npm run build`(`dist/worker.mjs`, `dist/dashboard.js`, 대시보드 entry `dist/dashboard.html`). Orca는 선언된 프레임 entry를 확장자와 상관없이 HTML 문서로 읽으므로 entry를 `.js`로 두지 않는다. 고치는 동안은 `npm run watch`.
 - Orca 타입: `orca plugin types .` (`.orca/types`, git에 올리지 않음)
 - 타입 검사: `npm run typecheck`
 - 실기 확인: `node scripts/probe-snapshot.mjs`(실제 orca CLI로 스냅샷을 만든다. 출력에 실제 세션 이름이 나오니 커밋하지 않는다).

@@ -158,5 +158,13 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     invalidate() { fleet.invalidate(); invalidateCount(); },
     count: () => reads.count(() => buildSnapshot(fleet.paseo)),
     configured: () => prefs.read().projects.length > 0,
+    /** Version 0.1 kept the chosen projects in plugin storage. Take them once, only into an empty choice. */
+    adoptLegacySelection(projectIds: readonly unknown[]): boolean {
+      const ids = [...new Set(projectIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
+      if (!ids.length || prefs.read().projects.length) return false;
+      prefs.change(scope => { if (!scope.projects.length) scope.projects = ids; });
+      invalidateCount();
+      return true;
+    },
   };
 }
