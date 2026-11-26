@@ -37,6 +37,9 @@ Commit: `2e9d12884e8f1c312a956e47628a554c6874ce5a`
 - `shared/usage-routing.ts`
 - `shared/work-images.ts`
 - `shared/workspace-pull.ts`
+- `server/notes.ts`
+- `server/preferences.ts`
+- `server/snapshot-reads.ts`
 - `client/decision-edit-order.ts`
 - `client/decision-priority.ts`
 - `client/decision-receipts.ts`
@@ -78,6 +81,7 @@ Commit: `2e9d12884e8f1c312a956e47628a554c6874ce5a`
 - `test/route-options.test.ts`
 - `test/send-shortcut.test.ts`
 - `test/session-reply-draft.test.ts`
+- `test/snapshot-reads.test.ts`
 - `test/tone.test.ts`
 - `test/tracked-session-targets.test.ts`
 - `test/view-mode.test.ts`
