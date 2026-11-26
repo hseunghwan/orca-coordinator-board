@@ -62,7 +62,7 @@ export class HostWatch {
     })));
     const anyOnline = answers.some(a => a !== null);
     return {
-      hosts: hosts.map(h => ({ id: h.id, kind: h.kind, name: h.name,
+      hosts: hosts.map(h => ({ id: h.id, label: h.name, current: h.kind === "local",
         status: h.kind === "local" ? "online" as const
           : h.kind === "ssh" ? (h.connected ? "online" as const : h.connected === false ? "offline" as const : "unknown" as const)
           : online.get(h.id) ? "online" as const : "offline" as const })),

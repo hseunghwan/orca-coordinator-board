@@ -18,13 +18,13 @@ export const operations = defineRpc({
   input: operationState.input,
   output: operationState.output.extend({ workspaces: z.array(coordinatorWorkspace).optional() }),
 });
-/** Orca's other hosts (orca host list) and what runs on the paired ones; read only. */
-export const hostStatus = z.enum(["online", "offline", "unknown"]);
+/** Orca's hosts (orca host list, this machine current) and what runs on the paired ones; read only. */
+export const hostStatus = z.enum(["online", "connecting", "idle", "offline", "error", "unknown"]);
 export const boardHosts = defineRpc({
   name: "board.hosts",
-  input: z.object({}),
+  input: z.strictObject({}),
   output: z.object({
-    hosts: z.array(z.object({ id: z.string(), kind: z.enum(["local", "ssh", "environment"]), name: z.string(), status: hostStatus })),
+    hosts: z.array(z.object({ id: z.string().min(1), label: z.string(), status: hostStatus.catch("unknown"), current: z.boolean() })),
     /** Running sessions on paired environments that answered, matched to a local project when one fits. */
     remoteRunning: z.array(z.object({
       hostId: z.string(), hostName: z.string(), sessionId: z.string(), title: z.string(), projectId: z.string().nullable(),

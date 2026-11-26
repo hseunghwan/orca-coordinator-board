@@ -2,7 +2,8 @@
 // and scope, board facts, the tracked decision ledger and its queue, and the session sends
 // (board.send-decision, board.ask-clarification, tracked replies) through fleet.deliver. Paseo's hooks
 // are Orca signals (src/orca/signals.ts) that the worker passes to signal(). Pull request mapping,
-// lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts.
+// lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts. Notes and the reporting
+// flag (./reporting.ts, as Orca has no agent metadata) are saved as Paseo saves them.
 import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, PluginServerContext } from "../orca";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
@@ -10,7 +11,8 @@ import { boardReadiness } from "../paseo/shared/readiness";
 import { decisionCount } from "../paseo/shared/decision-count";
 import { sendDecision } from "../paseo/shared/decision-actions";
 import { askClarification, sourceQuestion } from "../paseo/shared/clarifications";
-import { boardDecisionCount, boardScope, boardSnapshot } from "../paseo/shared/contract";
+import { boardDecisionCount, boardScope, boardSnapshot, saveNote, setReporting } from "../paseo/shared/contract";
+import { ReportingStore } from "./reporting";
 import { SnapshotReads } from "../paseo/server/snapshot-reads";
 import { NoteStore } from "../paseo/server/notes";
 import { isManagedCoordinator, setCoordinator, PreferenceStore } from "../paseo/server/preferences";
@@ -66,8 +68,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const hosts = new HostWatch(fleet.cli, () => fleet.view());
   server.handle(boardHosts, () => hosts.read(host.t()));
   const workers = new WorkerJournal(join(dataDir, "workers.json"));
+  const reporting = new ReportingStore(join(dataDir, "reporting.json"), id => workers.worker(id)?.reports === true);
   const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()),
-    ...dispatchCommands(prefs, { fleet, journal: workers }) });
+    ...dispatchCommands(prefs, { fleet, journal: workers }) }, id => reporting.enabled(id));
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
@@ -110,6 +113,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       void mergeNotifications.resume(paseo).catch(() => console.warn("Could not resume queued merge notifications."));
     }
     const visible = sessions.filter(row => isCurrentMembership(row, latest));
+    for (const row of visible) {
+      if (reporting.enabled(row.id)) row.reporting = true;
+      else delete row.reporting;
+    }
     const visibleNotes = notes.visible(new Set(visible.map(s => s.id)));
     facts.decorate(visible, evidence, visibleNotes);
     for (const row of visible) {
@@ -202,6 +209,22 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     return JSON.stringify([projects, sessionLinks, coordinator, projectRepositories]);
   }, decisionCount);
   const invalidateCount = () => reads.invalidate();
+  server.handle(saveNote, async (input, { paseo }) => {
+    const sessions = await discoverSessions(paseo);
+    if (!managedSessions(sessions, prefs.read()).some(session => session.id === input.sessionId)) {
+      throw new Error("이 호스트에서 해당 세션을 찾지 못했습니다. 보드를 새로 고쳐 주세요.");
+    }
+    const outcome = notes.update(input);
+    if (outcome.ok) invalidateCount();
+    return outcome;
+  });
+  server.handle(setReporting, async ({ sessionId, enabled }, { paseo }) => {
+    const sessions = await discoverSessions(paseo);
+    if (!managedSessions(sessions, prefs.read()).some(session => session.id === sessionId)) throw new Error("세션을 찾지 못했습니다.");
+    reporting.set(sessionId, enabled);
+    invalidateCount();
+    return { ok: true };
+  });
   server.handle(sendDecision, async (input, { paseo }) => {
     const result = await decisions.send(paseo, input);
     invalidateCount();

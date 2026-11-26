@@ -43,10 +43,10 @@ test('hosts list with status; running sessions of answering environments, matche
   }
   const out = await f.hosts()
   expect(out.hosts).toEqual([
-    { id: 'local', kind: 'local', name: 'this machine', status: 'online' },
-    { id: 'ssh-1', kind: 'ssh', name: 'build box', status: 'offline' },
-    { id: 'env-1', kind: 'environment', name: 'studio', status: 'online' },
-    { id: 'env-2', kind: 'environment', name: 'laptop', status: 'offline' }
+    { id: 'local', label: 'this machine', status: 'online', current: true },
+    { id: 'ssh-1', label: 'build box', status: 'offline', current: false },
+    { id: 'env-1', label: 'studio', status: 'online', current: false },
+    { id: 'env-2', label: 'laptop', status: 'offline', current: false }
   ])
   expect(out.remoteRunning.map((r: any) => [r.sessionId, r.projectId, r.hostName])).toEqual([['r1', 'acme', 'studio'], ['r3', 'acme', 'studio'], ['r4', null, 'studio']])
   expect(out.remoteRunning[0]).toMatchObject({ title: 'Port tests', workspace: 'main', activityAt: new Date(1_000).toISOString() })
@@ -58,7 +58,7 @@ test('hosts list with status; running sessions of answering environments, matche
 
 test('with no paired environment answering, remote sessions are empty and the board says why', async () => {
   const f = setup()
-  expect(await f.hosts()).toMatchObject({ hosts: [{ id: 'local', status: 'online' }], remoteRunning: [], note: 'There is no paired Orca environment.' })
+  expect(await f.hosts()).toMatchObject({ hosts: [{ id: 'local', status: 'online', current: true }], remoteRunning: [], note: 'There is no paired Orca environment.' })
   const g = setup()
   g.orca.behavior.hosts = [{ kind: 'local', name: 'this machine', id: 'local' }, { kind: 'environment', name: 'studio', id: 'env-1' }]
   g.orca.behavior.remote = { 'env-1': 'fail' }

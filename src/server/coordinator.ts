@@ -1,8 +1,8 @@
 // Adapted from paseo-coordinator-board server/coordinator.ts and server/reporting.ts @ 2e9d128. Orca
 // plugins cannot give an agent MCP tools, so each tool is a coordinator-board command answered over the
 // channel (src/channel/), and the agent is the session the channel verified. The tool bodies are
-// Paseo's. report needs the caller on the board instead of Paseo's reporting metadata, which Orca
-// sessions lack. fact and review are served from ./board-facts.ts and ./tracked-review.ts, plan and assign from ./dispatch.ts.
+// Paseo's. report needs the caller on the board and its reporting flag, which the board keeps
+// (./reporting.ts) as Orca sessions have no metadata. fact and review are served from ./board-facts.ts and ./tracked-review.ts, plan and assign from ./dispatch.ts.
 import { z } from "zod";
 import type { PluginHandlerContext } from "../orca";
 import type { OrcaCli } from "../orca/cli";
@@ -50,7 +50,8 @@ export function tool<I extends z.ZodType>(audience: Tool["audience"], input: I, 
   return { audience, input, execute: execute as Tool["execute"] };
 }
 
-export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Record<"plan" | "assign" | "fact" | "review", Tool>): Record<Command, Tool> {
+export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Record<"plan" | "assign" | "fact" | "review", Tool>,
+  canReport: (sessionId: string) => boolean = () => false): Record<Command, Tool> {
   const read = tool("coordinator", z.object({ sessionId: z.string().optional() }), async ({ sessionId }, { paseo, agent }) => {
     const rows = await managedRowsForCoordinator(paseo, prefs, agent.id);
     if (!sessionId) {
@@ -99,7 +100,8 @@ export function coordinatorCommands(prefs: PreferenceStore, reader: Conversation
   const report = tool("session", reportInput, async (input, { paseo, agent }) => {
     const rows = await discoverSessions(paseo);
     const scope = prefs.read();
-    if (scope.coordinator !== agent.id && !managedSessions(rows, scope).some(r => r.id === agent.id)) {
+    // Paseo gives report_to_board only to a session whose reporting metadata is set; the coordinator reports on its own card.
+    if (scope.coordinator !== agent.id && (!canReport(agent.id) || !managedSessions(rows, scope).some(r => r.id === agent.id))) {
       return { isError: true, text: "Board reporting is disabled for this session." };
     }
     return recordReport(notes, agent.id, input);

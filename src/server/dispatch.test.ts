@@ -72,6 +72,7 @@ test('assign starts one worker from the coordinator\'s own shell, marked for the
   expect(flag('--prompt')).toBe(launchMarker(pending[0].launchId) + '\n' + f.task.prompt)
   expect(f.board.pendingLaunches()).toEqual([])
   expect(f.board.worker('launched-1')).toEqual({ requestKey: f.task.requestKey, reports: true, intent: expect.stringMatching(/^[a-f0-9]{64}$/), grade: 'C', parent: 'coord', mode: 'auto-review' })
+  expect(await f.board.command('report', { kind: 'review', text: 'Ready.' }, 'launched-1')).toEqual({ text: 'Reported on your own Coordinator Board card.' })
   expect(JSON.parse((await f.board.command('assign', { job: f.task }, 'coord', f.caller)).text)).toEqual(result)
   await expect(f.board.command('assign', { job: { ...f.task, prompt: '다른 작업' } }, 'coord', f.caller)).rejects.toThrow('다른 작업')
   await expect(f.board.command('assign', { job: { ...f.task, requestKey: 'request-dispatch-02' } }, 'coord')).rejects.toThrow('코디네이터 터미널')
