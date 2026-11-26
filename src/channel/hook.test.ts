@@ -29,14 +29,17 @@ test('a launch without PATH, or with a POSIX one on Windows, keeps its PATH; no 
   expect(noTerminal).not.toHaveProperty('CB_TERMINAL')
 })
 
-test('only the marked coordinator launch gets its permission mode, right after the program', () => {
+test('only the marked coordinator launch gets its permission mode, before the prompt, and never a bypass', () => {
   const marked = (agent: string, command: string) => withChannel(launch({ agent, command }), channel, { launchId: 'L1', modeId: agent === 'codex' ? 'auto-review' : 'auto' }).command
-  const prompt = "'" + launchMarker('L1') + "\nRun coordinator-board read --session x; never use --permission-mode bypassPermissions'"
-  expect(marked('claude', 'claude --model haiku ' + prompt)).toBe('claude --permission-mode auto --model haiku ' + prompt)
-  expect(marked('claude', '"C:\\Program Files\\claude.exe" ' + prompt)).toBe('"C:\\Program Files\\claude.exe" --permission-mode auto ' + prompt)
-  expect(marked('codex', 'codex ' + prompt)).toBe('codex --approve-for-me ' + prompt)
+  const prompt = "'" + launchMarker('L1') + "\nRun coordinator-board read; never use --permission-mode bypassPermissions'"
+  // The shape Orca 1.4.277 printed for a claude terminal launch.
+  const program = "'C:\\Users\\u\\AppData\\Roaming\\npm\\claude.cmd' '--plugin-dir' 'C:\\x'\"\\\"'y'"
+  expect(marked('claude', program + " '--dangerously-skip-permissions' '--model' 'haiku' '--' " + prompt))
+    .toBe(program + " '--model' 'haiku' --permission-mode auto '--' " + prompt)
+  expect(marked('claude', 'claude --model haiku ' + prompt)).toBe('claude --model haiku --permission-mode auto ' + prompt)
+  expect(marked('codex', "codex '--dangerously-bypass-approvals-and-sandbox' -- " + prompt)).toBe('codex --approve-for-me -- ' + prompt)
   expect(marked('claude', "claude 'another prompt'")).toBe("claude 'another prompt'")
-  expect(marked('claude', 'claude --permission-mode default ' + prompt)).toBe('claude --permission-mode default ' + prompt)
+  expect(marked('claude', "claude '--permission-mode' 'default' " + prompt)).toBe("claude '--permission-mode' 'default' " + prompt)
   expect(marked('gemini', 'gemini ' + prompt)).toBe('gemini ' + prompt)
-  expect(withChannel(launch({ command: 'claude ' + prompt }), channel, { launchId: 'L1', modeId: null }).command).toBe('claude ' + prompt)
+  expect(withChannel(launch({ command: "claude '--dangerously-skip-permissions' " + prompt }), channel).command).toBe("claude '--dangerously-skip-permissions' " + prompt)
 })

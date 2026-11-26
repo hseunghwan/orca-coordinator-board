@@ -53,16 +53,21 @@ export const COORDINATOR_MODES: Readonly<Record<string, readonly { id: string; l
   ]
 }
 
-const PERMISSION_FLAGS = /(?:^|\s)(?:--permission-mode|--dangerously-skip-permissions|--approve-for-me|--sandbox|-s|--ask-for-approval|-a|--dangerously-bypass-approvals-and-sandbox|--full-auto)(?=\s|=|$)/
+// Orca writes each word POSIX-quoted ('--model' 'haiku' '--' '<prompt>', observed 2026-11-26), and adds
+// the bypass flag when the person's agent setting asks for it.
+const PERMISSION_FLAGS = /(?:^|\s)'?(?:--permission-mode|--approve-for-me|--sandbox|-s|--ask-for-approval|-a|--full-auto)'?(?=\s|=|$)/
+const BYPASS_FLAGS = /\s'?(?:--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox)'?(?=\s|$)/g
 
 /** The first line of a coordinator's launch prompt; the hook finds the launch by it in the command. */
 export const launchMarker = (launchId: string) => '[coordinator-board:' + launchId + ']'
 
-/** After the program, which may be a quoted path: flags placed there reach the CLI whatever comes after. */
-function afterProgram(command: string, args: readonly string[]): string {
-  const end = command.startsWith('"') ? command.indexOf('"', 1) + 1 : command.search(/\s|$/)
-  if (end <= 0) return command
-  return command.slice(0, end) + ' ' + args.join(' ') + command.slice(end)
+/** Before the prompt word and the '--' that ends the options in front of it. */
+function beforePrompt(command: string, at: number, args: readonly string[]): string {
+  const quote = command[at - 1] === "'" || command[at - 1] === '"' ? 1 : 0
+  const head = command.slice(0, at - quote)
+  const end = /\s'?--'?\s*$/.exec(head)
+  const cut = end ? end.index : head.trimEnd().length
+  return command.slice(0, cut) + ' ' + args.join(' ') + command.slice(cut)
 }
 
 /**
@@ -81,10 +86,13 @@ export function withChannel(event: LaunchEvent, channel: ChannelEnv, coordinator
   if (pathKey && !foreign) env[pathKey] = event.env[pathKey] ? channel.bin + channel.delimiter + event.env[pathKey] : channel.bin
   let command = event.command
   const at = coordinator?.modeId ? command.indexOf(launchMarker(coordinator.launchId)) : -1
-  // Only the words before the prompt: the charter itself may mention flags.
-  if (coordinator?.modeId && at > 0 && !PERMISSION_FLAGS.test(command.slice(0, at))) {
-    const mode = COORDINATOR_MODES[event.agent]?.find((m) => m.id === coordinator.modeId)
-    if (mode) command = afterProgram(command, mode.args)
+  const mode = COORDINATOR_MODES[event.agent]?.find((m) => m.id === coordinator?.modeId)
+  if (mode && at > 0) {
+    // Only the words before the prompt: the charter itself may mention flags. A coordinator never
+    // runs with permissions bypassed, as in Paseo, whatever the agent setting says.
+    const head = command.slice(0, at).replace(BYPASS_FLAGS, '')
+    command = head + command.slice(at)
+    if (!PERMISSION_FLAGS.test(head)) command = beforePrompt(command, head.length, mode.args)
   }
   return { ...event, env, command }
 }
