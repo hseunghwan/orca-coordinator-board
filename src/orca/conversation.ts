@@ -9,7 +9,11 @@ export const agentRead = z.object({
 })
 export type AgentRead = z.output<typeof agentRead>
 
-export type TimelineItem = { type: 'user_message' | 'assistant_message'; text: string }
+/** The Paseo item shapes excerpt() reads. Orca yields only the two text kinds. */
+export type TimelineItem =
+  | { type: 'user_message'; text: string; messageId?: string; clientMessageId?: string }
+  | { type: 'assistant_message'; text: string }
+  | { type: 'tool_call'; callId: string; name: string; status: string; agentMessage?: { event: 'message'; sender: { id: string }; text: string } }
 export interface TimelinePage {
   epoch: string
   entries: { item: TimelineItem; seqEnd: number; timestamp?: string }[]
@@ -42,7 +46,7 @@ export function timelinePage(read: AgentRead, session: SessionRecord | undefined
     if (last && entry.role === 'assistant' && text.endsWith(TRUNCATED) && session?.surface === 'terminal' && session.lastAssistant?.startsWith(text.slice(0, -TRUNCATED.length))) {
       text = session.lastAssistant
     }
-    const item: TimelineItem = { type: entry.role === 'assistant' ? 'assistant_message' : 'user_message', text }
+    const item: TimelineItem = entry.role === 'assistant' ? { type: 'assistant_message', text } : { type: 'user_message', text }
     // The read has no times; a finished last answer was given when the session entered its state.
     const timestamp = last && entry.role === 'assistant' && read.state === 'done' && session ? new Date(session.stateStartedAt).toISOString() : undefined
     return { item, seqEnd: texts.length - 1 - index, ...(timestamp ? { timestamp } : {}) }

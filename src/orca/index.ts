@@ -1,5 +1,7 @@
 // The board's one door to Orca. Ported Paseo server code receives `paseo` from here: the read
 // methods it calls, answered from one World per snapshot instead of the Paseo SDK.
+import type { z } from 'zod'
+import type { PluginRpcContract } from '../paseo/plugin-shim'
 import { agentRead, timelinePage, type TimelinePage } from './conversation'
 import type { OrcaCli } from './cli'
 import {
@@ -21,12 +23,18 @@ export interface PaseoReads {
     list(options?: unknown): Promise<Page<{ agent: PaseoAgentView; project: PaseoProjectRef }>>
     ref(id: string): { timeline: { refetch(options: { direction: 'tail'; projection: 'projected'; limit: number }): Promise<TimelinePage> } }
   }
-  workspaces: { list(options?: { filter?: { projectId?: string } }): Promise<Page<PaseoWorkspaceView>> }
+  workspaces: { list(options?: { filter?: { projectId?: string; [key: string]: unknown }; [key: string]: unknown }): Promise<Page<PaseoWorkspaceView>> }
   projects: { list(): Promise<{ projects: PaseoProjectView[] }> }
 }
 
-/** Stands in for Paseo's handler context so ported files change only their import path. */
+/** Stand in for Paseo's handler and server contexts so ported files change only their import path. */
 export type PluginHandlerContext = { paseo: PaseoReads }
+export interface PluginServerContext {
+  handle<I extends z.ZodType, O extends z.ZodType>(
+    rpc: PluginRpcContract<I, O>,
+    handler: (input: z.output<I>, context: PluginHandlerContext) => z.input<O> | Promise<z.input<O>>
+  ): void
+}
 
 export interface Fleet {
   /** A World no older than maxAgeMs (default 2 s); concurrent callers share one read. */

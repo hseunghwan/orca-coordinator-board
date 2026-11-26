@@ -1,4 +1,5 @@
 // GitHub lookups the worker runs through git and gh, parsed without dependencies.
+import { execFile } from 'node:child_process'
 import { cleanLine, type PullItem, type PullReason } from './model'
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?\/[a-z0-9_.-]{1,100}$/i
@@ -33,6 +34,19 @@ export function commandEnv(env: Readonly<Record<string, string | undefined>>, pl
     next.HOME ??= profile
   }
   return next
+}
+
+/** git or gh with shell:false, a timeout, a buffer cap and prompts off. */
+export function run(command: 'git' | 'gh', args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, {
+      shell: false,
+      windowsHide: true,
+      timeout: command === 'gh' ? 15_000 : 3_000,
+      maxBuffer: 2 * 1024 * 1024,
+      env: commandEnv(process.env, process.platform)
+    }, (error: Error | null, stdout: string | Buffer) => (error ? reject(error) : resolve(String(stdout))))
+  })
 }
 
 export const SCAN_LIMIT = 200

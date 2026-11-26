@@ -8,17 +8,17 @@ const session = (n: number) => fixtureWorld().sessions.get(sid(n))!
 test('a cut last terminal answer is restored from the session row when the row starts with what was kept', () => {
   const page = timelinePage(read('agent-read-terminal-cut.json'), session(7))
   const last = page.entries.at(-1)!
-  expect(last.item.type).toBe('assistant_message')
-  expect(last.item.text).toBe(session(7).lastAssistant)
-  expect(last.item.text.endsWith('2.4.0 or 3.0.0?')).toBe(true)
+  expect(last.item).toEqual({ type: 'assistant_message', text: session(7).lastAssistant })
+  expect(session(7).lastAssistant!.endsWith('2.4.0 or 3.0.0?')).toBe(true)
   expect(last.timestamp).toBe(new Date(session(7).stateStartedAt).toISOString())
 })
 
 test('nothing is restored when the row does not start with the kept text, or the session is a chat', () => {
   const raw = read('agent-read-terminal-cut.json')
   const other = { ...session(7), lastAssistant: 'Something else entirely.' }
-  expect(timelinePage(raw, other).entries.at(-1)!.item.text.endsWith(TRUNCATED)).toBe(true)
-  expect(timelinePage(raw, { ...session(7), surface: 'chat' }).entries.at(-1)!.item.text.endsWith(TRUNCATED)).toBe(true)
+  const lastText = (page: ReturnType<typeof timelinePage>) => (page.entries.at(-1)!.item as { text: string }).text
+  expect(lastText(timelinePage(raw, other)).endsWith(TRUNCATED)).toBe(true)
+  expect(lastText(timelinePage(raw, { ...session(7), surface: 'chat' })).endsWith(TRUNCATED)).toBe(true)
 })
 
 test('only text turns count, newest last, with seqEnd counting the text turns after each', () => {
