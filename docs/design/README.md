@@ -37,10 +37,11 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 - 메일 항목은 `[Reply: …]` 줄 뒤에 `────` 줄이 하나 더 붙는다. 대조는 두 줄을 모두 떼고 표식을 찾는다.
 - 워커 경로 전체(`board.send-decision` → `fleet.deliver` → `orchestration send --from`)로 채팅 세션에 답장 하나를 보냈다. outbox는 `delivered`(메일 id)가 됐고, 받는 쪽 기록에서 같은 표식과 앞부분으로 찾았고, 다음 스냅샷의 `replyHistory`에 세션의 답이 붙었고, 카드는 답한 것으로 바뀌었다(`scripts/probe-send.mjs`).
 
+- 터미널 세션: 포커스 밖 워크스페이스의 터미널 에이전트에 `orca terminal send --terminal <term_…> --text … --enter --wait-submit 10`을 보내면 그대로 들어간다(`input_accepted`, `turn_started`). 어느 터미널에도 속하지 않은 프로세스(워커와 같은 경우)에서 보내도 된다. 메일과 달리 발신 터미널이 필요 없다. 포커스 제한은 host `terminal.sendText`에만 있다.
+- 터미널 기록의 user 항목도 1,214자에서 `… (truncated)`로 잘린다. 첫 줄의 표식은 남으므로 대조에 쓸 수 있다.
+
 ## 확인할 것
 
-- CLI `terminal send`도 포커스된 워크스페이스에만 보내는가. 거절 문구가 `outside the active worktree`와 같은가(대체 경로가 이 문구로 갈린다). 시험할 터미널 에이전트를 사람이 정해 줘야 한다.
-- host `terminal.sendText`가 여러 줄 글을 스스로 붙여넣기 괄호로 감싸는가. 대체 경로는 괄호를 직접 붙인다.
 - host `terminal.create`가 돌려주는 `terminalId`를 CLI `--from`에 그대로 쓸 수 있는가, 지금 권한으로 열 수 있는가.
 - `agent.launch.before`의 `event.env`에 PATH가 들어오는가.
 - 워커 env에서 `orca.exe`가 런타임을 찾는가.
