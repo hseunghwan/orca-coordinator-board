@@ -8,7 +8,7 @@ import { decisionSummary } from "../paseo/client/decision-summary";
 import type { Card } from "../paseo/client/model";
 import { sendDecision, type DecisionInput } from "../paseo/shared/decision-actions";
 import { requestRecommendation } from "../paseo/shared/recommendation";
-import type { OpenSession } from "./cards";
+import type { OpenSession } from "./board-layout";
 import { useDecisionInteraction } from "./decision-editing";
 import { DecisionReplyInput } from "./decision-reply";
 import { noRetry, retryKey } from "./request-key";

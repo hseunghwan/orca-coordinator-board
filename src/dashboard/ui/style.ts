@@ -79,6 +79,21 @@ html.dark .textarea{background:color-mix(in oklab,var(--input) 30%,transparent)}
 .textarea:disabled{opacity:.5;cursor:not-allowed}
 .textarea-strong{min-height:64px;padding:10px;border-width:2px;border-color:color-mix(in oklab,var(--muted-fg) 55%,transparent)}
 .textarea-strong:focus{border-color:var(--primary)}
+.input{display:block;width:100%;height:36px;min-width:0;padding:4px 12px;border:1px solid var(--input);border-radius:var(--r-md);background:transparent;color:var(--fg);font-size:14px;line-height:20px;box-shadow:var(--shadow-xs);outline:none;transition:border-color .15s,box-shadow .15s}
+html.dark .input{background:color-mix(in oklab,var(--input) 30%,transparent)}
+.input::placeholder{color:var(--muted-fg)}
+.input:focus{border-color:var(--ring);box-shadow:var(--focus)}
+.input:disabled{opacity:.5;cursor:not-allowed}
+.option{display:flex;flex-direction:column;gap:4px;width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg);color:var(--fg);text-align:left;cursor:pointer;outline:none;transition:background-color .15s,border-color .15s}
+.option:hover{background:color-mix(in oklab,var(--accent) 50%,transparent)}
+.option[aria-checked=true]{border-color:var(--muted-fg);background:var(--accent);color:var(--accent-fg)}
+.option:focus-visible{border-color:var(--ring);box-shadow:var(--focus)}
+.option:disabled{opacity:.5;cursor:default}
+html.dark .option{border-color:var(--input)}
+html.dark .option[aria-checked=true]{border-color:var(--muted-fg)}
+.check{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 4px;color:var(--muted-fg);font-size:13px;cursor:pointer}
+.check input{width:15px;height:15px;margin:0;accent-color:var(--primary);cursor:pointer}
+.check:has(input:disabled){opacity:.5;cursor:default}
 .select{height:32px;min-width:0;max-width:100%;padding:0 8px;border:1px solid var(--input);border-radius:var(--r-md);background:transparent;color:var(--fg);font-size:14px;box-shadow:var(--shadow-xs);outline:none;cursor:pointer;text-overflow:ellipsis}
 html.dark .select{background:color-mix(in oklab,var(--input) 30%,transparent)}
 .select:focus-visible{border-color:var(--ring);box-shadow:var(--focus)}

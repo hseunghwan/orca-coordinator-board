@@ -6,7 +6,7 @@ import type { HistoryLinks, HistorySession } from "../paseo/client/history-sessi
 import { mergeNotificationLabel } from "../paseo/client/merge-notification";
 import { pullUrl } from "../paseo/shared/prs";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
-import type { OpenSession } from "./cards";
+import type { OpenSession } from "./board-layout";
 import { Button, column, Disclosure, row, SessionChip, space } from "./ui/controls";
 import { useBoardLanguage } from "./ui/language";
 import { Markdown } from "./ui/markdown";

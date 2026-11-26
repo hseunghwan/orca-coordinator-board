@@ -3,13 +3,20 @@
 // solo=1 leaves one decision (the webhook reply), so sending it shows a board where everything is handled.
 // send=<n> starts the reply outcomes at the n-th of: confirmed, unconfirmed delivery, a receipt for another recipient.
 // coord=1 starts with a coordinator; fail=1 makes coordinator requests and setup fail.
+// ledger=1 adds the phase 5 ledger records; resolve=<status> answers every ledger reply with that status,
+// merge=<blocked|unconfirmed|changed> answers the merge preview or confirm that way, pull=<OPEN|CLOSED|MERGED|UNKNOWN>
+// is the lifecycle a merge record reads, repo=fail makes repository settings fail.
+import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
+import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
 import { boardSnapshot } from "../src/paseo/shared/contract";
+import { confirmPullRequestMerge, previewPullRequestMerge, readPullLifecycle, setProjectRepository } from "../src/paseo/shared/prs";
+import { cancelQueuedReply, resolveTrackedDecision } from "../src/paseo/shared/tracked-decisions";
 import { sendDecision } from "../src/paseo/shared/decision-actions";
 import { askDigest, requestWork } from "../src/paseo/shared/operations";
 import { requestRecommendation } from "../src/paseo/shared/recommendation";
 import { startCoordinator } from "../src/dashboard/rpc";
-import { coordinatorSession, fixtureOperations, fixtureSnapshot } from "./fixture";
+import { coordinatorSession, fixtureLedger, fixtureOperations, fixtureSnapshot } from "./fixture";
 
 const params = new URLSearchParams(location.search);
 const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -31,6 +38,17 @@ if (params.get("solo")) {
   snapshot.pullRequests = undefined;
 }
 if (params.get("coord")) assignCoordinator(coordinatorSession.id);
+if (params.get("ledger")) {
+  const ledger = boardSnapshot.output.parse({ ...fixtureSnapshot(), trackedDecisions: { status: "ok", items: fixtureLedger().records },
+    replyHistory: [fixtureLedger().history], pullRequests: { ...fixtureSnapshot().pullRequests, projects: [...fixtureSnapshot().pullRequests.projects, ...fixtureLedger().repositories] } });
+  snapshot.trackedDecisions!.items.unshift(...ledger.trackedDecisions!.items);
+  snapshot.replyHistory = [...ledger.replyHistory!, ...snapshot.replyHistory ?? []];
+  snapshot.pullRequests = ledger.pullRequests;
+}
+const resolveAs = params.get("resolve");
+const mergeAs = params.get("merge");
+let factReplies = false;
+const sha = (seed: string) => seed.repeat(40).slice(0, 40);
 const failing = !!params.get("fail");
 const refuse = () => { throw Object.assign(new Error("delivery_uncertain: 코디네이터 세션이 작업 중이라 보내지 않았습니다."), { code: "delivery_uncertain" }); };
 
@@ -81,9 +99,74 @@ const handlers: Record<string, (input: any) => unknown> = {
     if (failing) refuse();
     return { ok: true, recipientId: input.coordinator, messageId: crypto.randomUUID() };
   },
-  "board.open-session": (input: { sessionId: string }) => {
+  "board.open-session": async (input: { sessionId: string }) => {
     console.info("open-session", input.sessionId);
-    return { opened: true };
+    await settle();
+    return { opened: snapshot.sessions.some(session => session.id === input.sessionId) };
+  },
+  "board.resolve-tracked-decision": async (raw: unknown) => {
+    const input = resolveTrackedDecision.input.parse(raw);
+    await settle();
+    const items = snapshot.trackedDecisions!.items;
+    const item = items.find(row => row.id === input.id && row.fingerprint === input.fingerprint);
+    if (!item) return { status: "already-closed" };
+    const status = (resolveAs ?? (input.recipientId ? "sent" : "closed")) as z.output<typeof resolveTrackedDecision.output>["status"];
+    if (status === "queued") item.queuedReply = { messageId: crypto.randomUUID(), recipientId: input.recipientId ?? "s-coord", answer: input.answer, imageCount: 0, stopped: false };
+    if (status === "sent" || status === "closed") {
+      snapshot.trackedDecisions!.items = items.filter(row => row !== item);
+      snapshot.replyHistory = [{ key: crypto.randomUUID(), status: status === "sent" ? "sent" : input.answer ? "recorded" : "closed", title: item.title,
+        projectId: item.projectId, at: new Date().toISOString(), recipientId: input.recipientId, answer: input.answer }, ...snapshot.replyHistory ?? []];
+    }
+    return { status };
+  },
+  "board.cancel-queued-reply": async (raw: unknown) => {
+    const input = cancelQueuedReply.input.parse(raw);
+    await settle();
+    const item = snapshot.trackedDecisions!.items.find(row => row.id === input.id && row.queuedReply?.messageId === input.messageId);
+    if (item) delete item.queuedReply;
+    return { canceled: !!item };
+  },
+  "board.preview-pull-request-merge": async (raw: unknown) => {
+    const input = previewPullRequestMerge.input.parse(raw);
+    await settle();
+    const pr = snapshot.pullRequests?.items.find(row => row.repo === input.repo && row.number === input.number);
+    const blocked = mergeAs === "blocked";
+    return { status: blocked ? "blocked" : "ready", reason: blocked ? "permission" : "ready", title: pr?.title ?? "", headSha: sha("a1b2"), headRef: "docs/move-install",
+      baseRef: "main", baseSha: sha("c3d4"), checks: 4, methods: ["squash", "merge", "rebase"], defaultMethod: "squash", token: blocked ? null : crypto.randomUUID() };
+  },
+  "board.confirm-pull-request-merge": async (raw: unknown) => {
+    const input = confirmPullRequestMerge.input.parse(raw);
+    await settle();
+    if (mergeAs === "unconfirmed") return { status: "unconfirmed", reason: "unconfirmed", mergeSha: null };
+    if (mergeAs === "changed") return { status: "changed", reason: "changed", mergeSha: null };
+    const mergeSha = sha("9f8e");
+    const notification = { status: "queued" as const, recipientId: snapshot.coordinator ?? undefined };
+    snapshot.pullRequests!.items = snapshot.pullRequests!.items.filter(row => !(row.repo === input.repo && row.number === input.number));
+    snapshot.trackedDecisions!.items = snapshot.trackedDecisions!.items.filter(row => !(row.mergeTarget?.repo === input.repo && row.mergeTarget.number === input.number));
+    snapshot.replyHistory = [{ key: crypto.randomUUID(), status: "sent", title: "PR 병합", projectId: input.projectId, at: new Date().toISOString(),
+      pullMerge: { repo: input.repo, number: input.number, status: "merged", mergeSha, notification: { ...notification, status: "sent" } } }, ...snapshot.replyHistory ?? []];
+    return { status: "merged", reason: "merged", mergeSha, notification };
+  },
+  "board.read-pull-lifecycle": async (raw: unknown) => {
+    readPullLifecycle.input.parse(raw);
+    await settle();
+    const state = params.get("pull") ?? "OPEN";
+    if (state === "fail") throw new Error("unavailable");
+    return { state };
+  },
+  "board.set-project-repository": async (raw: unknown) => {
+    const input = setProjectRepository.input.parse(raw);
+    await settle();
+    if (params.get("repo") === "fail") throw new Error("conflict");
+    const project = snapshot.pullRequests?.projects.find(row => row.projectId === input.projectId);
+    if (project) Object.assign(project, { mode: input.mode, repo: input.repo ?? (input.mode === "off" ? project.repo : null), status: input.mode === "off" ? "off" : "ok" });
+    return { ok: true };
+  },
+  "board.fact-reply-settings": (raw: unknown) => { factReplySettings.input.parse(raw); return { enabled: factReplies }; },
+  "board.set-fact-auto-reply": async (raw: unknown) => {
+    factReplies = setFactAutoReply.input.parse(raw).enabled;
+    await settle();
+    return { ok: true };
   },
   "board.send-decision": async (raw: unknown) => {
     const input = sendDecision.input.parse(raw);
@@ -132,7 +215,7 @@ const disposable = { dispose() {} };
   on: () => disposable,
 };
 
-// Every card stays mounted while hidden, so a press goes to the first visible button with that text.
+// Every card stays mounted while hidden, so a press goes to the first visible button or label with that text.
 const presses = params.get("press")?.split(",") ?? [];
 // "@<label>=<text>" types into the visible text box with that accessible label instead of pressing.
 function type(label: string, text: string) {
@@ -148,7 +231,7 @@ async function pressAll() {
     if (label.startsWith("@")) { const [name, ...text] = label.slice(1).split("="); type(name, text.join("=")); continue; }
     // "#<name>" matches the start of the accessible name, for buttons whose text starts with an icon.
     const named = label.startsWith("#") ? label.slice(1) : null;
-    const target = Array.from(document.querySelectorAll<HTMLElement>("button"))
+    const target = Array.from(document.querySelectorAll<HTMLElement>("button, label"))
       .find(button => button.offsetParent !== null && (named === null ? button.textContent?.trim().startsWith(label) : button.getAttribute("aria-label")?.startsWith(named)));
     target?.click();
   }

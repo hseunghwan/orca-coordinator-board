@@ -2,7 +2,7 @@
 // Paseo's InlineDecisionReceipt (client/inline-receipt.tsx): what a handled decision leaves in its place.
 import type { InlineReceipt } from "../paseo/client/decision-receipts";
 import { mergeNotificationLabel } from "../paseo/client/merge-notification";
-import type { OpenSession } from "./cards";
+import type { OpenSession } from "./board-layout";
 import { column, row, SessionChip } from "./ui/controls";
 import { useBoardLanguage } from "./ui/language";
 
