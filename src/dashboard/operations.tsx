@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 // Paseo's OperationsPanel (client/operations.tsx) on Orca. Normal mode is the coordinator composer, or the
 // setup screen while the board has no coordinator; settings mode holds what Orca can change about it.
-// Photos arrive in phase 6 and automatic fact replies in phase 5, so neither is here yet. Providers, usage
+// Photos arrive in phase 6. Providers, usage
 // and model routing have no settings page on Orca yet; the setup line still shows the route the worker picks.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { z } from "zod";
@@ -10,6 +10,7 @@ import { resolveRoute, type RouteChoice } from "../paseo/shared/dispatch";
 import { askDigest, requestWork } from "../paseo/shared/operations";
 import type { Translate } from "../paseo/view-types";
 import { noRetry, retryKey, type RetryKey } from "./request-key";
+import { FactReplyControls } from "./fact-reply-controls";
 import { call, operations, startCoordinator } from "./rpc";
 import { SendButton, SendTextInput } from "./send-input";
 import { Button, column, row, SessionChip, space } from "./ui/controls";
@@ -152,6 +153,7 @@ export function OperationsPanel({ settings, coordinator, configured, projects, r
     : data ? explainEmptyRoute(data, "M", t) : t("실행기와 모델을 새로 고쳐 주세요.", "Refresh providers and models.");
 
   if (settings) return <div style={{ ...column, gap: 14 }}>
+    <Section title={t("사실 질문 자동 답장", "Automatic replies to factual questions")}><FactReplyControls /></Section>
     <Section title={t("사이드바 고정", "Sidebar pinning")}>
       <p className="muted">{t("Orca는 플러그인이 워크스페이스를 사이드바에 고정하게 하지 않아 이 설정이 없습니다.", "Orca does not let plugins pin workspaces in the sidebar, so this setting is unavailable.")}</p>
     </Section>
