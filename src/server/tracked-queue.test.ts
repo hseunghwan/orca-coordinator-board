@@ -57,6 +57,28 @@ test('a reply to a working recipient queues, and goes out once when its turn end
   expect(snap.replyHistory.find((r: any) => r.title === 'Deploy window')).toMatchObject({ status: 'sent', recipientId: 'coord' })
 })
 
+test('a send Orca refuses before anything left goes back to the queue, and goes out once later', async () => {
+  const f = await setup()
+  const coord = f.orca.find('coord')!
+  coord.state = 'done'
+  const deliver = f.fleet.deliver
+  let busy = true
+  f.fleet.deliver = async (d) => {
+    if (busy) { busy = false; coord.state = 'working' }
+    return deliver(d)
+  }
+  expect(await f.resolve()).toEqual({ status: 'queued' })
+  expect(f.typed()).toEqual([])
+  const queued = (await f.request('board.snapshot', { fresh: true })).trackedDecisions.items[0].queuedReply
+  expect(queued).toMatchObject({ recipientId: 'coord', answer: 'Friday evening', stopped: false })
+  coord.state = 'done'
+  await f.board.signal({ kind: 'turn-ended', session: 'coord' as SessionId })
+  expect(f.typed()).toHaveLength(1)
+  expect(await f.board.resumeWaiting()).toBe(false)
+  const snap = await f.request('board.snapshot', { fresh: true })
+  expect(snap.replyHistory.find((r: any) => r.title === 'Deploy window')).toMatchObject({ status: 'sent', recipientId: 'coord' })
+})
+
 test('a queued reply can be canceled, and stops when its recipient is gone', async () => {
   const f = await setup()
   await f.resolve()

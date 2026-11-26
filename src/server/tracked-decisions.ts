@@ -36,6 +36,8 @@ const receipts = z.object({version:z.literal(1),items:z.array(receipt)});
 type SourceStatus = TrackedDecisionView["status"];
 type InputRow = {key:string;fingerprint:string;item:RoutedTrackedDecision};
 type Receipt = z.output<typeof receipt>;
+/** send throws this when nothing left the board (the recipient turned busy, changed or fell asleep): the reply goes back to the queue. */
+export class NotSent extends Error {}
 type PendingDelivery = { ready:boolean; send:(answer:string,messageId:string,images?:WorkImage[])=>Promise<void>; accepted:(answer:string,messageId:string)=>Promise<boolean>; stillCurrent:()=>boolean };
 type Attempt = z.output<typeof resolveTrackedDecision.output> & {queueId?:string};
 type AdditionalSources = unknown[] | {items:unknown[];partial:boolean};
@@ -323,7 +325,15 @@ export class TrackedDecisionStore {
         if (queuedId) removeLocalPhotos(this.photoDirectory,messageId,photos.length);
         await target.send(text,messageId,input.images);
       }
-    } catch { return {status:"unconfirmed"}; }
+    } catch (error) {
+      if (!(error instanceof NotSent)) return {status:"unconfirmed"};
+      const latest=this.recorded();
+      if (!latest || latest.get(version)?.messageId!==messageId) return {status:"unconfirmed"};
+      const {source,projectId,id,questionIndexes}=input;
+      latest.set(version,{...receipt,pending:false,queue:{source,projectId,id,questionIndexes,owner:row.item.sourceCoordinatorId,stopped:false}});
+      const saved=saveLocalPhotos(this.photoDirectory,messageId,input.images ?? [],()=>this.save(latest));
+      return saved ? {status:"queued",queueId:messageId} : {status:"unconfirmed"};
+    }
     // Other decisions can be answered while the session receives this message.
     const latest=this.recorded();
     if (!latest || latest.get(version)?.messageId!==messageId) return {status:"unconfirmed"};

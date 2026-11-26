@@ -25,7 +25,7 @@ import type { Command } from "../channel/names";
 import { coordinatorCommands, runCommand } from "./coordinator";
 import { BoardFacts } from "./board-facts";
 import { trackedReviewTool } from "./tracked-review";
-import { TrackedDecisionStore } from "./tracked-decisions";
+import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
 import { canReceiveBoardInput } from "./discovery";
@@ -237,7 +237,8 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       stillCurrent:current,
       send:async (answer,messageId)=>{
         const outcome = await fleet.deliver({ messageId, to: targetId as SessionId, text: answer, subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse" });
-        if (outcome.status !== "delivered") throw new Error("not delivered: " + (outcome.status === "refused" ? outcome.reason : outcome.status));
+        if (outcome.status === "refused") throw new NotSent(outcome.reason);
+        if (outcome.status !== "delivered") throw new Error("not delivered: " + outcome.status);
       },
       accepted:async (_answer,messageId)=>(await fleet.reconcile(messageId))?.status === "delivered",
       ready:canReceiveBoardInput(agent,false),
