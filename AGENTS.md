@@ -11,6 +11,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - Orca 타입: `orca plugin types .` (`.orca/types`, git에 올리지 않음)
 - 타입 검사: `npm run typecheck`
 - 실기 확인: `node scripts/probe-snapshot.mjs`(실제 orca CLI로 스냅샷을 만든다. 출력에 실제 세션 이름이 나오니 커밋하지 않는다).
+- 전송 실기 확인: `node scripts/probe-send.mjs --session <id> --yes [--from <term_…>]`(실제 워커 경로로 답장 하나를 보낸다. 사람이 시험용으로 정한 세션에만 쓴다). 에이전트 셸에서 돌리면 그 터미널이 발신자가 되므로 워커의 경우를 보려면 터미널 밖 프로세스로 띄운다.
 - 테스트: `orca plugin test .`. `node_modules`에 vitest가 있으면 Orca가 vitest로 돌린다. 그래서 테스트의 `test`는 `vitest`에서 불러온다.
 - 렌더 검사: `orca plugin check .`, manifest 검사: `orca plugin validate .`
 - 대시보드 하네스: `node dev/build.mjs`로 가짜 `window.orca`와 예시 보드를 `dev/out/index.html`에 묶고, `node dev/shoot.mjs`로 로컬 Chrome이나 Edge 헤드리스 화면을 `dev/shots/`에 찍는다. 둘 다 git에 올리지 않는다. 하네스 타입 검사는 `npx tsc -p dev`.
@@ -21,7 +22,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 ### Immutable
 
 - `terminal.sendText`는 사람이 친 글과 구분되지 않는다. 그래서 출처 표시 없는 전송은 사용자가 화면에서 쓰고 보내기를 누른 글에만 쓴다. 보드가 만든 문장을 보내는 경로를 만들면 `[coordinator-board]` 머리말을 붙이고, 실패해도 다시 보내지 않는다.
-- 권한 대기 세션에는 보내지 않는다. 전송 직전에 세션 상태를 다시 읽는다. 전송 경로는 Paseo판 `server/decisions.ts`를 옮기면서 다시 만든다.
+- 보내기는 `fleet.deliver`(`src/orca/deliver.ts`)로만 한다. outbox에 시도를 먼저 쓰고, 같은 messageId는 다시 보내지 않고 받는 쪽 기록으로 대조만 한다. 권한 대기, 질문 대기, 작업 중인 세션에는 보내지 않고, 전송 직전에 세션 상태를 다시 읽는다.
 - 같은 대화를 두 곳에서 돌리지 않는다. 보드는 세션을 이어 열지(`agent.resume`) 않는다. 채팅 세션과 터미널이 잠든 세션은 `workspace.open`으로 보여 주기만 한다.
 - 플러그인 승인(`--approve`)은 사람이 권한 목록을 보고 직접 한다. 에이전트가 대신 승인하지 않는다.
 - 공개 저장소다. 코드, 테스트 고정값, 문서, 커밋 메시지에 개인 이름, 사용자 홈 경로, 기기 이름, 사내 주소, 토큰을 넣지 않는다. 예시 값은 `acme/app`, `/w/app`처럼 지어낸다.
@@ -30,7 +31,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 
 - 판단 로직은 옮긴 Paseo 코드(`src/paseo/`, `src/server/`)에 두고, `panel.tsx`에는 화면만 둔다. 대시보드가 스냅샷에서 계산하는 것은 `src/dashboard/board-model.ts`에 두고 테스트한다. 테스트는 `.tsx` 화면 파일을 불러오지 않는다(테스트 경계).
 - Orca 상태는 `src/orca/index.ts`의 `Fleet`로만 읽는다. Orca 행을 Paseo 상태로 바꾸는 레인 표는 `src/orca/view.ts` 한 곳에 있다. `src/server/`의 파일은 Paseo 파일을 고쳐 옮긴 것이라 첫 줄에 원본 경로와 커밋, 바꾼 점을 적는다.
-- `orca` CLI는 `src/orca/cli.ts`로만 실행한다. `orca.exe`를 셸 없이, 허용 목록 환경으로, 읽기 동사만 실행한다. 상태를 바꾸는 CLI 명령을 더하면 쓰기용 메서드를 따로 만든다.
+- `orca` CLI는 `src/orca/cli.ts`로만 실행한다. `orca.exe`를 셸 없이, 허용 목록 환경으로 실행한다. 읽기는 `read`, 보내는 명령은 `write`(캐시, 공유, 재시도 없음)로만 한다.
 - 대시보드(`src/dashboard/`)는 편집 탭의 프레임이고 React 19로 그린다. 화면 구조는 Paseo판 `client/*.tsx`를 따르고, 모양은 `src/dashboard/ui/`의 Orca 레시피(`--orca-*` 토큰)로 입힌다. 글은 React 텍스트로만 넣고 `innerHTML`과 `dangerouslySetInnerHTML`을 쓰지 않는다. 마크다운은 `marked` 토큰을 요소로 바꾼다(`ui/markdown.tsx`).
 - 대시보드 `.tsx` 첫 줄의 `/** @jsxImportSource react */`는 지우지 않는다. tsconfig의 기본 JSX는 사이드바 패널용 `orca`다.
 - 대시보드는 워커를 Paseo 계약(`src/paseo/shared/contract.ts` 등의 `defineRpc`)으로 부른다. `src/dashboard/rpc.ts`의 `call`이 출력을 zod로 검사한다. 워커가 보내는 `board.changed`는 다시 읽으라는 신호일 뿐이다.
