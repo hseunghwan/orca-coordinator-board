@@ -35,10 +35,12 @@ function userItem(text: string, sentText: (messageId: string) => string | undefi
   const full = marked?.cut ? readMarked(sentText(marked.messageId) ?? '')?.body : undefined
   const body = marked ? (full?.startsWith(marked.body) ? full : marked.body) : null
   const handle = MAIL_SENDER.exec(text.replace(/\r\n/g, '\n').split('\n', 1)[0])?.[1]
-  const sender = handle ? senderOf(handle) : undefined
+  const signed = handle ? senderOf(handle) : undefined
+  const typed = !signed && body !== null ? readBoardHeader(body) : null
+  const sender = signed ?? typed?.from
   if (sender) {
     return { type: 'tool_call', name: 'agent_message', status: 'completed', callId: 'paseo-agent-message:' + (marked?.messageId ?? 'unmarked'),
-      agentMessage: { event: 'message', sender: { id: sender }, text: body ?? unframe(text) } }
+      agentMessage: { event: 'message', sender: { id: sender }, text: typed?.body ?? body ?? unframe(text) } }
   }
   if (!marked) return { type: 'user_message', text }
   return { type: 'user_message', text: body!, messageId: marked.messageId }
@@ -67,6 +69,27 @@ export function unframe(text: string): string {
   while (lines.length && !lines[0].trim()) lines.shift()
   while (lines.length && (!lines.at(-1)!.trim() || MAIL_RULE.test(lines.at(-1)!) || MAIL_REPLY.test(lines.at(-1)!))) lines.pop()
   return lines.join('\n')
+}
+
+const BOARD_HEADER = /^\[coordinator-board\] (\{.*\})$/
+
+/**
+ * The line a board-made message typed into a terminal carries right after the marker: who it is from
+ * (a session id, or "board") and its context as JSON. A terminal shows no mail body, so this line stands
+ * in for the signed mail's From line, as Paseo's sourceAgentId does.
+ */
+export function boardHeader(from: string, context: Record<string, unknown>): string {
+  return '[coordinator-board] ' + JSON.stringify({ from, ...context })
+}
+
+/** The sender and text of a marked body that starts with boardHeader's line; null for any other body. */
+export function readBoardHeader(body: string): { from: string; body: string } | null {
+  const newline = body.indexOf('\n')
+  const json = BOARD_HEADER.exec(newline < 0 ? body : body.slice(0, newline))?.[1]
+  if (!json) return null
+  let from: unknown
+  try { from = (JSON.parse(json) as { from?: unknown }).from } catch { return null }
+  return typeof from === 'string' && from ? { from, body: newline < 0 ? '' : body.slice(newline + 1) } : null
 }
 
 const PHOTO_LINE = /^\[사진 \d+\] \S/

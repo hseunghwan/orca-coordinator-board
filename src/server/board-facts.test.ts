@@ -1,6 +1,7 @@
 // Ported from paseo-coordinator-board test/board-facts.test.ts @ 2e9d128 onto a fake Orca behind the real
 // Fleet. Assertions are Paseo's. What differs is the transport: a session's state, turns and permissions
-// are Orca's, a fact goes out as mail signed by the coordinator's terminal (Paseo's sourceAgentId), and
+// are Orca's, a fact goes to a chat as mail signed by the coordinator's terminal and to a terminal as typed
+// input under the board header naming the coordinator (both stand in for Paseo's sourceAgentId), and
 // what was sent is read from the outbox and the recipient's transcript. Message ids are UUIDs because
 // the board's marker carries one.
 import { afterEach, expect, test } from "vitest";
@@ -30,14 +31,14 @@ const uuid = (n: number) => "e0e0e0e0-0000-4000-8000-" + String(n).padStart(12, 
 const mail = (handle: string, body: string) => ["──── From: " + handle.toUpperCase() + " (" + handle + ") (status) ────", "Subject: s", body,
   "[Reply: orca orchestration reply --id msg_1 --body \"...\"]", "─".repeat(60)].join("\n");
 
-function fixture(initial=question) {
+function fixture(initial=question, surface: "chat"|"terminal"="chat") {
   const dir=mkdtempSync(join(tmpdir(),"board-fact-test-")); dirs.push(dir);
   const store=new PreferenceStore(join(dir,"scope.json")), notes=new NoteStore(join(dir,"notes.json")), reader=new ConversationReader();
   store.change(s => {s.projects=["managed"];s.coordinator="coord";s.sessionLinks.worker={sessionId:"worker",sourceProjectId:"source",targetProjectId:"managed",targetProjectTitle:"Managed",sourceProjectTitle:"Source",workspaceTitle:"Original",title:"Worker"};});
   let now=Date.now();
   const orca=fakeOrca([
     {id:"coord",surface:"terminal",state:"done",updatedAt:1,handle:"term_coord",project:"managed"},
-    {id:"worker",surface:"chat",state:"done",updatedAt:1,project:"source"},
+    {id:"worker",surface,state:"done",updatedAt:1,project:"source",...(surface==="terminal"?{handle:"term_worker"}:{})},
     {id:"other",surface:"terminal",state:"done",updatedAt:1,handle:"term_other",project:"elsewhere"},
   ]);
   orca.say("worker","assistant",initial);
@@ -170,4 +171,33 @@ test("a lost receipt is reconciled only from the recipient's transcript with mat
   f.orca.say("worker","user",receipt);
   expect((await f.snapshot()).w.boardFact).toMatchObject({current:false,delivery:"sent"});
   expect(f.events()).toHaveLength(1);
+});
+
+test("a terminal worker gets the fact typed under the coordinator's header, without needing the coordinator's terminal",async()=>{
+  const f=fixture(question,"terminal");const {w}=await f.snapshot();const token=await f.seed();
+  f.orca.find("coord")!.livePty=false;
+  await f.reply(token,w.evidenceId);
+  expect(f.orca.writes.map(x=>x.slice(0,4))).toEqual([["terminal","send","--terminal","term_worker"]]);
+  const [header,body]=f.events()[0].text.split("\n");
+  expect(JSON.parse(header.replace("[coordinator-board] ",""))).toEqual({from:"coord",subject:"Coordinator Board fact"});
+  expect(JSON.parse(body)).toMatchObject({type:"coordinator-board.fact",authority:"information-only",evidenceId:w.evidenceId});
+  expect((await f.snapshot()).w.boardFact).toMatchObject({senderId:"coord",messageId:f.events()[0].messageId,delivery:"sent"});
+  await f.reply(token,w.evidenceId);expect(f.orca.writes).toHaveLength(1);
+});
+
+test("a typed fact whose answer was lost is reconciled from the terminal transcript by ID, sender and body, never typed again",async()=>{
+  const f=fixture(question,"terminal");const {w}=await f.snapshot(),token=await f.seed();
+  f.orca.behavior.loseAnswer=true;f.orca.behavior.dropText=true;
+  await expect(f.reply(token,w.evidenceId)).rejects.toThrow(/unsigned/);
+  expect((await f.snapshot()).w.boardFact!.delivery).toBe("unconfirmed");
+  const sent=f.events()[0];
+  const packet=sent.text.split("\n").slice(1).join("\n");
+  for(const invalid of [stamp(packet,sent.messageId),stamp(sent.text.replace('"coord"','"other"'),sent.messageId),stamp(sent.text,uuid(7))]) {
+    f.orca.say("worker","user",invalid);
+    expect((await f.snapshot()).w.boardFact!.delivery).toBe("unconfirmed");
+  }
+  f.orca.say("worker","user",stamp(sent.text,sent.messageId));
+  expect((await f.snapshot()).w.boardFact).toMatchObject({current:false,delivery:"sent"});
+  f.orca.behavior.loseAnswer=false;f.orca.behavior.dropText=false;
+  expect(f.orca.writes).toHaveLength(1);
 });

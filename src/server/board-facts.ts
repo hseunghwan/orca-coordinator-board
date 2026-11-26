@@ -1,7 +1,7 @@
 // Adapted from paseo-coordinator-board server/board-facts.ts @ 2e9d128. answer_board_fact is the
-// coordinator-board fact command. The packet goes through fleet.deliver as mail signed by the
-// coordinator's own terminal (Paseo's sourceAgentId), never as unsigned input. Orca reports the
-// coordinator's running turn as a timeline gap, so the bound-digest check reads past it. A send
+// coordinator-board fact command. The packet goes through fleet.deliver from the coordinator (Paseo's
+// sourceAgentId): to a chat as mail its terminal signs, to a terminal as input under the board header.
+// Orca reports the coordinator's running turn as a timeline gap, so the bound-digest check reads past it. A send
 // Orca refused left nothing behind, so the fact returns to recorded instead of unconfirmed.
 import { createHash } from "node:crypto";
 import { z } from "zod";

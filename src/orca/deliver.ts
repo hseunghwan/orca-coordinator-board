@@ -7,13 +7,13 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { OrcaCli, WriteResult } from './cli'
-import { agentRead, photoLines, readMarked } from './conversation'
+import { agentRead, boardHeader, photoLines, readMarked } from './conversation'
 import type { SessionId, SessionRecord, TerminalHandle, World, WorkspaceRecord } from './view'
 
 /**
  * Who a message is from. A person's text becomes a user turn. A session's (the coordinator answering a
- * board fact) and the board's own (a merge notice) go as mail signed by a terminal, so the recipient
- * sees who sent it; they never fall back to unsigned input.
+ * board fact) and the board's own (a merge notice) carry who sent it: mail signed by a terminal to a chat,
+ * typed input under boardHeader's line to a terminal, which shows no mail body. They never go without it.
  */
 export type Sender = { kind: 'person' } | { kind: 'agent'; session: SessionId } | { kind: 'board' }
 
@@ -22,7 +22,7 @@ export interface Delivery {
   messageId: string
   to: SessionId
   text: string
-  /** The mail subject on the chat route. */
+  /** The mail subject on the mail route, and the context on a board-made message's header line. */
   subject: string
   from: Sender
   /** Phase 2 never queues into a working session. */
@@ -72,21 +72,33 @@ export function isSameMessage(entry: string, messageId: string, stamped: string)
 /**
  * THE route table. First matching row wins.
  *
- *  | session                              | person          | agent, board |
- *  | workspace on another host            | other-host      | other-host   |
- *  | terminal without a live handle       | asleep          | mail         |
- *  | terminal                             | terminal-input  | mail         |
- *  | chat                                 | mail            | mail         |
+ *  | session                              | person          | agent, board    |
+ *  | workspace on another host            | other-host      | other-host      |
+ *  | chat                                 | mail            | mail            |
+ *  | terminal with a live handle          | terminal-input  | terminal-input  |
+ *  | terminal without a live handle       | asleep          | mail            |
  *
- * Mail needs a sender terminal: from a process outside every Orca terminal, orchestration send
- * refuses without --from (observed 2026-11-26). A person's mail and the board's go from the board's
- * own terminal; an agent's from that agent's terminal.
+ * A terminal session stores a mail only as Orca's notice to run the check command, never its body
+ * (observed 2026-11-26), so an agent's or the board's text to a live terminal is typed under
+ * boardHeader's line. Mail needs a sender terminal: from a process outside every Orca terminal,
+ * orchestration send refuses without --from (observed 2026-11-26). A person's mail and the board's go
+ * from the board's own terminal; an agent's from that agent's terminal.
  */
 export function chooseRoute(session: SessionRecord, workspace: WorkspaceRecord | undefined, from: Sender): Route | RefuseReason {
   if (workspace?.hostId && workspace.hostId !== 'local') return 'other-host'
-  if (from.kind !== 'person' || session.surface === 'chat') return 'mail'
-  return session.handle && session.livePty ? 'terminal-input' : 'asleep'
+  if (session.surface === 'chat') return 'mail'
+  if (session.handle && session.livePty) return 'terminal-input'
+  return from.kind === 'person' ? 'asleep' : 'mail'
 }
+
+/** The text a route carries: the marker, photo lines, then for a board-made message typed into a terminal the header line. */
+export function wireText(d: Delivery, route: Route): string {
+  const body = route === 'terminal-input' && d.from.kind !== 'person'
+    ? boardHeader(d.from.kind === 'agent' ? d.from.session : 'board', { subject: d.subject }) + '\n' + d.text
+    : d.text
+  return stamp(body, d.messageId, d.photos)
+}
+const digestOf = (text: string) => createHash('sha256').update(text).digest('hex')
 
 /** The terminal a mail is signed by: the board's own, or the sending agent's live local one. */
 async function signer(from: Sender, world: World, boardSender: (() => Promise<string | null>) | undefined): Promise<{ handle: string } | { refuse: RefuseReason }> {
@@ -206,11 +218,9 @@ export function createDeliver(deps: DeliverDeps) {
   }
 
   async function deliverNow(d: Delivery): Promise<DeliveryOutcome> {
-    const text = stamp(d.text, d.messageId, d.photos)
-    const digest = createHash('sha256').update(text).digest('hex')
     const earlier = outbox.get(d.messageId)
     if (earlier) {
-      if (earlier.digest !== digest) return { status: 'refused', reason: 'content-changed' }
+      if (earlier.digest !== digestOf(wireText(d, earlier.route))) return { status: 'refused', reason: 'content-changed' }
       if (earlier.state === 'delivered') return { status: 'delivered', route: earlier.route, proof: earlier.proof ?? 'cli' }
       return reconcile(earlier)
     }
@@ -222,6 +232,8 @@ export function createDeliver(deps: DeliverDeps) {
     if (d.unchangedSince !== undefined && session.updatedAt !== d.unchangedSince) return { status: 'refused', reason: 'changed' }
     const route = chooseRoute(session, world.workspaces.get(session.worktree), d.from)
     if (route !== 'terminal-input' && route !== 'mail') return { status: 'refused', reason: route }
+    const text = wireText(d, route)
+    const digest = digestOf(text)
     if (route === 'terminal-input' && text.length > MAX_TERMINAL_TEXT) return { status: 'refused', reason: 'too-long' }
     const signed = route === 'mail' ? await signer(d.from, world, deps.mailSender) : null
     if (signed && 'refuse' in signed) return { status: 'refused', reason: signed.refuse }
