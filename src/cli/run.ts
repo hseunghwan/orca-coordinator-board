@@ -2,7 +2,7 @@
 // request to the board's worker, and prints the reply. Exit codes: 0 done, 1 the command failed,
 // 2 the board is not running, 3 the connection broke after sending (it may have been done), 4 refused.
 import { connect } from 'node:net'
-import { COMMANDS, EXIT, MAX_LINE, type Command } from '../channel/names'
+import { COMMANDS, EXIT, MAX_LINE, type Command, type ExecFrame, type ExecResult } from '../channel/names'
 import type { CallerClaim } from '../channel/protocol'
 
 export const USAGE = [
@@ -18,7 +18,10 @@ export const USAGE = [
   '                                            during a digest that names a cycle, answer a board fact for that session',
   '  review [--input-file <path|->]            without input, close merged-only records and list checks to review;',
   '                                            with {"review":{key,fingerprint,evidenceId,quote}}, close one finished check',
-  '  plan, assign                              not in this version yet',
+  '  plan [--input-file <path|->]               list managed projects, workspaces, sessions and the route for each grade',
+  '                                            ({"needsHooks":true} when the work needs Claude Code or Codex hooks)',
+  '  assign --input-file <path|->              start one worker for a job: {"job":{projectId,workspaceId,grade,title,prompt,',
+  '                                            requestKey,expectedRoute,expectedModeId?}}; the same requestKey never starts twice',
   '',
   'Options:',
   '  --input-file <path|->   the full input as a JSON object; flags override its fields',
@@ -39,6 +42,8 @@ export type CliIo = {
   /** Where the worker listens when CB_PIPE is not set. */
   defaultPipe: string
   timeoutMs?: number
+  /** Runs orca with these arguments in this shell, for the board (protocol 2). */
+  runOrca?(args: readonly string[], timeoutMs: number): Promise<Pick<ExecResult, 'stdout' | 'error'>>
 }
 
 type Parsed = { command: Command; input: Record<string, unknown>; as: string | null } | { help: true } | { error: string }
@@ -88,7 +93,7 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
     token: io.env.CB_CALLER_TOKEN || null,
     session: parsed.as
   }
-  const line = JSON.stringify({ v: 1, command: parsed.command, input: parsed.input, caller }) + '\n'
+  const line = JSON.stringify({ v: 2, command: parsed.command, input: parsed.input, caller }) + '\n'
   if (line.length > MAX_LINE) {
     io.stderr('coordinator-board: input too long\n')
     return EXIT.error
@@ -116,13 +121,27 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
       buffer += chunk
-      const end = buffer.indexOf('\n')
-      if (end < 0) return
-      try {
-        const reply = JSON.parse(buffer.slice(0, end)) as { exit: number; text: string }
-        finish(reply.exit, reply.text, reply.exit !== EXIT.ok)
-      } catch {
-        finish(EXIT.dropped, 'coordinator-board: the board sent an unreadable answer; the command may have run.', true)
+      for (let end = buffer.indexOf('\n'); end >= 0 && !settled; end = buffer.indexOf('\n')) {
+        const text = buffer.slice(0, end)
+        buffer = buffer.slice(end + 1)
+        let message: (ExecFrame | { exit: number; text: string }) & { kind?: string }
+        try {
+          message = JSON.parse(text)
+        } catch {
+          return finish(EXIT.dropped, 'coordinator-board: the board sent an unreadable answer; the command may have run.', true)
+        }
+        if (message.kind === 'exec') {
+          const frame = message as ExecFrame
+          const run = io.runOrca ? io.runOrca(frame.args, frame.timeoutMs) : Promise.resolve({ stdout: '', error: { code: 'spawn_failed' as const, message: 'this command cannot run orca' } })
+          void run.catch((error: unknown) => ({ stdout: '', error: { code: 'exec_failed' as const, message: error instanceof Error ? error.message : String(error) } }))
+            .then(({ stdout, error }) => {
+              const result: ExecResult = { kind: 'exec-result', id: frame.id, stdout, error }
+              if (!socket.destroyed) socket.write(JSON.stringify(result) + '\n')
+            })
+          continue
+        }
+        const reply = message as { exit: number; text: string }
+        return finish(reply.exit, reply.text, reply.exit !== EXIT.ok)
       }
     })
     socket.on('error', () => finish(sent ? EXIT.dropped : EXIT.absent, sent

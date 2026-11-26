@@ -5,6 +5,7 @@
 // sessions lack. fact and review are served from ./board-facts.ts and ./tracked-review.ts; plan and assign come later.
 import { z } from "zod";
 import type { PluginHandlerContext } from "../orca";
+import type { OrcaCli } from "../orca/cli";
 import type { Command } from "../channel/names";
 import type { NoteStore } from "../paseo/server/notes";
 import { isManagedCoordinator, judgment, type PreferenceStore } from "../paseo/server/preferences";
@@ -13,7 +14,8 @@ import { discoverSessions } from "./discovery";
 import { isCurrentMembership, managedSessions } from "./session-links";
 
 type Sdk = PluginHandlerContext["paseo"];
-export type ToolContext = { paseo: Sdk; agent: { id: string } };
+/** caller: orca run in the calling agent's own shell (channel protocol 2), so Orca sees that agent acting. */
+export type ToolContext = { paseo: Sdk; agent: { id: string }; caller?: OrcaCli | null };
 export type ToolResult = { text: string; isError?: boolean };
 export type Tool = { audience: "coordinator" | "session"; input: z.ZodType; execute(input: never, context: ToolContext): Promise<ToolResult> };
 

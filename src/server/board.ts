@@ -35,6 +35,7 @@ import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operatio
 import { translator } from "../i18n";
 import { createHash } from "node:crypto";
 import type { SessionId } from "../orca";
+import type { OrcaCli } from "../orca/cli";
 
 type Sdk = PluginHandlerContext["paseo"];
 
@@ -323,8 +324,8 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     /** Who may run a coordinator-board command: only the designated coordinator, or any session on the board. */
     audience: (command: Command) => commands[command].audience,
     /** A coordinator-board command from the session the channel verified. */
-    async command(command: Command, input: unknown, agentId: string) {
-      const result = await runCommand(commands, command, input, { paseo: fleet.paseo, agent: { id: agentId } });
+    async command(command: Command, input: unknown, agentId: string, caller: OrcaCli | null = null) {
+      const result = await runCommand(commands, command, input, { paseo: fleet.paseo, agent: { id: agentId }, caller });
       if (command !== "read") invalidateCount();
       return result;
     },
