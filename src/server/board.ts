@@ -28,6 +28,7 @@ import { BoardFacts } from "./board-facts";
 import { trackedReviewTool } from "./tracked-review";
 import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
 import { photoFiles } from "./photo-files";
+import { ProjectIcons } from "./project-icons";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
 import { canReceiveBoardInput } from "./discovery";
@@ -48,6 +49,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const notes = new NoteStore(join(dataDir, "notes.json"));
   const prefs = new PreferenceStore(join(dataDir, "scope.json"));
   const reader = new ConversationReader();
+  const projectIcons = new ProjectIcons();
   const prs = new ProjectPullRequests(prefs, pulls);
   const decisions = new DecisionSender(prefs, notes, reader, fleet);
   const tracked = new TrackedDecisionStore(join(dataDir, "tracked-decisions.json"),
@@ -154,9 +156,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   async function buildSessionView(paseo: Sdk, catalog: Awaited<ReturnType<Sdk["projects"]["list"]>>,
     rows: Awaited<ReturnType<typeof discoverSessions>>) {
     const scope = prefs.read();
-    const choices = new Map(catalog.projects.map(p => {
+    const icons = await Promise.all(catalog.projects.map(p => projectIcons.read(p.projectRootPath, p.icon)));
+    const choices = new Map(catalog.projects.map((p, i) => {
       const id = p.projectId;
-      return [id, { id, title: p.projectCustomName || p.projectDisplayName, path: p.projectRootPath, selected: scope.projects.includes(id), icon: p.icon }] as const;
+      return [id, { id, title: p.projectCustomName || p.projectDisplayName, path: p.projectRootPath, selected: scope.projects.includes(id), icon: icons[i] }] as const;
     }));
     for (const row of rows) {
       if (!choices.has(row.projectId)) choices.set(row.projectId, { id: row.projectId, title: row.projectTitle, path: "", selected: scope.projects.includes(row.projectId), icon: undefined });
