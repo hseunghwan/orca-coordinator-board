@@ -120,7 +120,7 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   }
   async function homeWorkspace(): Promise<string | null> {
     if (!fleet.home) return null
-    await fleet.home.ensure()
+    await fleet.home.ensure(translator(locale))
     fleet.invalidate()
     return hostWorkspace(fleet.home.workspace(await fleet.view({ maxAgeMs: 0 })))
   }

@@ -12,7 +12,7 @@ import {
 } from './view'
 
 export * from './view'
-export { CoordinatorHome, homeDir } from './home'
+export { CoordinatorHome, homeDir, homeNames } from './home'
 export type { TimelinePage } from './conversation'
 export type { Delivery, DeliveryOutcome, RefuseReason, Route, Sender } from './deliver'
 

@@ -170,7 +170,7 @@ test('a reply to a chat is mailed from one board terminal, opened once in the co
   assert.deepEqual(h.callsOf('terminal.create'), [{ workspaceId: 'w-home', title: 'Coordinator Board mail' }])
   const mails = orca.writes.filter((w) => w[0] === 'orchestration')
   assert.deepEqual(mails.map((w) => w[w.indexOf('--from') + 1]), ['term_board', 'term_board'])
-  assert.equal(orca.writes.filter((w) => w[0] === 'repo').length, 1)
+  assert.deepEqual(orca.writes.filter((w) => w[0] === 'repo').map((w) => w[1]), ['add'])
   await mounted.deactivate()
 })
 
