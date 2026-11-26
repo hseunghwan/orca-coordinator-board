@@ -59,7 +59,17 @@ Paseo 서버 로직을 Orca 워커 위로 옮길 때 쓰는 경계를 정한 기
 - 코디네이터의 `review`: 살아 있는 코디네이터에게 터미널 입력으로 요청 하나를 보냈다(`delivered`, `terminal-input`). 코디네이터는 명령을 한 번 실행했고 CLI는 종료 코드 2(파이프에 닿지 못함)를 냈다. 원인은 명령 줄에 직접 쓴 파이프 이름으로 본다(추정). 이 에이전트의 셸 도구(Claude Code, Git Bash)에 같은 명령 글을 넘기면 `\\`가 `\`로 줄어 `\\.\pipe\…`가 `\.\pipe\…`가 되고, 같은 종료 코드 2가 났다. 같은 명령을 스크립트 파일로 Git Bash에서 돌리면 이 브랜치의 워커에 닿아 `{"closed":[],"reviewable":[…]}`를 돌려줬다. 실제 코디네이터는 `CB_PIPE`를 실행 환경에서 물려받으므로 이 줄임을 겪지 않는다(3단계에서 `read`로 확인). 프로브는 이제 명령을 스크립트 파일로 넘긴다.
 - PATH: 코디네이터의 `claude.exe` 환경 블록을 읽기만 해서 봤다(`scripts/probe-path.mjs`). `CB_BIN CB_CALLER_TOKEN CB_NODE CB_PIPE CB_TERMINAL`은 있었고, PATH 키는 `PATH` 하나뿐이며 bin 폴더가 들어 있지 않았다. 코디네이터의 Bash 도구 기록에는 `coordinator-board: command not found`(127)가 남았고, charter의 절대 경로로는 실행됐다. 훅은 이제 Windows에서 같은 값을 `PATH` 키에도 쓰고, 실행마다 `event.env`의 PATH 키 이름만 로그에 남긴다. `event.env`에 `Path`가 왔는지, `PATH`가 왔는지, 아예 없었는지는 새 실행 없이는 볼 수 없어서 확인하지 못했다.
 
+## 실기 확인: 작업자 배정, 호스트 (2026-11-26, Orca 1.4.277)
+
+- 채널 protocol 2: 실제 shim(`bin/coordinator-board.cmd`)을 Orca 런타임(`CB_NODE`가 `Orca.exe`, `ELECTRON_RUN_AS_NODE=1`)으로 돌리고, 워커 쪽 `serveChannel`이 `exec` 줄로 `agent installed`를 시켰다. CLI는 `CB_NODE` 옆의 `resources/bin/orca.exe`를 찾아 `ELECTRON_RUN_AS_NODE`를 뺀 환경으로 실행했고, 워커는 `exec-result`로 받은 출력을 `createCli`로 읽었다(요청 `v: 2`, 에이전트 4개). 읽기 전용 명령만 썼고 `dist/` 대신 임시 폴더의 shim과 CLI 묶음으로 돌렸다.
+- `orca host list --json`의 행은 `kind`(`local`, `ssh`, `environment`), `id`, `name`, `selector`를 준다. SSH 행에만 `connected`가 있고 환경 행에는 연결 여부가 없다. 그래서 보드는 `agent list --environment`가 답한 환경만 연결됨으로 본다.
+- 짝지은 환경 하나는 `orca agent list --environment <id> --json`에 약 1.1초 만에 에이전트 8개를 돌려줬다. 행의 키는 `orcaSessionId kind agent state worktreeId workspace hostId paneKey title lastAssistantMessage updatedAt`이고, 이 기기의 목록과 달리 `repo`가 없었다. 다른 환경(WSL)은 0.6초 만에 `remote_runtime_unavailable`로 거절했다. 원격 세션은 `worktreeId`의 저장소 id가 이 기기 프로젝트와 같을 때만 프로젝트에 붙는다.
+- 살아 있는 코디네이터를 거치는 배정은 아직 보내지 않았다. 로드된 개발 플러그인은 `feat/paseo-parity` 작업 트리의 0.5.0이고, `node scripts/probe-dispatch.mjs check`가 코디네이터(터미널, `done`)와 대상 워크스페이스는 찾았지만 카탈로그에 Haiku가 없다고 보고했다(이 브랜치 코드가 아직 로드되지 않았다는 뜻). 작업 요청 하나는 이 코드가 로드된 뒤 `probe-dispatch.mjs send`로 보낸다.
+
 ## 확인할 것
+
+- 코디네이터 셸에서 돌린 `orca agent launch`가 Orca 화면에 코디네이터가 넘긴 것으로 나오는가, 새 작업자에게 훅의 작업자 권한 인자와 PATH의 bin이 들어가는가(`probe-dispatch.mjs send`, `verify`, `scripts/probe-path.mjs --match <표식>`).
+- 받는 에이전트(Claude Code, Codex)가 `[사진 n] <경로>` 줄의 파일을 실제로 여는가.
 
 - host `terminal.create`가 돌려주는 `terminalId`를 CLI `--from`에 그대로 쓸 수 있는가, 지금 권한으로 열 수 있는가.
 - `agent.launch.before`의 `event.env`에 PATH가 어떤 키로 들어오는가. 다음 코디네이터 실행 때 워커 로그의 `launch hook: PATH keys in the launch env` 줄과 `scripts/probe-path.mjs`로 확인한다. 아예 없다면 훅은 PATH를 두고 `CB_BIN`과 charter의 절대 경로로만 CLI를 알린다.
