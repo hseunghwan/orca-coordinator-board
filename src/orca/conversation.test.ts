@@ -9,7 +9,7 @@ test('a cut last terminal answer is restored from the session row when the row s
   const page = timelinePage(read('agent-read-terminal-cut.json'), session(7))
   const last = page.entries.at(-1)!
   expect(last.item).toEqual({ type: 'assistant_message', text: session(7).lastAssistant })
-  expect(session(7).lastAssistant!.endsWith('2.4.0 or 3.0.0?')).toBe(true)
+  expect(session(7).lastAssistant!.endsWith('Please choose the version to tag: 2.4.0 or 3.0.0.')).toBe(true)
   expect(last.timestamp).toBe(new Date(session(7).stateStartedAt).toISOString())
 })
 
