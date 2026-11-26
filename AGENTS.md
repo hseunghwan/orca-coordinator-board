@@ -7,11 +7,12 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 ## Operational Commands
 
 - 개발 의존성: `npm ci`(typescript, @types/node, esbuild, zod, vitest, react, react-dom). 잠금 파일은 `package-lock.json` 하나다.
-- 빌드: `npm run build`(`dist/worker.mjs`, `dist/dashboard.js`, 대시보드 entry `dist/dashboard.html`). Orca는 선언된 프레임 entry를 확장자와 상관없이 HTML 문서로 읽으므로 entry를 `.js`로 두지 않는다. 고치는 동안은 `npm run watch`.
+- 빌드: `npm run build`(`dist/worker.mjs`, 코디네이터 명령 `dist/cli.cjs`, `dist/dashboard.js`, 대시보드 entry `dist/dashboard.html`). Orca는 선언된 프레임 entry를 확장자와 상관없이 HTML 문서로 읽으므로 entry를 `.js`로 두지 않는다. 고치는 동안은 `npm run watch`.
 - Orca 타입: `orca plugin types .` (`.orca/types`, git에 올리지 않음)
 - 타입 검사: `npm run typecheck`
 - 실기 확인: `node scripts/probe-snapshot.mjs`(실제 orca CLI로 스냅샷을 만든다. 출력에 실제 세션 이름이 나오니 커밋하지 않는다).
 - 전송 실기 확인: `node scripts/probe-send.mjs --session <id> --yes [--from <term_…>]`(실제 워커 경로로 답장 하나를 보낸다. 사람이 시험용으로 정한 세션에만 쓴다). 에이전트 셸에서 돌리면 그 터미널이 발신자가 되므로 워커의 경우를 보려면 터미널 밖 프로세스로 띄운다.
+- 채널 실기 확인: `node scripts/probe-channel.mjs [--terminal <term_…>]`(빌드 뒤. 실제 워커 코드의 실행 훅과 `bin/coordinator-board`를 실제 orca CLI로 돌린다. 보드 데이터는 임시 폴더).
 - 테스트: `orca plugin test .`. `node_modules`에 vitest가 있으면 Orca가 vitest로 돌린다. 그래서 테스트의 `test`는 `vitest`에서 불러온다.
 - 렌더 검사: `orca plugin check .`, manifest 검사: `orca plugin validate .`
 - 대시보드 하네스: `node dev/build.mjs`로 가짜 `window.orca`와 예시 보드를 `dev/out/index.html`에 묶고, `node dev/shoot.mjs`로 로컬 Chrome이나 Edge 헤드리스 화면을 `dev/shots/`에 찍는다. 둘 다 git에 올리지 않는다. 하네스 타입 검사는 `npx tsc -p dev`. 가짜 워커는 답장을 확인됨, 전송 미확인, 다른 수신자의 영수증 순서로 돌려 답한다. 주소의 `send=<n>`으로 시작 위치를 고르고, `press=`는 보이는 버튼만 누른다.
@@ -22,6 +23,8 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 ### Immutable
 
 - `terminal.sendText`는 사람이 친 글과 구분되지 않는다. 그래서 출처 표시 없는 전송은 사용자가 화면에서 쓰고 보내기를 누른 글에만 쓴다. 보드가 만든 문장을 보내는 경로를 만들면 `[coordinator-board]` 머리말을 붙이고, 실패해도 다시 보내지 않는다.
+- 코디네이터 명령(`coordinator-board`)의 자유 텍스트는 stdin이나 파일로만 받는다. `.cmd`가 `% ^ &`를 다시 읽기 때문이다. 채널 요청의 호출자는 `src/channel/caller.ts`로만 확인하고, 코디네이터 명령은 토큰이 맞는 지정 코디네이터 터미널에만 허용한다. 실행 훅(`src/channel/hook.ts`)은 순수 함수로 두고 CLI를 부르지 않는다(Orca가 2초 뒤 건너뛴다).
+- 코디네이터는 실행 기록(`coordinator-launch.json`)을 먼저 쓰고 띄운다. 결과가 불확실하면 `--retry-launch`로만 다시 확인하고 새로 띄우지 않는다.
 - 보내기는 `fleet.deliver`(`src/orca/deliver.ts`)로만 한다. outbox에 시도를 먼저 쓰고, 같은 messageId는 다시 보내지 않고 받는 쪽 기록으로 대조만 한다. 권한 대기, 질문 대기, 작업 중인 세션에는 보내지 않고, 전송 직전에 세션 상태를 다시 읽는다.
 - 같은 대화를 두 곳에서 돌리지 않는다. 보드는 세션을 이어 열지(`agent.resume`) 않는다. 채팅 세션과 터미널이 잠든 세션은 `workspace.open`으로 보여 주기만 한다.
 - 플러그인 승인(`--approve`)은 사람이 권한 목록을 보고 직접 한다. 에이전트가 대신 승인하지 않는다.

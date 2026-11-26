@@ -30,7 +30,7 @@ Orca가 권한 목록과 `orca plugin dev reload <폴더> --approve <fingerprint
 | `terminal:read` | 답 기다림 카드에 보이는 터미널 최근 출력 |
 | `terminal:send` | 사람이 쓰고 보내기를 누른 답장 입력 |
 | `workspace:write` | 세션 터미널로 화면 옮기기, 채팅 워크스페이스 열기, 대시보드 파일 열기 |
-| `agent:launch` | 지금은 쓰지 않는다 |
+| `agent:launch` | 지금은 쓰지 않는다(코디네이터는 `orca agent launch` CLI로 띄운다) |
 | `history:read` | 지금은 쓰지 않는다 |
 
 상태바 갱신은 권한이 필요 없다. 세션 목록과 대화는 Orca CLI(`orca worktree ps`, `orca repo list`, `orca agent read`)로 읽는다. 워커가 Orca에 들어 있는 `orca.exe`를 셸 없이 실행한다.
@@ -58,7 +58,16 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - 결정 카드에서 담당 세션에 바로 답장한다. 보내기 단축키는 macOS에서 ⌘+Enter, 그 밖에서는 Ctrl+Enter다. 긴 추천 답장은 **답장 전문 보기**로 펼쳐 읽어야 보낼 수 있다.
 - **질문하기**로 결정 전에 그 세션에 물어볼 수 있고, 문답은 카드 아래에 쌓인다.
 - 보낸 답장은 그 자리에 영수증으로 남는다. 지난 답장은 인박스의 **기록** 탭과 기존 보기의 **최근 결정 기록**에서 다시 본다.
-- 사진 첨부, 코디네이터에 보내는 요청과 조율 요청은 다음 단계에서 붙는다. 집중과 매트릭스 보기도 다음 단계에서 채운다.
+- 사진 첨부는 다음 단계에서 붙는다. 집중과 매트릭스 보기도 다음 단계에서 채운다.
+
+## 코디네이터
+
+- **만들기**: 설정에서 고른 모델로 코디네이터를 `orca agent launch --surface terminal`로 띄운다. Orca에는 플러그인 전용 폴더가 없어서, 고른 워크스페이스(고르지 않으면 지금 보고 있는 곳)에서 시작한다. 응답이 끊겨도 같은 실행을 `--retry-launch`로만 다시 확인하고 두 개를 띄우지 않는다. 터미널이 첫 응답을 하면 보드가 코디네이터로 지정한다. 워크스페이스 고정은 Orca에 없어서 하지 않는다.
+- **권한 모드**: 코디네이터 실행에만 Paseo와 같은 모드를 붙인다(claude `auto`, codex `auto-review`). 에이전트 설정이 붙인 권한 우회 인자는 코디네이터 실행에서 뺀다.
+- **보고 명령**: Orca 플러그인은 MCP 도구를 줄 수 없어서, 코디네이터는 셸 명령 `coordinator-board`로 보드를 읽고 판단을 남긴다. 모든 에이전트 실행에 `agent.launch.before` 훅이 `PATH`와 `CB_*` 변수, 그 터미널 전용 토큰을 넣는다. 명령은 `read [--session]`, `classify`, `report`이고 `plan`, `assign`, `fact`, `review`는 아직 없다. 자세한 쓰임은 `coordinator-board --help`.
+- **요청**: 다이제스트, 작업 요청, 추천 요청을 코디네이터에게 보낸다. Orca는 실행 중인 턴에 끼워 넣을 수 없어서 코디네이터가 대기 중일 때만 보낸다. 보드가 쓴 요청에는 `[coordinator-board]` 머리말이 붙는다.
+- **채팅 코디네이터**: 기존 채팅 세션을 코디네이터로 고르면 보드가 명령 경로를 한 번 알린다. 채팅은 실행 훅을 거치지 않아 `report`만 쓸 수 있다.
+- 채팅 메일을 보내는 보드 터미널은 코디네이터가 있으면 그 워크스페이스에 둔다.
 
 ## 전송 규칙
 
@@ -74,7 +83,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 [Paseo판](https://github.com/devbrother2024/paseo-coordinator-board)에 있는 기능 가운데 아래는 아직 없다.
 
 
-코디네이터 세션과 다이제스트, 워커 배정, 보드에서 PR 병합, 사진 첨부, 모델 라우팅, 다른 프로젝트 세션 링크. Orca는 아직 플러그인이 MCP 도구를 내놓을 수 없어서, 코디네이터가 보드에 판단을 돌려주는 길은 따로 설계해야 한다.
+워커 배정, 보드 사실 답하기와 기록 정리, 보드에서 PR 병합, 사진 첨부, 다른 프로젝트 세션 링크.
 
 ## 실기에서 확인한 Orca 동작 (1.4.272)
 
@@ -83,6 +92,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - 터미널 id가 없는 에이전트는 채팅 탭(구조화 세션)이다. 플러그인 API에는 채팅 탭에 글을 넣는 함수가 없다. `agent.resume`은 같은 대화를 새 터미널에서 하나 더 띄우므로 열린 채팅 탭에는 쓰지 않는다. 대신 `workspace.open`으로 그 워크스페이스를 보여 준다. 플러그인은 채팅 탭이 열려 있는지 따로 알 수 없어서, `agents.list`에 있는 세션은 모두 열린 것으로 본다.
 - `agents.list`가 `sessionId`를 주지 않는 창이 있다. 그런 창이 있는 워크스페이스의 지난 세션은 이어 열지 않는다.
 - `agent.listSessions`는 `history:read`, `agent.resume`은 `agent:launch` 권한이 있어야 한다.
+- 0.3.0부터 `agent.launch.before` 훅을 쓴다. 이 버전으로 올리면 권한 목록이 바뀌어 다시 승인해야 한다.
 - `terminal.sendText`는 포커스된 워크스페이스의 터미널에만 보낸다(다른 곳이면 `terminal is outside the active worktree`). CLI `orca terminal send`에는 이 제한이 없어서 보드는 CLI로만 보낸다.
 - Claude가 평문으로 묻고 턴을 끝내면 상태는 `done`이다. `waiting`은 `AskUserQuestion` 같은 도구로 물을 때 붙는다. 그래서 보드는 Paseo판처럼 `done` 세션의 마지막 답을 읽어(`orca agent read`) 확인 요청 문장이 있으면 사람 레인에 올린다.
 - 워크스페이스 id는 `identity:...`, `folder:...`, `<프로젝트>::<경로>` 세 가지 꼴로 온다. 대시보드 명령은 id, 경로, 이름과 브랜치 순서로 포커스된 워크스페이스를 찾는다.
@@ -96,6 +106,8 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - 터미널 세션의 `orca agent read`는 긴 항목을 약 1,200자에서 자르고 `… (truncated)`를 붙인다. 같은 세션의 `worktree ps` 행은 마지막 답을 통째로 주므로, 앞부분이 같으면 그 글로 되돌린다. 채팅 기록은 자르지 않는다.
 - 같은 대화가 두 창에 보일 때가 있다. 보드는 목록에 보이는 쪽, 그다음 최근 쪽을 쓴다.
 
+코디네이터 채널은 `node scripts/probe-channel.mjs`로 확인한다(빌드 뒤). 실제 워커 코드의 실행 훅을 부르고 그 env로 `bin/coordinator-board`를 실행해 종료 코드를 출력한다. 보드 데이터는 임시 폴더에 둔다.
+
 실제 세션으로 스냅샷을 만들어 보려면 `node scripts/probe-snapshot.mjs`를 돌린다. 모든 프로젝트를 고른 상태로 레인별 수, 사람 레인 세션, CLI 호출 수와 시간을 출력한다. 출력에 실제 세션 이름이 나오니 저장소에 남기지 않는다.
 
 ## 개발
@@ -103,7 +115,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 ```sh
 npm ci                  # 개발 도구(typescript, esbuild, vitest 등)만 설치한다. 플러그인 실행에는 필요 없다
 orca plugin types .     # .orca/types 생성 (git에 올리지 않음)
-npm run build           # 워커와 대시보드를 dist/worker.mjs, dist/dashboard.js로 묶고, 대시보드 탭이 여는 dist/dashboard.html을 쓴다. 고치는 동안은 npm run watch
+npm run build           # 워커, 코디네이터 명령, 대시보드를 dist/worker.mjs, dist/cli.cjs, dist/dashboard.js로 묶고, 대시보드 탭이 여는 dist/dashboard.html을 쓴다. 고치는 동안은 npm run watch
 npm run typecheck       # npx tsc -p .
 orca plugin test .      # 테스트 (vitest)
 orca plugin check .     # 패널을 시나리오별로 그려 보고 대시보드를 정적 검사한다 (src/panel.check.ts)
