@@ -10,8 +10,12 @@ import type { OrcaCli, WriteResult } from './cli'
 import { agentRead, readMarked } from './conversation'
 import type { SessionId, SessionRecord, TerminalHandle, World, WorkspaceRecord } from './view'
 
-/** Who pressed send. Agent and board senders come with the coordinator. */
-export type Sender = { kind: 'person' }
+/**
+ * Who a message is from. A person's text becomes a user turn. A session's (the coordinator answering a
+ * board fact) and the board's own (a merge notice) go as mail signed by a terminal, so the recipient
+ * sees who sent it; they never fall back to unsigned input.
+ */
+export type Sender = { kind: 'person' } | { kind: 'agent'; session: SessionId } | { kind: 'board' }
 
 export interface Delivery {
   /** A UUID; the marker [cb:<messageId>] is put on the first line. */
@@ -31,7 +35,7 @@ export type Route = 'terminal-input' | 'mail'
 
 export type RefuseReason =
   | 'gone' | 'blocked' | 'waiting' | 'working' | 'changed' | 'asleep' | 'other-host'
-  | 'too-long' | 'no-board-sender' | 'rejected' | 'content-changed'
+  | 'too-long' | 'no-board-sender' | 'no-agent-sender' | 'rejected' | 'content-changed'
 
 export type DeliveryOutcome =
   | { status: 'delivered'; route: Route; proof: 'cli' | 'mail-id' | 'transcript' | 'host-accepted' }
@@ -63,22 +67,34 @@ export function isSameMessage(entry: string, messageId: string, stamped: string)
 }
 
 /**
- * THE route table. A person's send becomes a user turn: typed into a terminal agent, or mailed to a
- * chat. First matching row wins.
+ * THE route table. First matching row wins.
  *
- *  | session                              | person          |
- *  | workspace on another host            | other-host      |
- *  | terminal without a live handle       | asleep          |
- *  | terminal                             | terminal-input  |
- *  | chat                                 | mail            |
+ *  | session                              | person          | agent, board |
+ *  | workspace on another host            | other-host      | other-host   |
+ *  | terminal without a live handle       | asleep          | mail         |
+ *  | terminal                             | terminal-input  | mail         |
+ *  | chat                                 | mail            | mail         |
  *
  * Mail needs a sender terminal: from a process outside every Orca terminal, orchestration send
- * refuses without --from (observed 2026-11-26), so the board mails from its own terminal.
+ * refuses without --from (observed 2026-11-26). A person's mail and the board's go from the board's
+ * own terminal; an agent's from that agent's terminal.
  */
-export function chooseRoute(session: SessionRecord, workspace: WorkspaceRecord | undefined, _from: Sender): Route | RefuseReason {
+export function chooseRoute(session: SessionRecord, workspace: WorkspaceRecord | undefined, from: Sender): Route | RefuseReason {
   if (workspace?.hostId && workspace.hostId !== 'local') return 'other-host'
-  if (session.surface === 'chat') return 'mail'
+  if (from.kind !== 'person' || session.surface === 'chat') return 'mail'
   return session.handle && session.livePty ? 'terminal-input' : 'asleep'
+}
+
+/** The terminal a mail is signed by: the board's own, or the sending agent's live local one. */
+async function signer(from: Sender, world: World, boardSender: (() => Promise<string | null>) | undefined): Promise<{ handle: string } | { refuse: RefuseReason }> {
+  if (from.kind !== 'agent') {
+    const handle = await boardSender?.().catch(() => null)
+    return handle ? { handle } : { refuse: 'no-board-sender' }
+  }
+  const agent = world.sessions.get(from.session)
+  const ws = agent && world.workspaces.get(agent.worktree)
+  if (!agent?.handle || !agent.livePty || (ws?.hostId && ws.hostId !== 'local')) return { refuse: 'no-agent-sender' }
+  return { handle: agent.handle }
 }
 
 /** Paseo's canReceiveBoardInput on Orca states: only a finished turn takes input. */
@@ -179,7 +195,7 @@ export function createDeliver(deps: DeliverDeps) {
     writeFileSync(body, text, { mode: 0o600 })
     try {
       return await deps.cli.write('orchestration send', [
-        '--to', 'orca_session_id:' + d.to, ...(from ? ['--from', from] : []), '--type', 'question', '--subject', d.subject.replace(/\s+/g, ' ').slice(0, 120), '--body-file', body
+        '--to', 'orca_session_id:' + d.to, ...(from ? ['--from', from] : []), '--type', d.from.kind === 'person' ? 'question' : 'status', '--subject', d.subject.replace(/\s+/g, ' ').slice(0, 120), '--body-file', body
       ])
     } finally {
       rmSync(body, { force: true })
@@ -204,8 +220,9 @@ export function createDeliver(deps: DeliverDeps) {
     const route = chooseRoute(session, world.workspaces.get(session.worktree), d.from)
     if (route !== 'terminal-input' && route !== 'mail') return { status: 'refused', reason: route }
     if (route === 'terminal-input' && text.length > MAX_TERMINAL_TEXT) return { status: 'refused', reason: 'too-long' }
-    const from = route === 'mail' ? await deps.mailSender?.().catch(() => null) ?? null : null
-    if (route === 'mail' && !from) return { status: 'refused', reason: 'no-board-sender' }
+    const signed = route === 'mail' ? await signer(d.from, world, deps.mailSender) : null
+    if (signed && 'refuse' in signed) return { status: 'refused', reason: signed.refuse }
+    const from = signed?.handle ?? null
 
     const record: OutboxRecord = { messageId: d.messageId, to: d.to, route, digest, text, state: 'attempting', at: now() }
     outbox.change((records) => { records[d.messageId] = record })

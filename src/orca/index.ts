@@ -18,6 +18,8 @@ type Page<T> = { entries: T[]; pageInfo: { hasMore: boolean; nextCursor: string 
 const all = <T>(entries: T[]): Page<T> => ({ entries, pageInfo: { hasMore: false, nextCursor: null, prevCursor: null } })
 
 export type PaseoProjectRef = { projectKey: string; projectName: string; workspaceName: string | null }
+const projectRef = (ws: { projectId: string; projectName: string; title: string } | undefined): PaseoProjectRef =>
+  ({ projectKey: ws?.projectId ?? 'unassigned', projectName: ws?.projectName ?? '', workspaceName: ws?.title ?? null })
 
 /** The Paseo SDK methods ported code reads. Options are accepted and ignored: one World answers them all. */
 export interface PaseoReads {
@@ -26,7 +28,7 @@ export interface PaseoReads {
     ref(id: string): {
       timeline: { refetch(options: { direction: 'tail'; projection: 'projected'; limit: number }): Promise<TimelinePage> }
       /** The agent as Orca reports it now, not from the shared two-second view. */
-      refresh(): Promise<{ agent: PaseoAgentView } | null>
+      refresh(): Promise<{ agent: PaseoAgentView; project: PaseoProjectRef } | null>
     }
   }
   workspaces: { list(options?: { filter?: { projectId?: string; [key: string]: unknown }; [key: string]: unknown }): Promise<Page<PaseoWorkspaceView>> }
@@ -119,7 +121,8 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
     // A transcript does not change while its session's updatedAt stays the same.
     const cached = reads.get(id as SessionId)
     if (session && cached && cached.updatedAt === session.updatedAt && cached.limit === n) return cached.page
-    const page = cli.read('agent read', ['orca_session_id:' + id, '--limit', String(n)], (result) => timelinePage(agentRead.parse(result), session, sentText))
+    const senderOf = (handle: string) => [...world.sessions.values()].find((s) => s.handle === handle && s.id !== id)?.id
+    const page = cli.read('agent read', ['orca_session_id:' + id, '--limit', String(n)], (result) => timelinePage(agentRead.parse(result), session, sentText, senderOf))
     if (session) reads.set(session.id, { updatedAt: session.updatedAt, limit: n, page })
     page.catch(() => {
       if (reads.get(id as SessionId)?.page === page) reads.delete(id as SessionId)
@@ -133,10 +136,7 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
         const world = await view()
         return all([...world.sessions.values()].map((session) => {
           const ws = world.workspaces.get(session.worktree)
-          return {
-            agent: paseoAgentView(session, ws),
-            project: { projectKey: ws?.projectId ?? 'unassigned', projectName: ws?.projectName ?? '', workspaceName: ws?.title ?? null }
-          }
+          return { agent: paseoAgentView(session, ws), project: projectRef(ws) }
         }))
       },
       ref: (id) => ({
@@ -144,7 +144,9 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
         async refresh() {
           const world = await view({ maxAgeMs: 0 })
           const session = world.sessions.get(id as SessionId)
-          return session ? { agent: paseoAgentView(session, world.workspaces.get(session.worktree)) } : null
+          if (!session) return null
+          const ws = world.workspaces.get(session.worktree)
+          return { agent: paseoAgentView(session, ws), project: projectRef(ws) }
         }
       })
     },

@@ -1,38 +1,41 @@
 // Adapted from paseo-coordinator-board index.server.ts @ 2e9d128: the snapshot, decision count, readiness
-// and scope, and the session sends (board.send-decision, board.ask-clarification) through fleet.deliver.
-// Board facts, tracked decisions, merge notices and coordinator tools come later, so their parts are left out.
+// and scope, board facts, the tracked decision ledger and its queue, and the session sends
+// (board.send-decision, board.ask-clarification, tracked replies) through fleet.deliver. Paseo's hooks
+// are Orca signals (src/orca/signals.ts) that the worker passes to signal(). Pull request mapping,
+// lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts.
 import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, PluginServerContext } from "../orca";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
 import { boardReadiness } from "../paseo/shared/readiness";
-import { decisionCount, displayLane } from "../paseo/shared/decision-count";
+import { decisionCount } from "../paseo/shared/decision-count";
 import { sendDecision } from "../paseo/shared/decision-actions";
 import { askClarification, sourceQuestion } from "../paseo/shared/clarifications";
-import { boardDecisionCount, boardScope, boardSnapshot, type Note, type SessionRow } from "../paseo/shared/contract";
+import { boardDecisionCount, boardScope, boardSnapshot } from "../paseo/shared/contract";
 import { SnapshotReads } from "../paseo/server/snapshot-reads";
 import { NoteStore } from "../paseo/server/notes";
-import { setCoordinator, PreferenceStore } from "../paseo/server/preferences";
+import { isManagedCoordinator, setCoordinator, PreferenceStore } from "../paseo/server/preferences";
 import { catalogProjects, discoverSessions, liveSelection } from "./discovery";
 import { ConversationReader, excerpt } from "./conversation";
 import { decorateDecision, DecisionSender } from "./decisions";
 import { ClarificationSender, clarificationHistory, restoreClarifiedDecision } from "./clarifications";
 import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } from "./session-links";
 import { ProjectPullRequests } from "./prs";
+import { MergeNotifications } from "./merge-notifications";
 import type { Command } from "../channel/names";
 import { coordinatorCommands, runCommand } from "./coordinator";
+import { BoardFacts } from "./board-facts";
+import { trackedReviewTool } from "./tracked-review";
+import { TrackedDecisionStore } from "./tracked-decisions";
+import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
+import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
+import { canReceiveBoardInput } from "./discovery";
+import type { Signal } from "../orca/signals";
 import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operations";
 import { translator } from "../i18n";
 import { createHash } from "node:crypto";
 import type { SessionId } from "../orca";
 
 type Sdk = PluginHandlerContext["paseo"];
-
-/** Paseo previews tracked decisions here; until those are read, the snapshot's own human-lane sessions stand in. */
-function previewTitles(sessions: SessionRow[], notes: Record<string, Note>) {
-  return sessions.filter(row => displayLane(row, notes[row.id]) === "human")
-    .sort((a, b) => (a.decisionRequestedAt ?? a.activityAt ?? "").localeCompare(b.decisionRequestedAt ?? b.activityAt ?? ""))
-    .slice(0, 3).map(row => row.title);
-}
 
 export type PullDeps = ConstructorParameters<typeof ProjectPullRequests>[1];
 
@@ -44,8 +47,16 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const reader = new ConversationReader();
   const prs = new ProjectPullRequests(prefs, pulls);
   const decisions = new DecisionSender(prefs, notes, reader, fleet);
-  const commands = coordinatorCommands(prefs, reader, notes);
-  const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host);
+  const tracked = new TrackedDecisionStore(join(dataDir, "tracked-decisions.json"),
+    selected => {
+      let partial = false;
+      const items = readProjectDecisionSources(join(dataDir, "tracked-sources.json"), selected, () => { partial = true; });
+      return {items,partial};
+    });
+  const facts = new BoardFacts(prefs, notes, reader, fleet);
+  facts.register(server);
+  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()) });
+  const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
     const session = (await fleet.view({ maxAgeMs: 0 })).sessions.get(sessionId as SessionId);
@@ -60,11 +71,13 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     const id = [messageId.slice(0, 8), messageId.slice(8, 12), "4" + messageId.slice(13, 16), "8" + messageId.slice(17, 20), messageId.slice(20, 32)].join("-");
     await fleet.deliver({ messageId: id, to: sessionId as SessionId, text, subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse" });
   }
-  let decisionTitles: string[] = [];
+
+  const mergeNotifications = new MergeNotifications(prefs,(target,coordinator)=>tracked.mergeRecipient(target,coordinator),
+    (sdk,target)=>prs.mergeScope(sdk,target), fleet);
 
   server.handle(boardReadiness, async () => {
     const scope = prefs.read();
-    return { configured: scope.projects.length > 0, coordinator: scope.coordinator, decisionTitles: scope.projects.length ? decisionTitles : [] };
+    return { configured: scope.projects.length > 0, coordinator: scope.coordinator, decisionTitles: tracked.previewTitles(new Set(scope.projects)) };
   });
   async function buildSnapshot(paseo: Sdk, refreshPulls=false) {
     // GitHub can take seconds even when Orca already knows the current sessions.
@@ -80,8 +93,13 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     ]);
     const { choices, sessions, evidence, coordinatorRow } = sessionView;
     const latest = prefs.read();
+    // Loading the board should not wait on an idle check or a provider turn.
+    if (Object.values(latest.pullMergeHistory).some(entry => entry.pullMerge.notification?.status === "queued")) {
+      void mergeNotifications.resume(paseo).catch(() => console.warn("Could not resume queued merge notifications."));
+    }
     const visible = sessions.filter(row => isCurrentMembership(row, latest));
     const visibleNotes = notes.visible(new Set(visible.map(s => s.id)));
+    facts.decorate(visible, evidence, visibleNotes);
     for (const row of visible) {
       decorateDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
       restoreClarifiedDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
@@ -95,7 +113,11 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     const targets = new Map(visible.map(row => [row.id, row]));
     if (coordinatorRow && coordinatorRow.id === latest.coordinator) targets.set(coordinatorRow.id, coordinatorRow);
     for (const id of evidence.keys()) if (!targets.has(id)) evidence.delete(id);
-    const activity: ReplyEntry[] = [];
+    const {history = [], ...trackedDecisions} = tracked.read(selected, visible, pullRequests, evidence);
+    if (tracked.hasWaitingReplies()) {
+      void resumeReplies({paseo}).catch(()=>console.warn("Could not check waiting board replies."));
+    }
+    const activity: ReplyEntry[] = [...history];
     for (const [key, receipt] of Object.entries(latest.pullMergeHistory)) {
       if (selected.has(receipt.projectId)) activity.push({...receipt, key, status:"recorded"});
     }
@@ -120,8 +142,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     }
     const replyHistory = activity.sort((a,b) => b.at.localeCompare(a.at));
     const clarifications = clarificationHistory(prefs, targets, evidence);
-    decisionTitles = previewTitles(visible, visibleNotes);
-    return { sessions: visible, notes: visibleNotes, pullRequests, replyHistory, ...(clarifications.length ? { clarifications } : {}),
+    return { sessions: visible, notes: visibleNotes, pullRequests, trackedDecisions, replyHistory, ...(clarifications.length ? { clarifications } : {}),
       projects: [...choices.values()].map(p => ({ ...p, selected: selected.has(p.id) })), coordinator: latest.coordinator };
   }
   async function buildSessionView(paseo: Sdk, catalog: Awaited<ReturnType<Sdk["projects"]["list"]>>,
@@ -179,7 +200,14 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       const latest = notes.visible(new Set([original.sessionId]))[original.sessionId];
       if (latest?.revision !== view.notes[original.sessionId]?.revision) return false;
     }
-    return card.kind !== "tracked";
+    if (card.kind !== "tracked") return true;
+    const scope = prefs.read();
+    const records = tracked.read(new Set(scope.projects), [], { items: [], projects: [] });
+    const sameCard = (item:{source:string;projectId:string|null;id:string;fingerprint:string}) =>
+      item.source === card.source && item.projectId === card.projectId && item.id === card.id && item.fingerprint === card.fingerprint;
+    const before = view.trackedDecisions?.items.find(sameCard);
+    const now = records.items.find(sameCard);
+    return !!before && !!now && now.sourceCoordinatorId === before.sourceCoordinatorId;
   });
   server.handle(askClarification, async (input, { paseo }) => {
     try {
@@ -188,6 +216,50 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       invalidateCount();
     }
   });
+  // Orca cannot steer a running turn, so a queued reply waits for an idle recipient, coordinator included.
+  const resumeReplies = tracked.register(server, () => new Set(prefs.read().projects), invalidateCount, async (item,targetId,{paseo}) => {
+    let rows = await discoverSessions(paseo);
+    const owned = usesSourceCoordinator(item);
+    const current = () => {
+      const scope = prefs.read();
+      const managed = managedSessions(rows,scope);
+      if (!scope.projects.length || (item.projectId && !scope.projects.includes(item.projectId))) return false;
+      if (trackedRecipient(item,scope.coordinator,managed) !== targetId) return false;
+      return !owned || managed.some(row => row.id === targetId) ||
+        (isManagedCoordinator(scope,targetId) && targetId === scope.coordinator && rows.some(row => row.id === targetId));
+    };
+    if (!current()) return null;
+    const handle=paseo.agents.ref(targetId);
+    if (owned) rows = await discoverSessions(paseo);
+    const agent=(await handle.refresh())?.agent;
+    if (!current() || !agent || agent.id!==targetId || agent.internal || agent.archivedAt || agent.status==="closed" || agent.status==="error") return null;
+    return {
+      stillCurrent:current,
+      send:async (answer,messageId)=>{
+        const outcome = await fleet.deliver({ messageId, to: targetId as SessionId, text: answer, subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse" });
+        if (outcome.status !== "delivered") throw new Error("not delivered: " + (outcome.status === "refused" ? outcome.reason : outcome.status));
+      },
+      accepted:async (_answer,messageId)=>(await fleet.reconcile(messageId))?.status === "delivered",
+      ready:canReceiveBoardInput(agent,false),
+    };
+  }, input => {
+    if (input.recipientId && input.images?.length) {
+      throw new Error(host.t()("사진 첨부는 아직 보낼 수 없습니다. 글로만 보내 주세요.", "Photos cannot be sent yet. Send text only."));
+    }
+  });
+  prs.register(server, invalidateCount, mergeNotifications);
+  async function recipientAvailable(id: string) {
+    if (tracked.hasWaitingReplies(id)) {
+      await resumeReplies({ paseo: fleet.paseo }, id);
+      // A status event can precede the state a fresh read reports.
+      if (tracked.hasWaitingReplies(id)) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        fleet.invalidate();
+        await resumeReplies({ paseo: fleet.paseo }, id);
+      }
+    }
+    await mergeNotifications.resume(fleet.paseo, id);
+  }
   server.handle(boardSnapshot, (input, { paseo }) => {
     if (input.fresh) fleet.invalidate();
     return reads.read(() => buildSnapshot(paseo), input.fresh);
@@ -226,6 +298,19 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     return { ok: true };
   });
   return {
+    /** A session may take a queued board message now (src/orca/signals.ts). */
+    async signal(signal: Signal) {
+      if (signal.kind === "gone") await resumeReplies({ paseo: fleet.paseo }, signal.session);
+      else await recipientAvailable(signal.session);
+    },
+    /** Retries every queue; the poll's catch-all for transitions no event reported. */
+    async resumeWaiting(): Promise<boolean> {
+      const merges = Object.values(prefs.read().pullMergeHistory).some(entry => entry.pullMerge.notification?.status === "queued");
+      if (!tracked.hasWaitingReplies() && !merges) return false;
+      if (tracked.hasWaitingReplies()) await resumeReplies({ paseo: fleet.paseo });
+      if (merges) await mergeNotifications.resume(fleet.paseo);
+      return true;
+    },
     /** Orca reported a change: the next read sees it. */
     invalidate() { fleet.invalidate(); invalidateCount(); },
     count: () => reads.count(() => buildSnapshot(fleet.paseo)),

@@ -23,12 +23,23 @@ export interface TimelinePage {
   staleCursor?: boolean
 }
 
-function userItem(text: string, sentText: (messageId: string) => string | undefined): TimelineItem {
+/**
+ * A user entry as Paseo would show it. Mail signed by another session's terminal is that agent's
+ * message (Paseo's agent-message tool call, with the board's marker as its id); anything else is a
+ * user message, with the board's marker as its messageId.
+ */
+function userItem(text: string, sentText: (messageId: string) => string | undefined, senderOf: (handle: string) => string | undefined): TimelineItem {
   const marked = readMarked(text)
+  const full = marked?.cut ? readMarked(sentText(marked.messageId) ?? '')?.body : undefined
+  const body = marked ? (full?.startsWith(marked.body) ? full : marked.body) : null
+  const handle = MAIL_SENDER.exec(text.replace(/\r\n/g, '\n').split('\n', 1)[0])?.[1]
+  const sender = handle ? senderOf(handle) : undefined
+  if (sender) {
+    return { type: 'tool_call', name: 'agent_message', status: 'completed', callId: 'paseo-agent-message:' + (marked?.messageId ?? 'unmarked'),
+      agentMessage: { event: 'message', sender: { id: sender }, text: body ?? unframe(text) } }
+  }
   if (!marked) return { type: 'user_message', text }
-  const full = marked.cut ? readMarked(sentText(marked.messageId) ?? '')?.body : undefined
-  const body = full?.startsWith(marked.body) ? full : marked.body
-  return { type: 'user_message', text: body, messageId: marked.messageId }
+  return { type: 'user_message', text: body!, messageId: marked.messageId }
 }
 
 /** What a terminal transcript read puts after a long entry it cut (about 1 200 characters kept). */
@@ -36,6 +47,7 @@ export const TRUNCATED = '\n… (truncated)'
 
 const MARKER = /^\[cb:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]$/i
 const MAIL_HEAD = /^─+ From: .* ─+$/
+const MAIL_SENDER = /^─+ From: .* \((term_[^()\s]+)\) \([^()]*\) ─+$/
 const MAIL_RULE = /^─+$/
 const MAIL_REPLY = /^\[Reply: orca orchestration reply /
 
@@ -63,8 +75,8 @@ export function readMarked(entry: string): { messageId: string; body: string; cu
 }
 
 /**
- * Only text turns: excerpt() hashes text turns and ignores plain tool calls, and Orca has no
- * message ids or agent-message tool calls to carry.
+ * Only text turns, and mail another session signed, which Paseo shows as an agent-message tool
+ * call: excerpt() hashes text turns and records agent messages as deliveries and later input.
  *
  * seqEnd counts the text turns after an entry, so the same text history gives the same evidenceId
  * and a new turn changes it. The epoch names the session, as Paseo's epoch names a timeline.
@@ -75,9 +87,11 @@ export function readMarked(entry: string): { messageId: string; body: string; cu
  *
  * A user entry that starts with the board's marker becomes a Paseo user message with that
  * messageId and the text the board sent, without mail framing or marker. A cut one is restored
- * from sentText, the outbox copy, when that starts with what the transcript kept.
+ * from sentText, the outbox copy, when that starts with what the transcript kept. senderOf names
+ * the session a terminal handle belongs to: mail it signed becomes that agent's message.
  */
-export function timelinePage(read: AgentRead, session: SessionRecord | undefined, sentText: (messageId: string) => string | undefined = () => undefined): TimelinePage {
+export function timelinePage(read: AgentRead, session: SessionRecord | undefined, sentText: (messageId: string) => string | undefined = () => undefined,
+  senderOf: (handle: string) => string | undefined = () => undefined): TimelinePage {
   const texts = read.entries.flatMap(({ kind, role, text }) =>
     kind === 'message' && (role === 'user' || role === 'assistant') && text?.trim() ? [{ role, text }] : [])
   const entries = texts.map((entry, index) => {
@@ -86,7 +100,7 @@ export function timelinePage(read: AgentRead, session: SessionRecord | undefined
     if (last && entry.role === 'assistant' && text.endsWith(TRUNCATED) && session?.surface === 'terminal' && session.lastAssistant?.startsWith(text.slice(0, -TRUNCATED.length))) {
       text = session.lastAssistant
     }
-    const item: TimelineItem = entry.role === 'assistant' ? { type: 'assistant_message', text } : userItem(text, sentText)
+    const item: TimelineItem = entry.role === 'assistant' ? { type: 'assistant_message', text } : userItem(text, sentText, senderOf)
     // The read has no times; a finished last answer was given when the session entered its state.
     const timestamp = last && entry.role === 'assistant' && read.state === 'done' && session ? new Date(session.stateStartedAt).toISOString() : undefined
     return { item, seqEnd: texts.length - 1 - index, ...(timestamp ? { timestamp } : {}) }

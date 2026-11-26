@@ -119,3 +119,26 @@ test('digest and work requests reach an idle coordinator once; a working one is 
   expect(received()[1]).toBe('Split the release notes.')
   await expect(f.request('board.request-work', { ...work, text: 'Something else.' })).rejects.toThrow('text changed')
 })
+
+test('a digest that handles board facts names the cycle, and the coordinator\'s fact command mails the answer signed by its terminal', async () => {
+  const f = setup([{ id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'acme' }])
+  f.orca.say('worker', 'assistant', 'What is the current status of this session?')
+  await f.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
+  expect(await f.request('board.fact-reply-settings')).toEqual({ enabled: true })
+  await f.request('board.snapshot', { fresh: true })
+  await f.request('board.request-digest', { coordinator: 'coord', requestKey: 'digest-0000002', language: 'en', handleBoardFacts: true })
+  const prompt = readMarked(f.orca.transcripts.get('coord')!.at(-1)!.text)!.body
+  const cycleId = /"cycleId":"([a-f0-9]{64})"/.exec(prompt)![1]
+  expect(prompt).toContain('coordinator-board fact --cycle ' + cycleId)
+  const listing = JSON.parse((await f.board.command('read', {}, 'coord')).text) as { id: string; factCandidate?: boolean }[]
+  expect(listing.find(r => r.id === 'worker')).toMatchObject({ factCandidate: true })
+  const { evidenceId } = JSON.parse((await f.board.command('read', { sessionId: 'worker' }, 'coord')).text)
+  f.orca.find('coord')!.state = 'working'
+  expect(await f.board.command('fact', { cycleId, sessionId: 'worker', evidenceId }, 'coord')).toEqual({ text: expect.stringContaining('accepted') })
+  const mail = f.orca.writes.find(w => w[0] === 'orchestration')!
+  expect(mail.slice(2, 8)).toEqual(['--to', 'orca_session_id:worker', '--from', 'term_c', '--type', 'status'])
+  expect(JSON.parse(readMarked(f.orca.transcripts.get('worker')!.at(-1)!.text)!.body)).toMatchObject({ type: 'coordinator-board.fact', answer: 'Observed Orca session status: idle.' })
+  await f.request('board.set-fact-auto-reply', { enabled: false })
+  expect(await f.request('board.fact-reply-settings')).toEqual({ enabled: false })
+  expect(f.prefs.read().factCycle).toBeUndefined()
+})

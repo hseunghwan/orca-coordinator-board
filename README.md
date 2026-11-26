@@ -35,7 +35,7 @@ Orca가 권한 목록과 `orca plugin dev reload <폴더> --approve <fingerprint
 
 상태바 갱신은 권한이 필요 없다. 세션 목록과 대화는 Orca CLI(`orca worktree ps`, `orca repo list`, `orca agent read`)로 읽는다. 워커가 Orca에 들어 있는 `orca.exe`를 셸 없이 실행한다.
 
-보드가 고른 프로젝트, 코디네이터, 메모와 답장 영수증은 `~/.orca-coordinator-board/`(`scope.json`, `notes.json`)에 둔다. Paseo판의 `~/.paseo/plugin-data/coordinator-board/`와 같은 파일 형식이다.
+보드가 고른 프로젝트, 코디네이터, 메모와 답장 영수증은 `~/.orca-coordinator-board/`(`scope.json`, `notes.json`)에 둔다. 결정 장부는 같은 폴더의 `tracked-decisions.json`(직접 쓴 결정 목록)과 `tracked-sources.json`(외부 장부 폴더 목록)에서 읽고, 처리 기록은 `tracked-decisions.resolved.json`에 남긴다. Paseo판의 `~/.paseo/plugin-data/coordinator-board/`와 같은 파일 형식이다.
 
 ## 하는 일
 
@@ -63,13 +63,16 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 
 - **코디네이터에 요청**을 누르면 코디네이터 패널이 열린다. 코디네이터가 있으면 일을 맡기거나 다이제스트를 요청하고, 없으면 추천 설정과 시작할 워크스페이스를 골라 새로 시작한다. 결정 카드의 **코디네이터에 추천 요청**과 **코디네이터에 조율 요청**도 코디네이터가 있을 때 쓸 수 있다.
 - 설정에서 기존 세션을 코디네이터로 지정하거나 해제하고, **새 코디네이터로 교체…**로 바꾼다. Orca는 플러그인이 사이드바 고정을 바꾸게 하지 않아 고정 설정은 없다.
-- 사진 첨부와 사실 질문 자동 답장은 다음 단계에서 붙는다.
+- 사실 질문 자동 답장: 세션의 마지막 답이 "이 세션은 어느 프로젝트 소속인가요?" 같은 한 줄 사실 질문이면, 보드가 그 답을 만들어 다이제스트 때 코디네이터 명의로 보낸다. 코디네이터 터미널이 서명한 메일로만 보내고, 서명할 수 없으면 보내지 않는다.
+- 결정 장부: 장부의 결정에 답하면 보드가 담당 세션이나 코디네이터에게 보낸다. 받을 세션이 작업 중이면 대기열에 두었다가 턴이 끝나면(Orca 상태 변화나 30초마다 확인) 한 번 보낸다. 대기 중인 답은 취소할 수 있다.
+- PR 병합: 프로젝트마다 GitHub 저장소를 자동, 직접 지정, 끄기 중 하나로 연결한다. 병합은 미리보기(5분짜리 확인 토큰)와 확정 두 단계이고, 확정은 미리보기 때의 head 커밋으로만 병합한다. 보드가 병합하면 장부 담당이나 코디네이터에게 보드 메일 터미널 명의로 한 번 알린다.
+- 사진 첨부는 다음 단계에서 붙는다.
 
 ## 코디네이터
 
 - **만들기**: 설정에서 고른 모델로 코디네이터를 `orca agent launch --surface terminal`로 띄운다. Orca에는 플러그인 전용 폴더가 없어서, 고른 워크스페이스(고르지 않으면 지금 보고 있는 곳)에서 시작한다. 응답이 끊겨도 같은 실행을 `--retry-launch`로만 다시 확인하고 두 개를 띄우지 않는다. 터미널이 첫 응답을 하면 보드가 코디네이터로 지정한다. 워크스페이스 고정은 Orca에 없어서 하지 않는다.
 - **권한 모드**: 코디네이터는 권한 우회 모드로 띄운다(claude `--dangerously-skip-permissions`, codex `--dangerously-bypass-approvals-and-sandbox`). 에이전트 설정이 이미 붙였으면 그대로 두고, 없으면 한 번 붙인다. Paseo판의 자동 모드(`auto`, `auto-review`)와 다른 점이다.
-- **보고 명령**: Orca 플러그인은 MCP 도구를 줄 수 없어서, 코디네이터는 셸 명령 `coordinator-board`로 보드를 읽고 판단을 남긴다. 모든 에이전트 실행에 `agent.launch.before` 훅이 `PATH`와 `CB_*` 변수, 그 터미널 전용 토큰을 넣는다. 명령은 `read [--session]`, `classify`, `report`이고 `plan`, `assign`, `fact`, `review`는 아직 없다. 자세한 쓰임은 `coordinator-board --help`.
+- **보고 명령**: Orca 플러그인은 MCP 도구를 줄 수 없어서, 코디네이터는 셸 명령 `coordinator-board`로 보드를 읽고 판단을 남긴다. 모든 에이전트 실행에 `agent.launch.before` 훅이 `PATH`와 `CB_*` 변수, 그 터미널 전용 토큰을 넣는다. 명령은 `read [--session]`, `classify`, `report`, `fact`(다이제스트가 허락한 사실 답장), `review`(병합된 단독 병합 기록 정리와 완료 확인)이고 `plan`, `assign`은 아직 없다. 자세한 쓰임은 `coordinator-board --help`.
 - **요청**: 다이제스트, 작업 요청, 추천 요청을 코디네이터에게 보낸다. Orca는 실행 중인 턴에 끼워 넣을 수 없어서 코디네이터가 대기 중일 때만 보낸다. 보드가 쓴 요청에는 `[coordinator-board]` 머리말이 붙는다.
 - **채팅 코디네이터**: 기존 채팅 세션을 코디네이터로 고르면 보드가 명령 경로를 한 번 알린다. 채팅은 실행 훅을 거치지 않아 `report`만 쓸 수 있다.
 - 채팅 메일을 보내는 보드 터미널은 코디네이터가 있으면 그 워크스페이스에 둔다.
@@ -88,7 +91,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 [Paseo판](https://github.com/devbrother2024/paseo-coordinator-board)에 있는 기능 가운데 아래는 아직 없다.
 
 
-워커 배정, 보드 사실 답하기와 기록 정리, 보드에서 PR 병합, 사진 첨부, 다른 프로젝트 세션 링크.
+워커 배정, 사진 첨부, 다른 프로젝트 세션 링크.
 
 ## 실기에서 확인한 Orca 동작 (1.4.272)
 
@@ -112,6 +115,8 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - 같은 대화가 두 창에 보일 때가 있다. 보드는 목록에 보이는 쪽, 그다음 최근 쪽을 쓴다.
 
 코디네이터 채널은 `node scripts/probe-channel.mjs`로 확인한다(빌드 뒤). 실제 워커 코드의 실행 훅을 부르고 그 env로 `bin/coordinator-board`를 실행해 종료 코드를 출력한다. 보드 데이터는 임시 폴더에 둔다.
+
+장부, 사실, PR은 `node scripts/probe-ledger.mjs prs|mail|review`로 확인한다(사용법은 파일 머리). `prs`는 읽기만 하고 병합은 확정하지 않는다. 실행 중인 에이전트가 받은 PATH 키와 `CB_*` 변수는 `node scripts/probe-path.mjs --match <명령 줄의 글>`로 읽기만 해서 본다(값은 출력하지 않는다).
 
 실제 세션으로 스냅샷을 만들어 보려면 `node scripts/probe-snapshot.mjs`를 돌린다. 모든 프로젝트를 고른 상태로 레인별 수, 사람 레인 세션, CLI 호출 수와 시간을 출력한다. 출력에 실제 세션 이름이 나오니 저장소에 남기지 않는다.
 

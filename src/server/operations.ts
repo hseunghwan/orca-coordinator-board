@@ -18,6 +18,7 @@ import type { PreferenceStore } from "../paseo/server/preferences";
 import { readAccountUsage, readDirectory } from "./catalog";
 import type { DecisionSender } from "./decisions";
 import { CoordinatorLifecycle } from "./lifecycle";
+import type { BoardFacts } from "./board-facts";
 
 export { coordinatorWorkspace, operations, startCoordinator } from "../contract";
 import { operations, startCoordinator } from "../contract";
@@ -41,11 +42,20 @@ export function coordinatorWorkspaces(world: World, focusedId: string | null, se
 }
 
 const prompts = {
-  ko: "관리 프로젝트의 다이제스트를 한국어로 갱신하세요. coordinator-board read로 최근 근거를 확인하고 coordinator-board classify로 기록하세요. 각 질문에는 당사자가 정할 한 문장을 content.question에 적으세요. 근거·기존 기준에서 제안할 수 있는 가장 타당한 답장 하나를 content.recommendation에, 간단한 이유를 content.recommendationReason에 적으세요. 증거에 실제 답장 문장이 없어도 근거 있는 제안은 작성할 수 있습니다. 판단에 필요한 정보가 부족하면 결정을 지어내지 말고 필요한 정보를 content.needsInput에 적으세요. 예전에 판단한 질문도 needsRecommendation이 표시되면 갱신하세요. 진행 보고와 이미 정해진 사항은 내 결정에서 내리고, 직접 결정할 안건을 먼저 보고하세요.",
-  en: "Refresh the digest for managed projects in English. Inspect recent evidence with coordinator-board read and use coordinator-board classify to record your findings. For every genuine human decision, write one short question in content.question. When evidence or an established preference supports it, propose one editable, ready-to-send reply in content.recommendation and give a brief reason in content.recommendationReason. The proposed wording may be new. If essential input is missing, name it in content.needsInput without inventing the person's choice. Revisit earlier decisions marked needsRecommendation. Keep progress reports and resolved matters out of My decisions, and report the remaining decisions first.",
+  ko: "관리 프로젝트의 다이제스트를 한국어로 갱신하세요. coordinator-board review로 완료된 단독 병합 기록을 정리하세요. 다른 확인 기록은 원 세션에서 완료 근거가 확인된 경우에만 이 명령으로 닫으세요. coordinator-board read로 최근 근거를 확인하고 coordinator-board classify로 기록하세요. 각 질문에는 당사자가 정할 한 문장을 content.question에 적으세요. 근거·기존 기준에서 제안할 수 있는 가장 타당한 답장 하나를 content.recommendation에, 간단한 이유를 content.recommendationReason에 적으세요. 증거에 실제 답장 문장이 없어도 근거 있는 제안은 작성할 수 있습니다. 판단에 필요한 정보가 부족하면 결정을 지어내지 말고 필요한 정보를 content.needsInput에 적으세요. 예전에 판단한 질문도 needsRecommendation이 표시되면 갱신하세요. 진행 보고와 이미 정해진 사항은 내 결정에서 내리고, 직접 결정할 안건을 먼저 보고하세요.",
+  en: "Refresh the digest for managed projects in English. Use coordinator-board review for verified standalone merges and coordinator checks with completion evidence from the originating session. Inspect recent evidence with coordinator-board read and use coordinator-board classify to record your findings. For every genuine human decision, write one short question in content.question. When evidence or an established preference supports it, propose one editable, ready-to-send reply in content.recommendation and give a brief reason in content.recommendationReason. The proposed wording may be new. If essential input is missing, name it in content.needsInput without inventing the person's choice. Revisit earlier decisions marked needsRecommendation. Keep progress reports and resolved matters out of My decisions, and report the remaining decisions first.",
 };
 export const digestPrompt = prompts.ko + " 이번 요청은 조회와 분류만 맡깁니다.";
 export const englishDigestPrompt = prompts.en + " Limit this request to reading and classification.";
+
+/** Paseo's digestWithFactReplies, naming the fact command and its flags instead of the tool. */
+export function digestWithFactReplies(language: "ko" | "en", cycleId: string) {
+  const command = "coordinator-board fact --cycle " + cycleId + " --session <sessionId> --evidence <evidenceId>";
+  const instructions = language === "ko"
+    ? "이번 다이제스트에서 보드가 단독 사실 질문으로 식별한 세션(coordinator-board read 목록의 factCandidate)에는 `" + command + "`로 답하세요. 이 명령이 허용한 대상·근거에 대해서만 코디네이터 이름으로 확인된 사실을 보낼 수 있습니다. 다른 방식의 메시지 전송은 요청하지 않았습니다. 처리 결과와 사람이 결정할 안건을 구분하세요."
+    : "For this digest, run `" + command + "` for standalone factual questions identified by the board (factCandidate in the coordinator-board read listing). Only that command may send its verified facts as the coordinator. Do not send a message by any other route. Report handled items separately from human decisions.";
+  return prompts[language] + " " + instructions + " " + JSON.stringify({ cycleId });
+}
 
 export function recommendationPrompt(sessionId: string, language: "ko" | "en") {
   const target = JSON.stringify({ sessionId });
@@ -63,7 +73,7 @@ function requestUuid(content: unknown[]) {
 }
 
 export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "deliver">, store: PreferenceStore, t: T,
-  expected: string, key: string, text: string, options: { reserveMessage?: (originalId: string) => string; boardMade: boolean }) {
+  expected: string, key: string, text: string, options: { reserveMessage?: (originalId: string) => string; beforeSend?: (messageId: string) => void; boardMade: boolean }) {
   if (store.read().coordinator !== expected) throw new Error(t("현재 코디네이터를 다시 확인해 주세요.", "Check the current coordinator again."));
   if (!store.read().projects.length) throw new Error(t("관리할 프로젝트를 하나 이상 선택하세요.", "Choose at least one project to manage."));
   const session = (await fleet.view({ maxAgeMs: 0 })).sessions.get(expected as SessionId);
@@ -71,6 +81,7 @@ export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "delive
   if (store.read().coordinator !== expected) throw new Error(t("코디네이터가 교체되었습니다. 새로 고쳐 주세요.", "The coordinator changed. Refresh the board."));
   const originalId = requestUuid([expected, key, text]);
   const messageId = options.reserveMessage?.(originalId) ?? originalId;
+  options.beforeSend?.(messageId);
   const outcome = await fleet.deliver({
     messageId, to: expected as SessionId, text: options.boardMade ? BOARD_PREFIX + "\n" + text : text,
     subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse",
@@ -90,7 +101,8 @@ export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "delive
   return { ok: true };
 }
 
-export function registerOperations(server: PluginServerContext, store: PreferenceStore, fleet: Fleet, decisions: DecisionSender, dataDir: string, deps: OperationDeps) {
+export function registerOperations(server: PluginServerContext, store: PreferenceStore, fleet: Fleet, decisions: DecisionSender, dataDir: string, deps: OperationDeps,
+  facts?: Pick<BoardFacts, "prepareCycle" | "bindMessage">) {
   const lifecycle = new CoordinatorLifecycle(store, fleet, dataDir, { t: deps.t, bin: deps.bin });
   const unsupportedPin = () => new Error(deps.t()("Orca에서는 플러그인이 워크스페이스를 고정할 수 없습니다.", "Orca does not let a plugin pin a workspace."));
 
@@ -200,6 +212,11 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
   });
   server.handle(askDigest, async input => {
     const language = input.language ?? "ko";
+    const cycle = input.handleBoardFacts && facts ? await facts.prepareCycle(fleet.paseo, input.coordinator, input.requestKey) : null;
+    if (cycle && facts) {
+      return sendCoordinatorRequest(fleet, store, deps.t(), input.coordinator, input.requestKey, digestWithFactReplies(language, cycle),
+        { boardMade: true, beforeSend: messageId => facts.bindMessage(input.coordinator, cycle, messageId) });
+    }
     return sendCoordinatorRequest(fleet, store, deps.t(), input.coordinator, input.requestKey, language === "en" ? englishDigestPrompt : digestPrompt, { boardMade: true });
   });
   server.handle(requestWork, async input => {

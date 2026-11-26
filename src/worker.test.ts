@@ -54,7 +54,7 @@ test('serves the Paseo snapshot, count and readiness for the chosen projects', a
   assert.equal(snapshot.sessions.find((s) => s.title === 'Ask about the release')?.lane, 'human')
   assert.equal(snapshot.coordinator, null)
   assert.deepEqual(await mounted.request('board.decision-count', {}), { count: 5 })
-  assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: ['Ask about the release', 'Delete build cache', 'Pick a layout'] })
+  assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: [] })
   await mounted.deactivate()
 })
 

@@ -1,6 +1,6 @@
 // Adapted from paseo-coordinator-board server/clarifications.ts @ 2e9d128. Sending goes through fleet.deliver
-// and a pending question is settled by fleet.reconcile, never sent again. Only a question whose target is
-// the session itself is sent for now: coordinator targets and photos come in later phases.
+// and a pending question is settled by fleet.reconcile, never sent again. A coordinator or ledger owner is
+// asked only while idle, as Orca cannot steer a running turn. Photos come in a later phase.
 import { createHash } from "node:crypto";
 import type { Fleet, PluginHandlerContext, SessionId } from "../orca";
 import {
@@ -12,7 +12,7 @@ import {
   type ClarificationInput,
   type ClarificationView,
 } from "../paseo/shared/clarifications";
-import type { PreferenceStore, Preferences } from "../paseo/server/preferences";
+import { isManagedCoordinator, type PreferenceStore, type Preferences } from "../paseo/server/preferences";
 import type { SessionRow, Note } from "../paseo/shared/contract";
 import type { Evidence } from "./conversation";
 import { isCurrentMembership, managedSessions } from "./session-links";
@@ -26,7 +26,6 @@ const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const changed = "원래 질문이나 담당 세션이 바뀌었습니다. 카드를 새로 고쳐 주세요.";
 const uncertain = "추가 질문의 전송 여부를 확인하지 못했습니다. 같은 내용으로 다시 확인해 주세요.";
 const noPhotos = "사진 첨부는 아직 보낼 수 없습니다. 글로만 질문해 주세요.";
-const noCoordinator = "코디네이터에게 묻기는 아직 지원하지 않습니다. 세션이 작업을 마친 뒤 다시 물어 주세요.";
 
 function requestId(key: string) {
   const hex = hash("coordinator-board/clarification/" + key);
@@ -213,7 +212,6 @@ export class ClarificationSender {
       const view = await this.getView(sdk, input.card);
       const target = clarificationTarget(input.card, view);
       if (!target || target.recipientId !== input.recipientId) throw Error(changed);
-      if (target.recipientId !== target.sourceSessionId) throw Error(noCoordinator);
       const original = sourceQuestion(input.card);
       const source = target.sourceHost ? undefined : view.sessions.find((s) =>
         s.id === target.sourceSessionId && s.projectId === (original?.projectId ?? input.card.projectId)
@@ -231,6 +229,14 @@ export class ClarificationSender {
         )
           throw Error(changed);
         if (sessionId === input.recipientId) recipientAt = Date.parse(live.updatedAt);
+      }
+      if (target.sourceCoordinatorId === input.recipientId) {
+        const rows = await discoverSessions(sdk);
+        const scopeNow = this.store.read();
+        const visible = managedSessions(rows, scopeNow).some(r => r.id === input.recipientId);
+        const operating = scopeNow.coordinator === input.recipientId && isManagedCoordinator(scopeNow, input.recipientId) &&
+          rows.some(r => r.id === input.recipientId);
+        if (!visible && !operating) throw Error(changed);
       }
       if (!this.isCurrentRecord(input.card, view)) throw Error(changed);
       const text = body(input, target);
@@ -261,7 +267,10 @@ export class ClarificationSender {
           (original && (current.answers[original.sessionId]?.version === original.version ||
             JSON.stringify(current.judgments[original.sessionId]) !== JSON.stringify(scope.judgments[original.sessionId]))) ||
           (source && !isCurrentMembership(source, current)) ||
-          !(recipient && isCurrentMembership(recipient, current))
+          !(
+            (recipient && isCurrentMembership(recipient, current)) ||
+            isManagedCoordinator(current, input.recipientId)
+          )
         )
           throw Error(changed);
         current.clarifications[id] = entry;

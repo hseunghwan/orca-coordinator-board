@@ -73,9 +73,11 @@ function beforePrompt(command: string, at: number, args: readonly string[]): str
 }
 
 /**
- * The launch with the channel added. PATH is prepended under the key the launch already uses
- * (Windows names it "Path"); a launch whose env has no PATH, or a POSIX one on Windows (WSL), keeps
- * its PATH, and the agent reaches the CLI through CB_BIN.
+ * The launch with the channel added. PATH is prepended under every key the launch already uses; on
+ * Windows the same value also goes under "PATH": a coordinator started by version 0.4 ran with the CB_
+ * variables but one "PATH" key without the bin (observed 2026-11-26 with scripts/probe-path.mjs), and
+ * Git Bash reads "PATH". A launch whose env has no PATH, or a POSIX one on Windows (WSL), keeps its
+ * PATH, and the agent reaches the CLI through CB_BIN.
  */
 export function withChannel(event: LaunchEvent, channel: ChannelEnv, coordinator?: { launchId: string; modeId: string | null }): LaunchEvent {
   const env: Record<string, string> = { ...event.env, [ENV.pipe]: channel.pipe, [ENV.bin]: channel.bin, [ENV.node]: channel.node }
@@ -83,9 +85,11 @@ export function withChannel(event: LaunchEvent, channel: ChannelEnv, coordinator
     env[ENV.terminal] = event.terminalId
     env[ENV.token] = callerToken(channel.secret, event.terminalId)
   }
-  const pathKey = Object.keys(event.env).find((key) => key.toUpperCase() === 'PATH')
-  const foreign = channel.delimiter === ';' && pathKey !== undefined && !event.env[pathKey].includes(';') && event.env[pathKey].includes('/')
-  if (pathKey && !foreign) env[pathKey] = event.env[pathKey] ? channel.bin + channel.delimiter + event.env[pathKey] : channel.bin
+  const windows = channel.delimiter === ';'
+  const pathKeys = Object.keys(event.env).filter((key) => key.toUpperCase() === 'PATH')
+    .filter((key) => !(windows && !event.env[key].includes(';') && event.env[key].includes('/')))
+  for (const key of pathKeys) env[key] = event.env[key] ? channel.bin + channel.delimiter + event.env[key] : channel.bin
+  if (windows && pathKeys.length && !pathKeys.includes('PATH')) env.PATH = env[pathKeys[0]]
   let command = event.command
   const at = coordinator?.modeId ? command.indexOf(launchMarker(coordinator.launchId)) : -1
   const mode = COORDINATOR_MODES[event.agent]?.find((m) => m.id === coordinator?.modeId)
