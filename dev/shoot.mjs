@@ -1,5 +1,5 @@
 // Screenshots the harness in a local headless Chrome or Edge over the DevTools protocol, waiting in
-// real time so ResizeObserver layouts settle: node dev/shoot.mjs
+// real time so ResizeObserver layouts settle: node dev/shoot.mjs [name pattern]
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,7 +36,22 @@ const shots = [
   ["focus-light-wide", "theme=light&view=focus", 1280, 500],
   ["inbox-en-dark-wide", "theme=dark&lang=en", 1280, 800],
   ["inbox-empty-light", "theme=light&empty=1", 1280, 500],
+  ["reply-draft-tooltip-light-wide", "theme=light" + press("결제 웹훅"), 1280, 800, "담당 세션에 답장 보내기"],
+  ["reply-draft-tooltip-dark-narrow", "theme=dark" + press("결제 웹훅"), 520, 900, "담당 세션에 답장 보내기"],
+  ["reply-review-gate-light-wide", "theme=light" + press("결제 웹훅", "5회 + TTL"), 1280, 800],
+  ["reply-review-open-dark-wide", "theme=dark" + press("결제 웹훅", "5회 + TTL", "답장 전문 보기"), 1280, 900],
+  ["reply-sent-light-wide", "theme=light" + press("결제 웹훅", "담당 세션에 답장 보내기"), 1280, 800],
+  ["reply-sent-dark-narrow", "theme=dark" + press("결제 웹훅", "담당 세션에 답장 보내기"), 520, 800],
+  ["reply-uncertain-dark-wide", "theme=dark&send=1" + press("결제 웹훅", "담당 세션에 답장 보내기"), 1280, 800],
+  ["reply-uncertain-light-narrow", "theme=light&send=1" + press("결제 웹훅", "담당 세션에 답장 보내기"), 520, 900],
+  ["reply-other-recipient-light-wide", "theme=light&send=2" + press("결제 웹훅", "담당 세션에 답장 보내기"), 1280, 800],
+  ["clarification-light-wide", "theme=light" + press("결제 웹훅", "질문하기"), 1280, 900],
+  ["clarification-dark-narrow", "theme=dark" + press("결제 웹훅", "질문하기"), 520, 1000],
+  ["history-tab-light-wide", "theme=light" + press("기록", "최근 결정 기록", "내용 펼치기"), 1280, 900],
+  ["history-tab-dark-narrow", "theme=dark" + press("기록", "최근 결정 기록", "이전 기록 더 보기"), 520, 1200],
+  ["classic-history-dark-wide", "theme=dark&view=classic" + press("최근 결정 기록"), 1280, 2200],
 ];
+const only = process.argv[2] ? new RegExp(process.argv[2]) : null;
 
 const profile = mkdtempSync(join(tmpdir(), "board-shots-"));
 const chrome = spawn(browser, ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--allow-file-access-from-files",
@@ -69,12 +84,22 @@ const sleep = ms => new Promise(done => setTimeout(done, ms));
 await send("Page.enable");
 mkdirSync("dev/shots", { recursive: true });
 try {
-  for (const [name, query, width, height] of shots) {
+  for (const [name, query, width, height, hover] of shots) {
+    if (only && !only.test(name)) continue;
     await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
     const load = loaded();
     await send("Page.navigate", { url: `${page}?${query}` });
     await load;
-    await sleep(1500);
+    await sleep(1500 + 450 * (query.split("press=")[1]?.split("%2C").length ?? 0));
+    if (hover) {
+      const { result } = await send("Runtime.evaluate", { returnByValue: true, expression: `(() => {
+        const button = [...document.querySelectorAll("button")].find(b => b.offsetParent && b.textContent.trim().startsWith(${JSON.stringify(hover)}));
+        const box = button?.getBoundingClientRect();
+        return box && { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      })()` });
+      if (result.value) await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: result.value.x, y: result.value.y });
+      await sleep(300);
+    }
     const { data } = await send("Page.captureScreenshot", { format: "png" });
     const out = resolve("dev/shots", name + ".png");
     writeFileSync(out, Buffer.from(data, "base64"));

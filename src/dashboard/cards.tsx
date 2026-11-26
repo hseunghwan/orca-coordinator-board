@@ -1,47 +1,13 @@
 /** @jsxImportSource react */
-// Read-only decision cards. The session card follows Paseo's DecisionActions (client/decision-actions.tsx)
-// up to its reply composer; the record and pull request cards show their header and title.
-import { useState, type ReactNode } from "react";
-import { decisionSummary } from "../paseo/client/decision-summary";
-import type { Card } from "../paseo/client/model";
+// Read-only record and pull request cards: their header and title. The session card is DecisionActions.
+import type { ReactNode } from "react";
 import type { PullRequestItem } from "../paseo/shared/prs";
 import type { TrackedDecision } from "../paseo/shared/tracked-decisions";
-import { column, Disclose, ProjectText, row, SessionChip, space } from "./ui/controls";
+import { column, ProjectText, row, SessionChip } from "./ui/controls";
 import { useBoardLanguage } from "./ui/language";
 import { Markdown } from "./ui/markdown";
 
 export type OpenSession = (sessionId: string) => void;
-
-export function DecisionCard({ card, hostLabel, priorityLabel, open, embedded = false }: {
-  card: Card; hostLabel: string; priorityLabel?: string; open: OpenSession; embedded?: boolean;
-}) {
-  const { t } = useBoardLanguage();
-  const { session } = card;
-  const decision = session.decision;
-  const [showEvidence, setShowEvidence] = useState(false);
-  const { headline, formal, evidence } = decisionSummary(card, t);
-  const marker = [session.projectTitle, session.title, hostLabel && t(`실행 호스트 · ${hostLabel}`, `Host · ${hostLabel}`),
-    session.sourceProjectTitle && t(`원래 소속 ${session.sourceProjectTitle}`, `From ${session.sourceProjectTitle}`)].filter(Boolean).join(" · ");
-  const sourceExcerpts = evidence.filter(text => text !== headline);
-  const hasEvidence = !!decision?.recommendationReason || sourceExcerpts.length > 0;
-  return <div style={{ ...column, gap: 7, ...(embedded && { paddingTop: 10, borderTop: "1px solid var(--border)" }) }}>
-    <Markdown source={headline} heading />
-    <div style={{ ...row, gap: 6 }}>
-      <ProjectText projectId={session.projectId} projects={[session.projectTitle]} className="muted sm">{[marker, priorityLabel].filter(Boolean).join(" · ")}</ProjectText>
-      <SessionChip label={t("담당 세션", "Assigned session")} accessibilityLabel={`${session.title} · ${t("담당 세션 열기", "Open assigned session")}`} onPress={() => open(session.id)} />
-    </div>
-    {formal ? <p className="muted">{t("승인 요청은 담당 세션에서 확인해 주세요.", "Review the approval request in the assigned session.")}</p>
-      : !!decision?.needsInput && decision.needsInput !== headline && <Markdown source={decision.needsInput} />}
-    {hasEvidence && <div style={{ ...column, alignItems: "flex-start", gap: 4 }}>
-      <Disclose label={showEvidence ? t("근거 접기", "Hide source") : t("근거 보기", "View source")} expanded={showEvidence} onPress={() => setShowEvidence(v => !v)} />
-      {showEvidence && decision?.recommendationReason && <div style={{ ...column, gap: 3 }}>
-        <p className="muted sm">{t("추천 이유", "Reason for recommendation")}</p>
-        <Markdown source={decision.recommendationReason} />
-      </div>}
-      {showEvidence && sourceExcerpts.map(text => <Markdown key={text} source={text} muted />)}
-    </div>}
-  </div>;
-}
 
 const kinds = {
   check: ["확인", "Check"], answer: ["질문", "Question"], merge: ["병합 검토", "Merge review"],

@@ -1,6 +1,7 @@
 // What the board shows for one snapshot and project filter: Paseo's BoardView derivations
 // (client/board.tsx) without the React state, so every view reads the same counts and order.
 import { rankDecisionRows } from "../paseo/client/decision-priority";
+import { pullRowKey, recordRowKey, sessionRowKey } from "../paseo/client/decision-receipts";
 import { projectCards, projectFilterNames, type Card, type Snapshot } from "../paseo/client/model";
 import type { PullRequestItem } from "../paseo/shared/prs";
 import { pullKey, trackedCoverage, type TrackedDecision } from "../paseo/shared/tracked-decisions";
@@ -20,7 +21,9 @@ export function sortRecords(items: readonly TrackedDecision[]) {
 
 const count = (list: PendingDecisions) => list.records.length + list.sessions.length + list.prs.length;
 
-export function boardModel(snapshot: Snapshot, chosen: readonly ProjectId[], t: Translate, now = Date.now()) {
+// completed holds the row keys of decisions handled on this screen, so a sent reply leaves the counts
+// and the list at once instead of waiting for the next snapshot.
+export function boardModel(snapshot: Snapshot, chosen: readonly ProjectId[], t: Translate, now = Date.now(), completed: ReadonlySet<string> = new Set()) {
   const { human, projects } = projectCards(snapshot);
   const pullRequests = snapshot.pullRequests;
   const readyPrs = pullRequests?.items.filter(pr => pr.lane === "review") ?? [];
@@ -31,12 +34,12 @@ export function boardModel(snapshot: Snapshot, chosen: readonly ProjectId[], t: 
     if (!displayed.has(id)) displayed.set(id, { id, title: names.get(id) ?? id, cards: [] });
   }
   function decisionsFor(inScope: (id: ProjectId) => boolean): PendingDecisions {
-    const visibleRecords = records.filter(item => inScope(item.projectId));
+    const visibleRecords = records.filter(item => inScope(item.projectId) && !completed.has(recordRowKey(item)));
     const covered = trackedCoverage(visibleRecords);
     return {
       records: visibleRecords,
-      sessions: human.filter(card => inScope(card.session.projectId) && !covered.sessionIds.has(card.session.id)),
-      prs: readyPrs.filter(pr => pr.projectIds.some(inScope) && !covered.pullKeys.has(pullKey(pr.repo, pr.number))),
+      sessions: human.filter(card => inScope(card.session.projectId) && !completed.has(sessionRowKey(card)) && !covered.sessionIds.has(card.session.id)),
+      prs: readyPrs.filter(pr => pr.projectIds.some(inScope) && !completed.has(pullRowKey(pr)) && !covered.pullKeys.has(pullKey(pr.repo, pr.number))),
     };
   }
   const total = count(decisionsFor(() => true));

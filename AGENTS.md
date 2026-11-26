@@ -14,7 +14,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - 전송 실기 확인: `node scripts/probe-send.mjs --session <id> --yes [--from <term_…>]`(실제 워커 경로로 답장 하나를 보낸다. 사람이 시험용으로 정한 세션에만 쓴다). 에이전트 셸에서 돌리면 그 터미널이 발신자가 되므로 워커의 경우를 보려면 터미널 밖 프로세스로 띄운다.
 - 테스트: `orca plugin test .`. `node_modules`에 vitest가 있으면 Orca가 vitest로 돌린다. 그래서 테스트의 `test`는 `vitest`에서 불러온다.
 - 렌더 검사: `orca plugin check .`, manifest 검사: `orca plugin validate .`
-- 대시보드 하네스: `node dev/build.mjs`로 가짜 `window.orca`와 예시 보드를 `dev/out/index.html`에 묶고, `node dev/shoot.mjs`로 로컬 Chrome이나 Edge 헤드리스 화면을 `dev/shots/`에 찍는다. 둘 다 git에 올리지 않는다. 하네스 타입 검사는 `npx tsc -p dev`.
+- 대시보드 하네스: `node dev/build.mjs`로 가짜 `window.orca`와 예시 보드를 `dev/out/index.html`에 묶고, `node dev/shoot.mjs`로 로컬 Chrome이나 Edge 헤드리스 화면을 `dev/shots/`에 찍는다. 둘 다 git에 올리지 않는다. 하네스 타입 검사는 `npx tsc -p dev`. 가짜 워커는 답장을 확인됨, 전송 미확인, 다른 수신자의 영수증 순서로 돌려 답한다. 주소의 `send=<n>`으로 시작 위치를 고르고, `press=`는 보이는 버튼만 누른다.
 - 커밋 전에는 빌드와 위 넷을 모두 통과시킨다. CI에는 Orca CLI가 없으니 로컬에서 돌린다.
 
 ## Golden Rules

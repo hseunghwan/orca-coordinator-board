@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import type { Snapshot } from "../paseo/client/model";
 import { trackedDecisionSchema } from "../paseo/shared/tracked-decisions";
+import { sessionRowKey } from "../paseo/client/decision-receipts";
 import { boardModel, toggleFilter } from "./board-model";
 
 const NOW = Date.parse("2026-11-26T12:00:00Z");
@@ -73,6 +74,15 @@ test("host-wide items are named Host-wide and records outside listed projects st
   expect(model.projectName(null)).toBe("공통");
   expect(model.showHostWide).toBe(true);
   expect(model.byProject.get(null)).toBe(1);
+});
+
+test("a decision handled on screen leaves the list and the counts before the next snapshot", () => {
+  const data = snapshot();
+  const handled = boardModel(data, [], t, NOW).human.find(card => card.session.id === "docs-question")!;
+  const model = boardModel(data, [], t, NOW, new Set([sessionRowKey(handled)]));
+  expect(model.total).toBe(3);
+  expect(model.byProject.get("docs")).toBe(0);
+  expect(model.ranked.map(row => row.key)).not.toContain(sessionRowKey(handled));
 });
 
 test("a partial decision ledger marks the board incomplete", () => {
