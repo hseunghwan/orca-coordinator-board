@@ -1,5 +1,6 @@
 // A stand-in for Orca's frame API: the worker answers from the fixture, storage lives in memory.
-// URL parameters: theme=light|dark, view=inbox|focus|matrix|classic, lang=ko|en, empty=1, press=<button text>,...
+// URL parameters: theme=light|dark, view=inbox|focus|matrix|classic, lang=ko|en, empty=1, solo=1, press=<button text>,...
+// solo=1 leaves one decision (the webhook reply), so sending it shows a board where everything is handled.
 // send=<n> starts the reply outcomes at the n-th of: confirmed, unconfirmed delivery, a receipt for another recipient.
 // coord=1 starts with a coordinator; fail=1 makes coordinator requests and setup fail.
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
@@ -23,6 +24,11 @@ if (params.get("empty")) {
 function assignCoordinator(sessionId: string | null) {
   if (sessionId === coordinatorSession.id && !snapshot.sessions.some(session => session.id === sessionId)) snapshot.sessions.push(structuredClone(coordinatorSession));
   snapshot.coordinator = sessionId;
+}
+if (params.get("solo")) {
+  snapshot.sessions = snapshot.sessions.filter(session => session.lane !== "human" || session.id === "s-webhook");
+  snapshot.trackedDecisions = { status: "ok", items: [] };
+  snapshot.pullRequests = undefined;
 }
 if (params.get("coord")) assignCoordinator(coordinatorSession.id);
 const failing = !!params.get("fail");
@@ -140,8 +146,10 @@ async function pressAll() {
   for (const label of presses) {
     await new Promise(resolve => setTimeout(resolve, 450));
     if (label.startsWith("@")) { const [name, ...text] = label.slice(1).split("="); type(name, text.join("=")); continue; }
+    // "#<name>" matches the start of the accessible name, for buttons whose text starts with an icon.
+    const named = label.startsWith("#") ? label.slice(1) : null;
     const target = Array.from(document.querySelectorAll<HTMLElement>("button"))
-      .find(button => button.offsetParent !== null && button.textContent?.trim().startsWith(label));
+      .find(button => button.offsetParent !== null && (named === null ? button.textContent?.trim().startsWith(label) : button.getAttribute("aria-label")?.startsWith(named)));
     target?.click();
   }
 }
