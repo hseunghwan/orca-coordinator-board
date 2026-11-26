@@ -26,7 +26,7 @@ const writer = card('writer', {
 const tester = card('tester', { answer: { kind: 'permission' }, priority: 'Awaiting permission · 1h', headline: 'Run npm test?' })
 const pull = card('pull', { tone: 'success', session: null, openSessionId: null, headline: 'Move the docs', answer: { kind: 'board' } })
 
-test('shows the first decision as a card with its priority, project, question and recommendation', async () => {
+test('shows the first decision as a card with its priority, project and question; the recommendation fills the reply and only its reason shows apart', async () => {
   const opened: unknown[] = []
   const host = mockHost({
     requests: { 'board.focus-cards': deck([writer, tester, pull]), 'board.open-dashboard': (input: unknown) => { opened.push(input); return { message: null } } }
@@ -37,7 +37,8 @@ test('shows the first decision as a card with its priority, project, question an
   assert.ok(view.find({ text: 'acme-app · writer' }))
   assert.ok(view.find({ text: 'Which layout?' }))
   assert.ok(view.find({ text: 'Name the page width.' }))
-  assert.ok(view.find({ label: 'Coordinator recommendation' }))
+  assert.ok(!view.find({ label: 'Coordinator recommendation' }))
+  assert.ok(view.find({ label: 'Why this reply' }))
   assert.equal(view.valueOf({ label: 'Reply text' }), 'Two columns.')
   await view.press({ text: 'Open board' })
   assert.equal(opened.length, 1)

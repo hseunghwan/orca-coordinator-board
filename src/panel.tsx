@@ -186,10 +186,15 @@ function Decision({ card }: { card: FocusCard }) {
       </Row>
       <Markdown content={card.headline} />
       {card.body && <Markdown content={card.body} />}
-      {card.recommendation && (
+      {card.recommendation && card.answer.kind !== 'reply' && (
         <Callout tone="accent" icon="info" title={t('코디네이터 추천', 'Coordinator recommendation')}>
           <Markdown content={card.recommendation} />
           {card.recommendationReason && <Text size="sm" muted>{card.recommendationReason}</Text>}
+        </Callout>
+      )}
+      {card.recommendation && card.answer.kind === 'reply' && card.recommendationReason && (
+        <Callout tone="accent" icon="info" title={t('추천 이유', 'Why this reply')}>
+          <Text size="sm">{card.recommendationReason}</Text>
         </Callout>
       )}
       <Answer card={card} />

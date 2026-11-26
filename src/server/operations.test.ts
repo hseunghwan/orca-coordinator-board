@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import { createCli } from '../orca/cli'
-import { readMarked } from '../orca/conversation'
+import { readBoardHeader, readMarked } from '../orca/conversation'
 import { fakeOrca, type FakeSession } from '../orca/fixtures/fake-orca'
 import { createFleet } from '../orca'
 import { translator } from '../i18n'
@@ -182,7 +182,7 @@ test('a work request with a photo names its file after the marker, and the sessi
   await expect(f.request('board.request-work', { ...work, images: [] })).rejects.toThrow('text or photos changed')
 })
 
-test('a digest that handles board facts names the cycle, and the coordinator\'s fact command mails the answer signed by its terminal', async () => {
+test('a digest that handles board facts names the cycle, and the coordinator\'s fact command types the answer into the worker\'s terminal under its header', async () => {
   const f = setup([{ id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'acme' }])
   f.orca.say('worker', 'assistant', 'What is the current status of this session?')
   await f.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
@@ -197,9 +197,12 @@ test('a digest that handles board facts names the cycle, and the coordinator\'s 
   const { evidenceId } = JSON.parse((await f.board.command('read', { sessionId: 'worker' }, 'coord')).text)
   f.orca.find('coord')!.state = 'working'
   expect(await f.board.command('fact', { cycleId, sessionId: 'worker', evidenceId }, 'coord')).toEqual({ text: expect.stringContaining('accepted') })
-  const mail = f.orca.writes.find(w => w[0] === 'orchestration')!
-  expect(mail.slice(2, 8)).toEqual(['--to', 'orca_session_id:worker', '--from', 'term_c', '--type', 'status'])
-  expect(JSON.parse(readMarked(f.orca.mailbox.at(-1)!.body)!.body)).toMatchObject({ type: 'coordinator-board.fact', answer: 'Observed Orca session status: idle.' })
+  const typed = f.orca.writes.filter(w => w[0] === 'terminal' && w[3] === 'term_w')
+  expect(typed).toHaveLength(1)
+  expect(f.orca.writes.some(w => w[0] === 'orchestration')).toBe(false)
+  const fact = readBoardHeader(readMarked(typed[0][typed[0].indexOf('--text') + 1])!.body)!
+  expect(fact.from).toBe('coord')
+  expect(JSON.parse(fact.body)).toMatchObject({ type: 'coordinator-board.fact', answer: 'Observed Orca session status: idle.' })
   await f.request('board.set-fact-auto-reply', { enabled: false })
   expect(await f.request('board.fact-reply-settings')).toEqual({ enabled: false })
   expect(f.prefs.read().factCycle).toBeUndefined()

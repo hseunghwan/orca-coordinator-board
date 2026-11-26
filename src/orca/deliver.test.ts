@@ -5,7 +5,7 @@ import { afterEach, expect, test } from 'vitest'
 import { createCli } from './cli'
 import { excerpt } from '../server/conversation'
 import { readMarked, TRUNCATED, unframe } from './conversation'
-import { isSameMessage, stamp } from './deliver'
+import { chooseRoute, isSameMessage, stamp, wireText, type Sender } from './deliver'
 import { fakeOrca, TERMINAL_CUT, type FakeSession } from './fixtures/fake-orca'
 import { createFleet, type Delivery, type SessionId } from './index'
 
@@ -139,19 +139,60 @@ test('matching wants the same marker and the same head', () => {
   expect(isSameMessage(long.slice(0, TERMINAL_CUT) + TRUNCATED, ID(1), long)).toBe(true)
 })
 
-test('an agent sender mails from its own terminal, even to a terminal session, which sees only Orca\'s check notice', async () => {
-  const COORD = ID(20) as SessionId
-  const f = setup([{ id: COORD, surface: 'terminal', state: 'working', updatedAt: 1, handle: 'term_coord', title: 'Coordinator' }])
-  const fact = JSON.stringify({ type: 'coordinator-board.fact', answer: 'Managed project: acme.' })
-  expect(await f.send(TERM, fact, 1, { from: { kind: 'agent', session: COORD } })).toEqual({ status: 'delivered', route: 'mail', proof: 'mail-id' })
-  expect(f.orca.writes[0].slice(0, 8)).toEqual(['orchestration', 'send', '--to', 'orca_session_id:' + TERM, '--from', 'term_coord', '--type', 'status'])
-  expect(readMarked(f.orca.mailbox[0].body)!.body).toBe(fact)
-  f.orca.say(TERM, 'assistant', 'Thanks.')
-  const page = await f.fleet.paseo.agents.ref(TERM).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
-  expect(page.entries[0].item).toMatchObject({ type: 'tool_call', name: 'heartbeat' })
-  expect(excerpt(page).deliveries).toBeUndefined()
+test('the route table: a chat always gets mail, a live terminal always typed input, a sleeping one nothing', () => {
+  const session = (surface: 'chat' | 'terminal', live: boolean) =>
+    ({ id: TERM, surface, state: 'done', updatedAt: 1, ...(surface === 'terminal' ? { handle: 'term_d', livePty: live } : {}) }) as never
+  const senders: Sender[] = [{ kind: 'person' }, { kind: 'agent', session: CHAT }, { kind: 'board' }]
+  const row = (s: never, ws?: never) => senders.map((from) => chooseRoute(s, ws, from))
+  expect(row(session('terminal', true), { hostId: 'ssh-1' } as never)).toEqual(['other-host', 'other-host', 'other-host'])
+  expect(row(session('chat', true))).toEqual(['mail', 'mail', 'mail'])
+  expect(row(session('terminal', true))).toEqual(['terminal-input', 'terminal-input', 'terminal-input'])
+  expect(row(session('terminal', false))).toEqual(['asleep', 'asleep', 'asleep'])
 })
 
+test('an agent sender types into a terminal under the board header, which reads back as that agent\'s message', async () => {
+  const COORD = ID(20) as SessionId
+  const f = setup([{ id: COORD, surface: 'terminal', state: 'working', updatedAt: 1, handle: 'term_coord', title: 'Coordinator', livePty: false }])
+  const fact = JSON.stringify({ type: 'coordinator-board.fact', answer: 'Managed project: acme.' })
+  const d = { from: { kind: 'agent', session: COORD } } as const
+  expect(await f.send(TERM, fact, 1, d)).toEqual({ status: 'delivered', route: 'terminal-input', proof: 'cli' })
+  const typed = f.orca.writes[0][f.orca.writes[0].indexOf('--text') + 1]
+  expect(f.orca.writes[0].slice(0, 4)).toEqual(['terminal', 'send', '--terminal', 'term_d'])
+  expect(typed.split('\n').slice(0, 3)).toEqual(['[cb:' + ID(1) + ']', '[coordinator-board] ' + JSON.stringify({ from: COORD, subject: 'Pick a layout' }), fact])
+  expect(f.orca.mailbox).toEqual([])
+  f.orca.say(TERM, 'assistant', 'Thanks.')
+  const page = await f.fleet.paseo.agents.ref(TERM).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
+  expect(page.entries[0].item).toEqual({ type: 'tool_call', name: 'agent_message', status: 'completed', callId: 'paseo-agent-message:' + ID(1),
+    agentMessage: { event: 'message', sender: { id: COORD }, text: fact } })
+  expect(excerpt(page).deliveries).toEqual([{ id: ID(1), sender: COORD, bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/) }])
+  expect(await f.send(TERM, fact, 1, d)).toEqual({ status: 'delivered', route: 'terminal-input', proof: 'cli' })
+  expect(f.orca.writes).toHaveLength(1)
+})
+
+test('a board message typed into a terminal whose answer was lost is settled from the transcript, never typed twice', async () => {
+  const f = setup()
+  f.orca.behavior.loseAnswer = true
+  const d = { from: { kind: 'board' } } as const
+  expect(await f.send(TERM, 'PR #7 merged.', 1, d)).toEqual({ status: 'delivered', route: 'terminal-input', proof: 'transcript' })
+  f.orca.behavior.loseAnswer = false
+  expect(await f.send(TERM, 'PR #7 merged.', 1, d)).toEqual({ status: 'delivered', route: 'terminal-input', proof: 'transcript' })
+  expect(f.orca.writes).toHaveLength(1)
+  expect(f.outbox()[ID(1)].text).toBe(wireText({ messageId: ID(1), to: TERM, text: 'PR #7 merged.', subject: 'Pick a layout', from: d.from, whenWorking: 'refuse' }, 'terminal-input'))
+  const page = await f.fleet.paseo.agents.ref(TERM).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
+  expect(page.entries[0].item).toMatchObject({ type: 'tool_call', name: 'agent_message', agentMessage: { sender: { id: 'board' }, text: 'PR #7 merged.' } })
+})
+
+test('a board message to a busy terminal or one Orca refuses leaves nothing behind, so it may be sent later', async () => {
+  const f = setup()
+  f.orca.find(TERM)!.state = 'working'
+  expect(await f.send(TERM, 'PR #7 merged.', 1, { from: { kind: 'board' } })).toEqual({ status: 'refused', reason: 'working' })
+  f.orca.find(TERM)!.state = 'done'
+  f.orca.behavior.refuseWith = 'terminal closed'
+  expect(await f.send(TERM, 'PR #7 merged.', 1, { from: { kind: 'board' } })).toMatchObject({ status: 'refused', reason: 'rejected' })
+  expect(f.outbox()).toEqual({})
+  f.orca.behavior.refuseWith = null
+  expect(await f.send(TERM, 'PR #7 merged.', 1, { from: { kind: 'board' } })).toEqual({ status: 'delivered', route: 'terminal-input', proof: 'cli' })
+})
 test('an agent\'s mail to a chat session reads as that agent\'s message', async () => {
   const COORD = ID(20) as SessionId
   const f = setup([{ id: COORD, surface: 'terminal', state: 'working', updatedAt: 1, handle: 'term_coord', title: 'Coordinator' }])

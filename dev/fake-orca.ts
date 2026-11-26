@@ -1,5 +1,5 @@
 // A stand-in for Orca's frame API: the worker answers from the fixture, storage lives in memory.
-// URL parameters: theme=light|dark, view=inbox|focus|matrix|classic, lang=ko|en, empty=1, solo=1, press=<button text>,...
+// URL parameters: theme=light|dark, view=inbox|focus|matrix|classic (a saved classic opens the inbox), lang=ko|en, empty=1, solo=1, press=<button text>,...
 // solo=1 leaves one decision (the webhook reply), so sending it shows a board where everything is handled.
 // send=<n> starts the reply outcomes at the n-th of: confirmed, unconfirmed delivery, a receipt for another recipient.
 // coord=1 starts with a coordinator; fail=1 makes coordinator requests and setup fail.
