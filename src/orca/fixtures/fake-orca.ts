@@ -27,8 +27,8 @@ export function fakeOrca(sessions: FakeSession[]) {
   const transcripts = new Map<string, Entry[]>(sessions.map((s) => [s.id, []]))
   const writes: string[][] = []
   const behavior = {
-    /** Orca's answer to a terminal send outside the focused workspace. */
-    outsideFocus: false,
+    /** Orca answers a write with this error and sends nothing. */
+    refuseWith: null as string | null,
     /** The text lands but the answer is lost, as when the process times out. */
     loseAnswer: false,
     /** The text never lands. */
@@ -85,10 +85,10 @@ export function fakeOrca(sessions: FakeSession[]) {
     }
     writes.push([...args])
     behavior.onWrite(args)
+    if (behavior.refuseWith) return fail('invalid_argument', behavior.refuseWith)
     if (verb === 'terminal send') {
       const s = sessions.find((x) => x.handle === flag('--terminal'))
       if (!s) return fail('not_found', 'no such terminal')
-      if (behavior.outsideFocus) return fail('invalid_argument', 'terminal is outside the active worktree')
       if (!behavior.dropText) say(s.id, 'user', flag('--text'))
       return behavior.loseAnswer ? 'Error: lost' : ok({ accepted: true, submitted: true })
     }

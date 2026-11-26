@@ -56,7 +56,7 @@ export interface Fleet {
   paseo: PaseoReads
 }
 
-export type SendDeps = Pick<DeliverDeps, 'dataDir' | 'focusAndType' | 'mailSender' | 'sleep'>
+export type SendDeps = Pick<DeliverDeps, 'dataDir' | 'mailSender' | 'sleep'>
 
 const REPO_TTL_MS = 60_000
 const parsePs = (result: unknown) => worktreePs.parse(result)

@@ -193,10 +193,10 @@ test('photos are refused before anything is read or sent', async () => {
 
 test('a send Orca refuses leaves no receipt, so the same click can be sent again', async () => {
   const f = await fixture()
-  f.orca.behavior.outsideFocus = true
+  f.orca.behavior.refuseWith = 'terminal not found'
   await expect(f.send()).rejects.toThrow('보낼 수 없습니다')
   expect(f.prefs.read().decisionReceipts).toEqual({})
-  f.orca.behavior.outsideFocus = false
+  f.orca.behavior.refuseWith = null
   const result = await f.send()
   expect(f.sent()).toEqual([expect.objectContaining({ id: 'worker', messageId: result.messageId })])
 })

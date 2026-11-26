@@ -36,7 +36,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - 대시보드 `.tsx` 첫 줄의 `/** @jsxImportSource react */`는 지우지 않는다. tsconfig의 기본 JSX는 사이드바 패널용 `orca`다.
 - 대시보드는 워커를 Paseo 계약(`src/paseo/shared/contract.ts` 등의 `defineRpc`)으로 부른다. `src/dashboard/rpc.ts`의 `call`이 출력을 zod로 검사한다. 워커가 보내는 `board.changed`는 다시 읽으라는 신호일 뿐이다.
 - 대시보드 열쇠 파일(`.coordinator-board/`)은 `.git/info/exclude`로 숨기고, 사용자 저장소에 `.gitignore`를 새로 만들지 않는다.
-- Orca는 포커스된 워크스페이스의 터미널에만 글을 넣게 한다. 보내기 전 `terminal.focus`로 화면을 옮기는 일은 사람이 보내기를 누른 경로에서만 한다.
+- 터미널 전송은 CLI `orca terminal send`로만 한다. 포커스와 상관없이 들어가므로 보내기 전에 `terminal.focus`로 화면을 옮기지 않는다.
 - 외부 명령(`git`, `gh`)은 `shell:false`, 시간 제한, `maxBuffer`, 대화형 프롬프트를 끈 환경 변수로 실행하고 인자는 배열로 넘긴다(`src/github.ts`의 `run`).
 - GitHub에서 읽은 글은 화면에 내기 전에 제어 문자와 양방향 제어 문자를 지우고 길이를 자른다(`src/server/prs.ts`의 `parseOpenPulls`).
 - 화면 문구는 `t(한국어, 영어)`로 두 언어를 함께 쓴다. 한쪽만 바꾸지 않는다.

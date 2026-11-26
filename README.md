@@ -64,7 +64,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 
 - 사용자가 쓰고 **보내기**를 누른 글만 보낸다. 그 글은 머리말 없이 그대로 타이핑된다.
 - 보내기 직전에 워커가 에이전트 상태를 다시 읽는다. 권한 대기(`blocked`), 작업 중(`working`), 카드를 연 뒤 상태가 바뀐 세션에는 보내지 않는다.
-- Orca는 지금 보고 있는 워크스페이스의 터미널에만 글을 넣게 한다. 그래서 보내기 직전에 그 세션을 화면에 띄운다. 사람이 **보내기**를 누른 경우에만 화면이 넘어간다.
+- 터미널 세션에는 `orca terminal send`로 보낸다. 세션이 다른 워크스페이스에 있어도 들어가므로 화면을 옮기지 않는다.
 - 닫힌 세션을 이어 열어 보내는 기능은 Paseo판에 없어서 뺐다.
 - 실패해도 다시 보내지 않는다.
 - 보드가 스스로 만든 문장을 보내는 기능은 아직 없다. 생기면 `[coordinator-board]` 머리말을 붙인다([AGENTS.md](AGENTS.md) 참고).
@@ -83,7 +83,7 @@ Orca 플러그인은 편집 영역에 자기 화면을 직접 띄울 수 없다.
 - 터미널 id가 없는 에이전트는 채팅 탭(구조화 세션)이다. 플러그인 API에는 채팅 탭에 글을 넣는 함수가 없다. `agent.resume`은 같은 대화를 새 터미널에서 하나 더 띄우므로 열린 채팅 탭에는 쓰지 않는다. 대신 `workspace.open`으로 그 워크스페이스를 보여 준다. 플러그인은 채팅 탭이 열려 있는지 따로 알 수 없어서, `agents.list`에 있는 세션은 모두 열린 것으로 본다.
 - `agents.list`가 `sessionId`를 주지 않는 창이 있다. 그런 창이 있는 워크스페이스의 지난 세션은 이어 열지 않는다.
 - `agent.listSessions`는 `history:read`, `agent.resume`은 `agent:launch` 권한이 있어야 한다.
-- `terminal.sendText`는 포커스된 워크스페이스의 터미널에만 보낸다(다른 곳이면 `terminal is outside the active worktree`). 보드는 먼저 `terminal.focus`를 부른다.
+- `terminal.sendText`는 포커스된 워크스페이스의 터미널에만 보낸다(다른 곳이면 `terminal is outside the active worktree`). CLI `orca terminal send`에는 이 제한이 없어서 보드는 CLI로만 보낸다.
 - Claude가 평문으로 묻고 턴을 끝내면 상태는 `done`이다. `waiting`은 `AskUserQuestion` 같은 도구로 물을 때 붙는다. 그래서 보드는 Paseo판처럼 `done` 세션의 마지막 답을 읽어(`orca agent read`) 확인 요청 문장이 있으면 사람 레인에 올린다.
 - 워크스페이스 id는 `identity:...`, `folder:...`, `<프로젝트>::<경로>` 세 가지 꼴로 온다. 대시보드 명령은 id, 경로, 이름과 브랜치 순서로 포커스된 워크스페이스를 찾는다.
 - 커스텀 에디터는 열린 뒤 `orca.document.get()`으로 파일을 한 번 요청해야 한다. 요청하지 않으면 Orca가 에디터를 다 열리지 않은 것으로 본다.
