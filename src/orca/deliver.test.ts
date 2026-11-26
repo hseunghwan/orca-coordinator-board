@@ -139,7 +139,7 @@ test('matching wants the same marker and the same head', () => {
   expect(isSameMessage(long.slice(0, TERMINAL_CUT) + TRUNCATED, ID(1), long)).toBe(true)
 })
 
-test('the route table: a chat always gets mail, a live terminal always typed input, a sleeping one mail only from the board or an agent', () => {
+test('the route table: a chat always gets mail, a live terminal always typed input, a sleeping one nothing', () => {
   const session = (surface: 'chat' | 'terminal', live: boolean) =>
     ({ id: TERM, surface, state: 'done', updatedAt: 1, ...(surface === 'terminal' ? { handle: 'term_d', livePty: live } : {}) }) as never
   const senders: Sender[] = [{ kind: 'person' }, { kind: 'agent', session: CHAT }, { kind: 'board' }]
@@ -147,7 +147,7 @@ test('the route table: a chat always gets mail, a live terminal always typed inp
   expect(row(session('terminal', true), { hostId: 'ssh-1' } as never)).toEqual(['other-host', 'other-host', 'other-host'])
   expect(row(session('chat', true))).toEqual(['mail', 'mail', 'mail'])
   expect(row(session('terminal', true))).toEqual(['terminal-input', 'terminal-input', 'terminal-input'])
-  expect(row(session('terminal', false))).toEqual(['asleep', 'mail', 'mail'])
+  expect(row(session('terminal', false))).toEqual(['asleep', 'asleep', 'asleep'])
 })
 
 test('an agent sender types into a terminal under the board header, which reads back as that agent\'s message', async () => {

@@ -76,11 +76,11 @@ export function isSameMessage(entry: string, messageId: string, stamped: string)
  *  | workspace on another host            | other-host      | other-host      |
  *  | chat                                 | mail            | mail            |
  *  | terminal with a live handle          | terminal-input  | terminal-input  |
- *  | terminal without a live handle       | asleep          | mail            |
+ *  | terminal without a live handle       | asleep          | asleep          |
  *
  * A terminal session stores a mail only as Orca's notice to run the check command, never its body
  * (observed 2026-11-26), so an agent's or the board's text to a live terminal is typed under
- * boardHeader's line. Mail needs a sender terminal: from a process outside every Orca terminal,
+ * boardHeader's line, and a closed terminal gets nothing: it would show neither mail nor typed text. Mail needs a sender terminal: from a process outside every Orca terminal,
  * orchestration send refuses without --from (observed 2026-11-26). A person's mail and the board's go
  * from the board's own terminal; an agent's from that agent's terminal.
  */
@@ -88,7 +88,7 @@ export function chooseRoute(session: SessionRecord, workspace: WorkspaceRecord |
   if (workspace?.hostId && workspace.hostId !== 'local') return 'other-host'
   if (session.surface === 'chat') return 'mail'
   if (session.handle && session.livePty) return 'terminal-input'
-  return from.kind === 'person' ? 'asleep' : 'mail'
+  return 'asleep'
 }
 
 /** The text a route carries: the marker, photo lines, then for a board-made message typed into a terminal the header line. */
