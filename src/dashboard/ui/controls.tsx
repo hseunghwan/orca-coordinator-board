@@ -20,13 +20,15 @@ const variantClass: Record<ButtonVariant, string> = {
   default: "btn-primary", secondary: "btn-secondary", outline: "btn-outline", ghost: "btn-ghost",
 };
 
-export function Button({ label, accessibilityLabel, onPress, selected = false, disabled = false, toggle = false, expanded, variant = "outline", size, project, projectId }: {
+export type ButtonProps = {
   label: string; accessibilityLabel?: string; onPress: () => void; selected?: boolean; disabled?: boolean; toggle?: boolean; expanded?: boolean;
-  variant?: ButtonVariant; size?: "sm"; project?: string; projectId?: string;
-}) {
+  variant?: ButtonVariant; size?: "sm"; project?: string; projectId?: string; describedBy?: string;
+};
+
+export function Button({ label, accessibilityLabel, onPress, selected = false, disabled = false, toggle = false, expanded, variant = "outline", size, project, projectId, describedBy }: ButtonProps) {
   const className = ["btn", size === "sm" && "btn-sm", selected ? "btn-outline selected" : variantClass[variant]].filter(Boolean).join(" ");
   return <button type="button" className={className} role={toggle ? "checkbox" : undefined} aria-checked={toggle ? selected : undefined}
-    aria-pressed={!toggle && selected ? true : undefined} aria-expanded={expanded} aria-label={accessibilityLabel ?? label} disabled={disabled} onClick={onPress}>
+    aria-pressed={!toggle && selected ? true : undefined} aria-expanded={expanded} aria-label={accessibilityLabel ?? label} aria-describedby={describedBy} disabled={disabled} onClick={onPress}>
     {project && <ProjectIcon name={project} projectId={projectId} />}
     <span className="ellipsis">{label}</span>
   </button>;
@@ -119,6 +121,6 @@ export function SectionLabel({ children, count }: { children: ReactNode; count?:
   </div>;
 }
 
-export function Disclose({ label, expanded, onPress }: { label: string; expanded: boolean; onPress: () => void }) {
-  return <button type="button" className="link-muted" aria-expanded={expanded} onClick={onPress}>{label}</button>;
+export function Disclose({ label, accessibilityLabel, expanded, onPress }: { label: string; accessibilityLabel?: string; expanded: boolean; onPress: () => void }) {
+  return <button type="button" className="link-muted" aria-label={accessibilityLabel} aria-expanded={expanded} onClick={onPress}>{label}</button>;
 }
