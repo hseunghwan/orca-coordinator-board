@@ -81,6 +81,29 @@ test('at most four orca processes at once', async () => {
   expect(peak).toBe(4)
 })
 
+test('a write runs every time, and only an answered error without a retry id counts as not sent', async () => {
+  const runs: string[][] = []
+  const answers = [
+    ok({ messageId: 'msg_1' }),
+    JSON.stringify({ ok: false, error: { code: 'invalid_argument', message: 'terminal is outside the active worktree' } }),
+    JSON.stringify({ ok: false, error: { code: 'transport', message: 'lost; reissue with --retry-request req_42' } }),
+    'Error: crashed'
+  ]
+  const cli = createCli(async (args) => { runs.push([...args]); return answers[runs.length - 1] })
+  const send = () => cli.write('orchestration send', ['--to', 'x'])
+  expect(await send()).toEqual({ kind: 'ok', result: { messageId: 'msg_1' } })
+  expect(await send()).toEqual({ kind: 'refused', code: 'invalid_argument', message: 'terminal is outside the active worktree' })
+  expect(await send()).toMatchObject({ kind: 'ambiguous', retryRequest: 'req_42' })
+  expect(await send()).toMatchObject({ kind: 'ambiguous', retryRequest: null })
+  expect(runs).toHaveLength(4)
+  expect(runs[0]).toEqual(['orchestration', 'send', '--to', 'x', '--json'])
+  const timedOut = createCli(async () => { throw new CliError('late', 'timeout') })
+  expect(await timedOut.write('terminal send', [])).toMatchObject({ kind: 'ambiguous' })
+  const missing = createCli(async () => { throw new CliError('no exe', 'spawn_failed') })
+  expect(await missing.write('terminal send', [])).toMatchObject({ kind: 'refused', code: 'spawn_failed' })
+  expect(await createCli(null).write('terminal send', [])).toMatchObject({ kind: 'refused', code: 'cli_unavailable' })
+})
+
 test('without orca.exe every read fails with cli_unavailable', async () => {
   await expect(createCli(null).read('worktree ps', [], (r) => r)).rejects.toMatchObject({ code: 'cli_unavailable' })
 })

@@ -1,10 +1,27 @@
-// Adapted from paseo-coordinator-board server/decisions.ts @ 2e9d128: decorateDecision only, the read side. DecisionSender comes with sending.
+// Adapted from paseo-coordinator-board server/decisions.ts @ 2e9d128. Sending goes through fleet.deliver
+// instead of agent.send: a refused send leaves nothing behind and drops its pending receipt, and a
+// pending receipt is settled by fleet.reconcile, which never sends again. Photos, coordinate actions,
+// managed coordinators and board facts come in later phases and are refused or left out here.
 import { createHash } from "node:crypto";
-import type { Decision } from "../paseo/shared/decision-actions";
+import type { Fleet, PluginHandlerContext, SessionId } from "../orca";
+import type { Decision, DecisionInput } from "../paseo/shared/decision-actions";
 import type { Note, SessionRow } from "../paseo/shared/contract";
-import { lastConversationQuestion, type Evidence } from "./conversation";
-import type { Preferences } from "../paseo/server/preferences";
+import type { NoteStore } from "../paseo/server/notes";
+import type { Preferences, PreferenceStore } from "../paseo/server/preferences";
+import { classify, ConversationReader, lastConversationQuestion, type Evidence } from "./conversation";
+import { restoreClarifiedDecision } from "./clarifications";
+import { sessionReplyMessage } from "./decision-message";
+import { canReceiveBoardInput, discoverSessions } from "./discovery";
+import { isCurrentMembership, managedSessions } from "./session-links";
 
+type Sdk = PluginHandlerContext["paseo"];
+type Receipt = { ok: true; recipientId: string; messageId: string };
+type Sending = Pick<Fleet, "deliver" | "reconcile">;
+const changed = "결정 카드 또는 수신자가 바뀌었습니다. 보드를 새로 고쳐 주세요.";
+const blocked = "이 세션의 현재 상태에서는 보낼 수 없습니다. 원래 세션에서 권한 요청과 작업 상태를 확인하세요.";
+const uncertain = "전송 결과를 확인하지 못했습니다. 같은 요청을 다시 확인하거나 수신 세션을 열어 주세요.";
+export const noPhotos = "사진 첨부는 아직 보낼 수 없습니다. 글로만 보내 주세요.";
+export const noCoordinator = "코디네이터에게 보내기는 아직 지원하지 않습니다. 세션에 직접 답하거나 질문해 주세요.";
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export function decorateDecision(row: SessionRow, note: Note | undefined, prefs: Preferences, evidence?: Evidence) {
@@ -40,5 +57,143 @@ export function decorateDecision(row: SessionRow, note: Note | undefined, prefs:
         row.decision.questionMarkdown = excerpt.markdown;
       }
     }
+  }
+}
+
+function requireScope(scope: Preferences, input: DecisionInput) {
+  const recipient = input.action === "coordinate" ? scope.coordinator : input.sessionId;
+  if (!scope.projects.includes(input.projectId) || !recipient || recipient !== input.recipientId) throw Error(changed);
+}
+
+function messageUuid(key: string) {
+  const h = hash(["coordinator-board/decision", key]);
+  return [h.slice(0, 8), h.slice(8, 12), "4" + h.slice(13, 16), "8" + h.slice(17, 20), h.slice(20, 32)].join("-");
+}
+
+export class DecisionSender {
+  private active = new Map<string, { fingerprint: string; result: Promise<Receipt> }>();
+  private sendingCards = new Set<string>();
+  constructor(private store: PreferenceStore, private notes: NoteStore, private reader: ConversationReader, private fleet: Sending) {}
+
+  send(paseo: Sdk, input: DecisionInput): Promise<Receipt> {
+    if (input.images?.length) return Promise.reject(Error(noPhotos));
+    if (input.action === "coordinate") return Promise.reject(Error(noCoordinator));
+    const messageId = messageUuid(input.requestKey);
+    const fingerprint = hash([input.projectId, input.sessionId, input.recipientId, input.version, input.action, input.text]);
+    const running = this.active.get(messageId);
+    if (running) {
+      if (running.fingerprint === fingerprint) return running.result;
+      return Promise.reject(Error("같은 전송 키로 다른 답을 보낼 수 없습니다."));
+    }
+    if (this.sendingCards.has(input.sessionId)) return Promise.reject(Error("이 카드의 이전 전송을 확인하고 있습니다."));
+    this.sendingCards.add(input.sessionId);
+    const result = this.deliver(paseo, input, messageId, fingerprint).finally(() => {
+      this.active.delete(messageId);
+      this.sendingCards.delete(input.sessionId);
+    });
+    this.active.set(messageId, { fingerprint, result });
+    return result;
+  }
+
+  private async deliver(paseo: Sdk, input: DecisionInput, messageId: string, fingerprint: string): Promise<Receipt> {
+    const scope = this.store.read();
+    requireScope(scope, input);
+    const requestId = messageId;
+    let earlier = scope.decisionReceipts[messageId];
+    if (!earlier) {
+      const previous = Object.entries(scope.decisionReceipts).find(([, saved]) =>
+        saved.sessionId === input.sessionId && saved.version === input.version &&
+        (saved.fingerprint === fingerprint || saved.status === "pending"));
+      if (previous) {
+        [messageId, earlier] = previous;
+        if (earlier.fingerprint !== fingerprint) throw Error("이 카드의 이전 전송 결과를 수신 세션에서 먼저 확인해 주세요.");
+      }
+    }
+    messageId = earlier?.messageId ?? messageId;
+    const receipt: Receipt = { ok: true, recipientId: input.recipientId, messageId };
+    const rows = await discoverSessions(paseo);
+    const managed = managedSessions(rows, this.store.read());
+    const row = managed.find(r => r.id === input.sessionId && r.projectId === input.projectId);
+    const destination = managed.find(r => r.id === input.recipientId);
+    if (!row || !destination) throw Error(changed);
+    if (earlier) {
+      if (earlier.fingerprint !== fingerprint) throw Error("같은 전송 키로 다른 답을 보낼 수 없습니다.");
+      if (earlier.status === "sent") {
+        if (requestId !== messageId && !scope.decisionReceipts[requestId]) {
+          this.store.change(current => { current.decisionReceipts[requestId] = { ...current.decisionReceipts[messageId], messageId }; });
+        }
+        return receipt;
+      }
+      // A worker can restart after Orca took the message but before the receipt was saved.
+      const outcome = await this.fleet.reconcile(messageId);
+      const latestScope = this.store.read();
+      requireScope(latestScope, input);
+      if (!isCurrentMembership(row, latestScope) || !isCurrentMembership(destination, latestScope)) throw Error(changed);
+      if (outcome?.status === "delivered") {
+        this.finish(input, messageId, requestId);
+        return receipt;
+      }
+      if (outcome) throw Error("이전 전송 결과를 확인하지 못했습니다. 수신 세션에서 확인해 주세요.");
+      // Never attempted, so nothing went out: the pending receipt is dropped and the card is sent as new.
+      const stale = messageId;
+      this.store.change(current => { delete current.decisionReceipts[stale]; });
+    }
+
+    if (row.nativePending || row.status !== "idle") throw Error(blocked);
+    requireScope(this.store.read(), input);
+    const evidence = await this.reader.read(paseo, row, true);
+    if (!evidence) throw Error(changed);
+    const latest = await Promise.all([...new Set([input.sessionId, input.recipientId])].map(async id => ({
+      id, agent: (await paseo.agents.ref(id).refresh())?.agent,
+    })));
+    for (const { id, agent } of latest) {
+      if (!agent || agent.id !== id || agent.internal || agent.archivedAt || !canReceiveBoardInput(agent, false)) throw Error(blocked);
+      if (id === input.sessionId && row.activityAt !== agent.updatedAt) throw Error(changed);
+    }
+    const recipientAt = Date.parse(latest.find(l => l.id === input.recipientId)!.agent!.updatedAt);
+    const note = this.notes.visible(new Set([row.id]))[row.id];
+    let text = "";
+    this.store.change(current => {
+      requireScope(current, input);
+      if (!isCurrentMembership(row, current) || !isCurrentMembership(destination, current)) throw Error(changed);
+      const judgment = current.judgments[row.id];
+      Object.assign(row, classify(evidence, row, judgment?.projectId === row.projectId ? judgment : undefined, row.id === current.coordinator), { evidenceId: evidence.id });
+      decorateDecision(row, note, current, evidence);
+      restoreClarifiedDecision(row, note, current, evidence);
+      if (!row.decision || row.decision.source === "permission" || row.decision.version !== input.version) throw Error(changed);
+      text = sessionReplyMessage(row, input);
+      current.decisionReceipts[messageId] = {
+        messageHash: hash(text),
+        activity: { origin: { sessionId: row.id, cardId: row.id, revision: input.version, questions: [{ id: input.version }] },
+          title: row.decision.question || row.title, at: new Date().toISOString(), projectId: input.projectId,
+          answer: input.text, recipientId: input.recipientId, coordinator: false },
+        fingerprint, sessionId: row.id, version: input.version, evidenceId: evidence.id, status: "pending", beforeAnswer: current.answers[row.id]?.version, ...(note?.kind === "question" ? { noteRevision: note.revision } : {}),
+      };
+    });
+    let outcome;
+    try {
+      outcome = await this.fleet.deliver({ messageId, to: input.recipientId as SessionId, text, subject: row.title,
+        from: { kind: "person" }, whenWorking: "refuse", unchangedSince: recipientAt });
+    } catch {
+      throw Error(uncertain);
+    }
+    if (outcome.status === "refused") {
+      this.store.change(current => { delete current.decisionReceipts[messageId]; });
+      throw Error(outcome.reason === "changed" || outcome.reason === "gone" ? changed : blocked);
+    }
+    if (outcome.status === "unconfirmed") throw Error(uncertain);
+    this.finish(input, messageId);
+    return receipt;
+  }
+
+  private finish(input: DecisionInput, messageId: string, requestId = messageId) {
+    this.store.change(current => {
+      const delivery = current.decisionReceipts[messageId];
+      delivery.status = "sent";
+      if (requestId !== messageId) current.decisionReceipts[requestId] = { ...delivery, messageId };
+      if (input.action === "reply" && current.projects.includes(input.projectId) && current.answers[input.sessionId]?.version === delivery.beforeAnswer) {
+        current.answers[input.sessionId] = { version: input.version, noteRevision: delivery.noteRevision };
+      }
+    });
   }
 }

@@ -4,6 +4,7 @@ import type { z } from 'zod'
 import type { PluginRpcContract } from '../paseo/plugin-shim'
 import { agentRead, timelinePage, type TimelinePage } from './conversation'
 import type { OrcaCli } from './cli'
+import { createDeliver, type DeliverDeps, type Delivery, type DeliveryOutcome } from './deliver'
 import {
   buildWorld, paseoAgentView, paseoProjectView, paseoWorkspaceView, repoList, worktreePs,
   type PaseoAgentView, type PaseoProjectView, type PaseoWorkspaceView, type SessionId, type World
@@ -11,6 +12,7 @@ import {
 
 export * from './view'
 export type { TimelinePage } from './conversation'
+export type { Delivery, DeliveryOutcome, RefuseReason, Route, Sender } from './deliver'
 
 type Page<T> = { entries: T[]; pageInfo: { hasMore: boolean; nextCursor: string | null; prevCursor: string | null } }
 const all = <T>(entries: T[]): Page<T> => ({ entries, pageInfo: { hasMore: false, nextCursor: null, prevCursor: null } })
@@ -21,7 +23,11 @@ export type PaseoProjectRef = { projectKey: string; projectName: string; workspa
 export interface PaseoReads {
   agents: {
     list(options?: unknown): Promise<Page<{ agent: PaseoAgentView; project: PaseoProjectRef }>>
-    ref(id: string): { timeline: { refetch(options: { direction: 'tail'; projection: 'projected'; limit: number }): Promise<TimelinePage> } }
+    ref(id: string): {
+      timeline: { refetch(options: { direction: 'tail'; projection: 'projected'; limit: number }): Promise<TimelinePage> }
+      /** The agent as Orca reports it now, not from the shared two-second view. */
+      refresh(): Promise<{ agent: PaseoAgentView } | null>
+    }
   }
   workspaces: { list(options?: { filter?: { projectId?: string; [key: string]: unknown }; [key: string]: unknown }): Promise<Page<PaseoWorkspaceView>> }
   projects: { list(): Promise<{ projects: PaseoProjectView[] }> }
@@ -43,15 +49,23 @@ export interface Fleet {
   peek(): World | null
   /** The next view() reads Orca again. */
   invalidate(): void
+  /** Sends a marked text once (src/orca/deliver.ts). */
+  deliver(delivery: Delivery): Promise<DeliveryOutcome>
+  /** What became of a messageId, without sending: null when it was never attempted. */
+  reconcile(messageId: string): Promise<DeliveryOutcome | null>
   paseo: PaseoReads
 }
 
+export type SendDeps = Pick<DeliverDeps, 'dataDir' | 'focusAndType' | 'mailSender' | 'sleep'>
+
 const REPO_TTL_MS = 60_000
+const parsePs = (result: unknown) => worktreePs.parse(result)
+const parseRepos = (result: unknown) => repoList.parse(result)
 const VIEW_MAX_AGE_MS = 2_000
 /** agent read caps a read at 100 entries. */
 const MAX_READ = 100
 
-export function createFleet(cli: OrcaCli, now: () => number = Date.now): Fleet {
+export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: SendDeps): Fleet {
   let current: { at: number; world: Promise<World> } | null = null
   let last: World | null = null
   const reads = new Map<SessionId, { updatedAt: number; limit: number; page: Promise<TimelinePage> }>()
@@ -61,8 +75,8 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now): Fleet {
     if (current && now() - current.at <= maxAge) return current.world
     const at = now()
     const world = Promise.all([
-      cli.read('worktree ps', ['--limit', '500'], (result) => worktreePs.parse(result)),
-      cli.read('repo list', [], (result) => repoList.parse(result), { ttlMs: REPO_TTL_MS })
+      cli.read('worktree ps', ['--limit', '500'], parsePs),
+      cli.read('repo list', [], parseRepos, { ttlMs: REPO_TTL_MS })
     ]).then(([ps, repos]) => buildWorld(ps, repos, at))
     const entry = { at, world }
     current = entry
@@ -83,7 +97,7 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now): Fleet {
     // A transcript does not change while its session's updatedAt stays the same.
     const cached = reads.get(id as SessionId)
     if (session && cached && cached.updatedAt === session.updatedAt && cached.limit === n) return cached.page
-    const page = cli.read('agent read', ['orca_session_id:' + id, '--limit', String(n)], (result) => timelinePage(agentRead.parse(result), session))
+    const page = cli.read('agent read', ['orca_session_id:' + id, '--limit', String(n)], (result) => timelinePage(agentRead.parse(result), session, sentText))
     if (session) reads.set(session.id, { updatedAt: session.updatedAt, limit: n, page })
     page.catch(() => {
       if (reads.get(id as SessionId)?.page === page) reads.delete(id as SessionId)
@@ -103,7 +117,14 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now): Fleet {
           }
         }))
       },
-      ref: (id) => ({ timeline: { refetch: (options) => timeline(id, options.limit) } })
+      ref: (id) => ({
+        timeline: { refetch: (options) => timeline(id, options.limit) },
+        async refresh() {
+          const world = await view({ maxAgeMs: 0 })
+          const session = world.sessions.get(id as SessionId)
+          return session ? { agent: paseoAgentView(session, world.workspaces.get(session.worktree)) } : null
+        }
+      })
     },
     workspaces: {
       async list(options) {
@@ -121,9 +142,19 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now): Fleet {
     }
   }
 
+  const sender = send ? createDeliver({ ...send, cli, view, now }) : null
+  const sentText = (messageId: string) => sender?.sentText(messageId)
+
   return {
     view,
     peek: () => last,
+    deliver(delivery) {
+      if (!sender) return Promise.reject(new Error('this fleet has no data folder to send from'))
+      return sender.deliver(delivery)
+    },
+    reconcile(messageId) {
+      return sender ? sender.reconcile(messageId) : Promise.resolve(null)
+    },
     invalidate() {
       current = null
     },

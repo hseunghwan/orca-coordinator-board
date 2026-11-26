@@ -6,6 +6,8 @@ import { assert, mockHost, mountWorker } from 'orca/testing'
 import { afterEach, test } from 'vitest'
 import { createCli } from './orca/cli'
 import { fixturePulls, fixtureRunner, sid } from './orca/fixtures/load'
+import { fakeOrca } from './orca/fixtures/fake-orca'
+import { readMarked } from './orca/conversation'
 import { activateWith, OPEN_DASHBOARD, STATUS_ITEM, type FileDeps } from './worker'
 
 const APP = 'aaaa1111-0000-4000-8000-000000000000'
@@ -136,5 +138,66 @@ test('takes the projects chosen in version 0.1 once, then forgets the old key', 
   await new Promise((resolve) => setTimeout(resolve, 50))
   assert.deepEqual(await mounted.request('board.readiness', {}), { configured: true, coordinator: null, decisionTitles: [] })
   assert.equal(Object.hasOwn(h.data().storage, 'selectedProjects'), false)
+  await mounted.deactivate()
+})
+
+test('a reply to a terminal outside the focused workspace is typed after showing it, as a pasted block', async () => {
+  const orca = fakeOrca([{ id: 'editor', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_e', title: 'Editor', project: 'studio' }])
+  orca.say('editor', 'assistant', '패딩을 몇 초로 할까요?')
+  orca.behavior.outsideFocus = true
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en' }, results: {
+    'workspace.readContext': { workspaceId: 'w', branch: 'main', displayName: 'studio', terminals: [{ id: 'term_e' }] },
+    'terminal.sendText': { accepted: true }, 'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false }
+  } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  const snapshot = await mounted.request('board.snapshot', { fresh: true }) as { sessions: { id: string; decision?: { version: string } }[] }
+  const version = snapshot.sessions.find((s) => s.id === 'editor')!.decision!.version
+  const receipt = await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'editor', recipientId: 'editor', version,
+    action: 'reply', text: 'Use 0.10 seconds.', requestKey: 'worker-reply-000001' }) as { messageId: string }
+  const typed = h.callsOf('terminal.sendText') as { terminalId: string; text: string; enter: boolean }[]
+  assert.equal(typed.length, 1)
+  assert.equal(typed[0].terminalId, 'term_e')
+  assert.equal(typed[0].enter, true)
+  assert.ok(typed[0].text.startsWith('\x1b[200~') && typed[0].text.endsWith('\x1b[201~'))
+  const marked = readMarked(typed[0].text.slice(6, -6))!
+  assert.equal(marked.messageId, receipt.messageId)
+  assert.ok(marked.body.endsWith('Use 0.10 seconds.'))
+  assert.equal(orca.writes.length, 1)
+  await mounted.deactivate()
+})
+
+test('a reply to a chat is mailed from one board terminal, opened once in the focused workspace and reused', async () => {
+  const orca = fakeOrca([{ id: 'writer', surface: 'chat', state: 'done', updatedAt: 1, title: 'Writer', project: 'studio' }])
+  orca.say('writer', 'assistant', '제목을 골라 주실 수 있나요? 할까요?')
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en' }, results: {
+    'workspace.readContext': { workspaceId: 'w-dash', branch: 'main', displayName: 'studio', terminals: [] },
+    'terminal.create': { terminalId: 'term_board' },
+    'terminal.list': { terminals: [{ id: 'term_board' }], truncated: false },
+    'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false }
+  } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  const card = async () => ((await mounted.request('board.snapshot', { fresh: true })) as { sessions: { id: string; decision?: { version: string } }[] })
+    .sessions.find((s) => s.id === 'writer')!.decision!
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: (await card()).version,
+    action: 'question', text: 'Which title is shorter?', requestKey: 'worker-question-0001' })
+  orca.say('writer', 'assistant', '두 번째가 짧습니다. 어느 쪽으로 할까요?')
+  await mounted.request('board.send-decision', { projectId: 'studio', sessionId: 'writer', recipientId: 'writer', version: (await card()).version,
+    action: 'reply', text: 'Use the second.', requestKey: 'worker-reply-000002' })
+  assert.deepEqual(h.callsOf('terminal.create'), [{ workspaceId: 'w-dash', title: 'Coordinator Board mail' }])
+  assert.deepEqual(orca.writes.map((w) => w[w.indexOf('--from') + 1]), ['term_board', 'term_board'])
   await mounted.deactivate()
 })
