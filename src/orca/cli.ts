@@ -2,16 +2,21 @@
 // envelope it prints. Callers get parsed domain values or a CliError, never raw stdout.
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { posix, win32 } from 'node:path'
+import { win32 } from 'node:path'
 import { z } from 'zod'
+import { locateOrca } from './locate'
 
-export type ReadVerb = 'worktree ps' | 'repo list' | 'agent read' | 'agent installed' | 'account list'
+export { locateOrca } from './locate'
+
+export type ReadVerb = 'worktree ps' | 'repo list' | 'agent read' | 'agent installed' | 'account list' | 'host list' | 'agent list'
 /** Commands that send something. A write never shares a run, is never cached and never retried. */
 export type WriteVerb = 'terminal send' | 'orchestration send' | 'agent launch'
 
 // terminal send waits up to 10 s for the prompt to start a turn. Paseo gives account usage 3 s.
 const TIMEOUT_MS: Readonly<Record<ReadVerb | WriteVerb, number>> = {
   'worktree ps': 10_000, 'repo list': 10_000, 'agent read': 10_000, 'agent installed': 10_000, 'account list': 3_000,
+  // agent list --environment asks another machine; a host that does not answer soon counts as offline.
+  'host list': 10_000, 'agent list': 5_000,
   'terminal send': 30_000, 'orchestration send': 20_000, 'agent launch': 60_000
 }
 
@@ -34,28 +39,6 @@ export class CliError extends Error {
 }
 
 type Env = Readonly<Record<string, string | undefined>>
-
-/**
- * orca.exe, never orca.cmd: execFile cannot run a .cmd without a shell. Never a bare "orca"
- * either, since the worker's PATH is unknown.
- */
-export function locateOrca(input: { platform: NodeJS.Platform; execPath: string; env: Env; exists(path: string): boolean }): string | null {
-  const { platform, env } = input
-  const path = platform === 'win32' ? win32 : posix
-  const exe = platform === 'win32' ? 'orca.exe' : 'orca'
-  const localAppData = env.LOCALAPPDATA ?? (env.USERPROFILE ? path.join(env.USERPROFILE, 'AppData', 'Local') : undefined)
-  const candidates = [
-    env.ORCA_CLI_COMMAND,
-    env.ORCA_CLI_BIN_DIR && path.join(env.ORCA_CLI_BIN_DIR, exe),
-    path.join(path.dirname(input.execPath), 'resources', 'bin', exe),
-    platform === 'win32' && localAppData ? path.join(localAppData, 'Programs', 'orca', 'resources', 'bin', exe) : undefined
-  ]
-  for (const candidate of candidates) {
-    if (!candidate || !path.isAbsolute(candidate) || /\.(?:cmd|bat)$/i.test(candidate)) continue
-    if (input.exists(candidate)) return candidate
-  }
-  return null
-}
 
 const KEEP = ['PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'ORCA_USER_DATA_PATH', 'LANG', 'LC_ALL', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'USER']
 

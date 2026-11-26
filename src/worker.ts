@@ -16,7 +16,7 @@ import { run } from './github'
 import { translator } from './i18n'
 import { createFleet, workspaceKey, type Fleet, type SessionId, type World } from './orca'
 import { noSignals, reduceSignals, type Observation } from './orca/signals'
-import { hostCli, type OrcaCli } from './orca/cli'
+import { createCli, hostCli, type OrcaCli, type Runner } from './orca/cli'
 import { contribute, type PullDeps } from './server/board'
 import { rpcServer } from './server/rpc'
 import { DASHBOARD_FILE, dashboardFileText, focusedWorkspace, statusItem, withExcludeLine } from './summary'
@@ -292,7 +292,7 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   })
   secret.catch((error: unknown) => orca.log(`channel secret failed: ${error instanceof Error ? error.message : String(error)}`))
 
-  async function answerChannel(request: ChannelRequest): Promise<ChannelReply> {
+  async function answerChannel(request: ChannelRequest, exec: Runner | null): Promise<ChannelReply> {
     const world = await fleet.view({ maxAgeMs: 0 })
     const caller = identifyCaller(request.caller, await secret, world)
     if ('denied' in caller) return { exit: EXIT.denied, text: caller.denied }
@@ -300,7 +300,8 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       return { exit: EXIT.denied, text: caller.via === 'chat' ? '채팅 세션은 report만 쓸 수 있습니다.' : '지금 지정된 코디네이터만 쓸 수 있는 명령입니다.' }
     }
     try {
-      const result = await board.command(request.command, request.input, caller.sessionId)
+      // One orca at a time in the caller's shell.
+      const result = await board.command(request.command, request.input, caller.sessionId, exec ? createCli(exec, Date.now, 1) : null)
       if (request.command !== 'read') changed()
       return { exit: result.isError ? EXIT.error : EXIT.ok, text: result.text }
     } catch (error) {
@@ -318,7 +319,7 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
     orca.hooks.on('agent.launch.before', async (event, next) => {
       // Key names only: which PATH spelling Orca hands the hook decides whether the bin reaches the agent.
       orca.log(`launch hook: PATH keys in the launch env: ${Object.keys(event.env).filter((key) => key.toUpperCase() === 'PATH').join(', ') || 'none'}`)
-      return next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter }, board.pendingLaunch()))
+      return next(withChannel(event, { pipe: channelDeps.path, bin: channelDeps.bin, node: channelDeps.node, secret: await secret, delimiter }, board.pendingLaunches()))
     })
   }
 

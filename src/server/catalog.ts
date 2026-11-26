@@ -3,7 +3,7 @@
 // for each (Orca does not list an agent's models), and the rate limits `orca account list` reports.
 import { z } from "zod";
 import type { OrcaCli } from "../orca/cli";
-import { COORDINATOR_MODES } from "../channel/hook";
+import { COORDINATOR_MODES, WORKER_MODES } from "../channel/hook";
 import type { CatalogModel, ProviderEntry } from "../paseo/shared/dispatch";
 import type { AccountUsage } from "../paseo/shared/usage-routing";
 
@@ -17,6 +17,8 @@ const SUGGESTED: Readonly<Record<string, readonly { model: string; label: string
     { model: "claude-opus-5-5", label: "Opus 5.5", efforts: CLAUDE_EFFORTS, isDefault: true },
     { model: "claude-fable-5-2", label: "Fable 5.2", efforts: CLAUDE_EFFORTS },
     { model: "claude-sonnet-5-5", label: "Sonnet 5.5", efforts: CLAUDE_EFFORTS },
+    // Not in Paseo's recommendations; a person can route a grade to it (orca agent launch --model haiku).
+    { model: "haiku", label: "Haiku", efforts: [] },
   ],
   codex: [
     { model: "gpt-6.2-astra", label: "GPT-6.2 Astra", efforts: CODEX_EFFORTS, isDefault: true },
@@ -42,7 +44,7 @@ export async function readDirectory(cli: OrcaCli): Promise<Directory> {
     const models = (SUGGESTED[agent.id] ?? []).map(m => ({ provider: agent.id, model: m.model, label: m.label, efforts: m.efforts, isDefault: !!m.isDefault, coordinatorMode }));
     catalog.push(...models);
     providers.push({ id: agent.id, label: agent.name, available: true, status: models.length ? "ready" : "empty", modelCount: models.length,
-      workerModes: modes ? modes.map(({ id, label }) => ({ id, label })) : null });
+      workerModes: WORKER_MODES[agent.id]?.map(({ id, label }) => ({ id, label })) ?? null });
   }
   return { providers, catalog };
 }

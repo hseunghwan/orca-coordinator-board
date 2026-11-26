@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -59,17 +59,17 @@ test('setup launches one terminal coordinator in the focused workspace, marked f
   const f = setup()
   f.orca.behavior.reportAfterPs = 2
   let pendingDuringLaunch: unknown
-  f.orca.behavior.onWrite = () => { pendingDuringLaunch = f.board.pendingLaunch() }
+  f.orca.behavior.onWrite = () => { pendingDuringLaunch = f.board.pendingLaunches()[0] }
   const started = await f.setupCoordinator() as { sessionId: string; workspaceId: string; reused: boolean }
   expect(started).toEqual({ sessionId: 'launched-1', workspaceId: 'acme::/w/acme', reused: false, pinFailed: true })
   const [args] = f.launches()
   const flag = (name: string) => args[args.indexOf(name) + 1]
   expect([flag('--agent'), flag('--worktree'), flag('--surface'), flag('--model'), flag('--effort')]).toEqual(['claude', 'id:acme::/w/acme', 'terminal', 'claude-opus-5-5', 'high'])
-  const launch = pendingDuringLaunch as { launchId: string; modeId: string }
-  expect(launch.modeId).toBe('bypass')
+  const launch = pendingDuringLaunch as { launchId: string; modeId: string; role: string }
+  expect(launch).toMatchObject({ modeId: 'bypass', role: 'coordinator' })
   expect(flag('--prompt').startsWith(launchMarker(launch.launchId) + '\n')).toBe(true)
   expect(flag('--prompt')).toContain('/plugin/bin')
-  expect(f.board.pendingLaunch()).toBeUndefined()
+  expect(f.board.pendingLaunches()).toEqual([])
   expect(f.prefs.read().coordinator).toBe('launched-1')
   expect(await f.setupCoordinator({ expectedCoordinator: 'launched-1' })).toMatchObject({ sessionId: 'launched-1', reused: true })
   expect(f.launches()).toHaveLength(1)
@@ -117,7 +117,25 @@ test('digest and work requests reach an idle coordinator once; a working one is 
   const work = { coordinator: 'coord', requestKey: 'work-000000001', text: 'Split the release notes.' }
   expect(await f.request('board.request-work', work)).toEqual({ ok: true })
   expect(received()[1]).toBe('Split the release notes.')
-  await expect(f.request('board.request-work', { ...work, text: 'Something else.' })).rejects.toThrow('text changed')
+  await expect(f.request('board.request-work', { ...work, text: 'Something else.' })).rejects.toThrow('text or photos changed')
+})
+
+test('a work request with a photo names its file after the marker, and the session photo reads back', async () => {
+  const f = setup([{ id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'acme' }])
+  await f.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
+  const png = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOYvLAHAAOLAcF4E9p3AAAAAElFTkSuQmCC' }
+  const work = { coordinator: 'coord', requestKey: 'work-photo-0001', text: 'Match this screen.', images: [png] }
+  expect(await f.request('board.request-work', work)).toEqual({ ok: true })
+  const entry = f.orca.transcripts.get('coord')!.at(-1)!.text
+  const marked = readMarked(entry)!
+  expect(marked.messageId.startsWith('c0bdf070')).toBe(true)
+  expect(marked.body).toBe('Match this screen.')
+  const path = /^\[사진 1\] (.+\.png)$/.exec(entry.split('\n')[1])![1]
+  expect(readFileSync(path).toString('base64')).toBe(png.data)
+  expect(await f.request('board.read-session-photo', { sessionId: 'coord', messageId: marked.messageId, index: 0 })).toEqual({ count: 1, image: png })
+  expect(await f.request('board.request-work', work)).toEqual({ ok: true })
+  expect(f.orca.transcripts.get('coord')).toHaveLength(1)
+  await expect(f.request('board.request-work', { ...work, images: [] })).rejects.toThrow('text or photos changed')
 })
 
 test('a digest that handles board facts names the cycle, and the coordinator\'s fact command mails the answer signed by its terminal', async () => {

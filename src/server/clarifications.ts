@@ -1,7 +1,9 @@
 // Adapted from paseo-coordinator-board server/clarifications.ts @ 2e9d128. Sending goes through fleet.deliver
 // and a pending question is settled by fleet.reconcile, never sent again. A coordinator or ledger owner is
-// asked only while idle, as Orca cannot steer a running turn. Photos come in a later phase.
+// asked only while idle, as Orca cannot steer a running turn. Photos are saved as Paseo saves them and named
+// by path in the message (./photo-files.ts).
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, SessionId } from "../orca";
 import {
   clarificationKey,
@@ -17,6 +19,9 @@ import type { SessionRow, Note } from "../paseo/shared/contract";
 import type { Evidence } from "./conversation";
 import { isCurrentMembership, managedSessions } from "./session-links";
 import { canReceiveBoardInput, discoverSessions, permissionVersion } from "./discovery";
+import { SessionPhotoStore } from "../paseo/server/session-photos";
+import { describePhotos, photoReceiptId } from "../paseo/server/reply-photos";
+import { photoFiles } from "./photo-files";
 
 type Sdk = PluginHandlerContext["paseo"];
 type Stored = Preferences["clarifications"][string];
@@ -25,7 +30,6 @@ type View = ClarificationView & { notes: Record<string, Note> };
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const changed = "원래 질문이나 담당 세션이 바뀌었습니다. 카드를 새로 고쳐 주세요.";
 const uncertain = "추가 질문의 전송 여부를 확인하지 못했습니다. 같은 내용으로 다시 확인해 주세요.";
-const noPhotos = "사진 첨부는 아직 보낼 수 없습니다. 글로만 질문해 주세요.";
 
 function requestId(key: string) {
   const hex = hash("coordinator-board/clarification/" + key);
@@ -147,13 +151,17 @@ export class ClarificationSender {
     private fleet: Pick<Fleet, "deliver" | "reconcile">,
     private getView: (sdk: Sdk, card: ClarificationCard) => Promise<View>,
     private isCurrentRecord: (card: ClarificationCard, view: View) => boolean = () => true,
-  ) {}
+  ) {
+    this.photoDirectory = join(store.directory, "session-photos");
+    this.sessionPhotos = new SessionPhotoStore(this.photoDirectory);
+  }
+  private photoDirectory: string;
+  private sessionPhotos: SessionPhotoStore;
 
   send(sdk: Sdk, input: ClarificationInput) {
-    if (input.images?.length) throw Error(noPhotos);
     const id = requestId(input.requestKey);
     const key = clarificationKey(input.card);
-    const identity = [key, input.recipientId, input.question, []];
+    const identity = [key, input.recipientId, input.question, describePhotos(input.images)];
     if (input.card.kind === "tracked" && input.card.sessionQuestion) {
       const { projectId, sessionId, version } = input.card.sessionQuestion;
       identity.push(JSON.stringify([projectId, sessionId, version]));
@@ -175,6 +183,7 @@ export class ClarificationSender {
     const key = clarificationKey(input.card);
     let scope = this.store.read();
     if (!inScope(scope, input.card)) throw Error(changed);
+    id = photoReceiptId(id, !!input.images?.length, scope.clarifications);
     const previous = scope.clarifications[id];
     const handle = sdk.agents.ref(input.recipientId);
     const receipt = { ok: true as const, messageId: id, recipientId: input.recipientId };
@@ -253,6 +262,7 @@ export class ClarificationSender {
         at: new Date().toISOString(),
         question: input.question,
         status: "pending",
+        ...(input.images?.length ? { imageCount: input.images.length } : {}),
         ...(preserve ? {
           savedDecision: source.decision,
           sourceEvidenceId: source.evidenceId,
@@ -273,11 +283,13 @@ export class ClarificationSender {
           )
         )
           throw Error(changed);
+        if (input.images?.length) this.sessionPhotos.save(input.recipientId, id, input.images);
         current.clarifications[id] = entry;
       });
       let outcome;
       try {
-        outcome = await this.fleet.deliver({ messageId: id, to: input.recipientId as SessionId, text, subject: target.title,
+        const photos = input.images?.length ? photoFiles(this.photoDirectory, input.recipientId, id, input.images) : [];
+        outcome = await this.fleet.deliver({ messageId: id, to: input.recipientId as SessionId, text, subject: target.title, photos,
           from: { kind: "person" }, whenWorking: "refuse", unchangedSince: recipientAt });
       } catch {
         throw Error(uncertain);

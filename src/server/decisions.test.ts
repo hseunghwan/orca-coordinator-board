@@ -13,7 +13,9 @@ import { sendDecision, type DecisionInput } from '../paseo/shared/decision-actio
 import { NoteStore } from '../paseo/server/notes'
 import { PreferenceStore } from '../paseo/server/preferences'
 import { ConversationReader } from './conversation'
-import { decorateDecision, DecisionSender, noPhotos } from './decisions'
+import { decorateDecision, DecisionSender } from './decisions'
+import { SessionPhotoStore } from '../paseo/server/session-photos'
+import { existsSync, readFileSync } from 'node:fs'
 import { discoverSessions } from './discovery'
 
 const dirs: string[] = []
@@ -187,12 +189,21 @@ test('a native card keeps a single durable record with the original question, re
   expect(owned[0][1]).toMatchObject({ status: 'sent', activity: { projectId: 'acme', title: original.decision!.question, answer: 'Use two lines', recipientId: 'worker', coordinator: false } })
 })
 
-test('photos are refused before anything is read or sent', async () => {
+test('a photo is saved as Paseo saves it and named by its file path on a line after the marker', async () => {
   const f = await fixture()
   const png = { mimeType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOYvLAHAAOLAcF4E9p3AAAAAElFTkSuQmCC' }
-  await expect(f.send({ text: '', images: [png] })).rejects.toThrow(noPhotos)
-  expect(f.orca.writes).toEqual([])
-  expect(f.prefs.read().decisionReceipts).toEqual({})
+  f.orca.behavior.loseAnswer = true
+  const { messageId } = await f.send({ text: '이 화면처럼 해 주세요.', images: [png] })
+  expect(messageId.startsWith('c0bdf070')).toBe(true)
+  const raw = f.orca.transcripts.get('worker')!.at(-1)!.text.split('\n')
+  expect(raw[0]).toBe('[cb:' + messageId + ']')
+  const path = /^\[사진 1\] (.+\.png)$/.exec(raw[1])![1]
+  expect(raw[2]).toBe('')
+  expect(existsSync(path) && readFileSync(path).toString('base64')).toBe(png.data)
+  expect(f.sent().at(-1)!.text).not.toContain('[사진')
+  expect(f.sent().at(-1)!.text).toContain('이 화면처럼 해 주세요.')
+  expect(f.prefs.read().decisionReceipts[messageId]).toMatchObject({ status: 'sent', activity: { imageCount: 1 } })
+  expect(new SessionPhotoStore(join(f.root, 'session-photos')).read('worker', messageId, 0)).toEqual({ count: 1, image: png })
 })
 
 test('a send Orca refuses leaves no receipt, so the same click can be sent again', async () => {

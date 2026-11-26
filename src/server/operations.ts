@@ -2,9 +2,10 @@
 // server/recommendation.ts @ 2e9d128. The provider directory and usage come from the orca CLI
 // (./catalog.ts), the coordinator starts through ./lifecycle.ts in a workspace the person picks, and
 // requests reach it through fleet.deliver. Paseo steers a running coordinator; Orca cannot, so a
-// request waits until the coordinator is idle. Orca has no pin, photos come later, and tool names in
-// the prompts are coordinator-board commands.
+// request waits until the coordinator is idle. Orca has no pin, photos are named by path in the message
+// (./photo-files.ts), and tool names in the prompts are coordinator-board commands.
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { Fleet, SessionId, World, WorkspaceRecord, WorktreeId } from "../orca";
 import { workspaceKey } from "../orca";
 import type { T } from "../i18n";
@@ -16,9 +17,15 @@ import { includedCatalog, resolveRoute, sameRoute, validateCandidates } from "..
 import type { PluginServerContext } from "../orca";
 import type { PreferenceStore } from "../paseo/server/preferences";
 import { readAccountUsage, readDirectory } from "./catalog";
+import { readDisplayUsage } from "./display-usage";
 import type { DecisionSender } from "./decisions";
 import { CoordinatorLifecycle } from "./lifecycle";
 import type { BoardFacts } from "./board-facts";
+import { boardPhotoMessageId, readSessionPhoto } from "../paseo/shared/session-photos";
+import type { WorkImage } from "../paseo/shared/work-images";
+import { SessionPhotoStore } from "../paseo/server/session-photos";
+import { photoDigest } from "../paseo/server/reply-photos";
+import { photoFiles } from "./photo-files";
 
 export { coordinatorWorkspace, operations, startCoordinator } from "../contract";
 import { operations, startCoordinator } from "../contract";
@@ -73,18 +80,20 @@ function requestUuid(content: unknown[]) {
 }
 
 export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "deliver">, store: PreferenceStore, t: T,
-  expected: string, key: string, text: string, options: { reserveMessage?: (originalId: string) => string; beforeSend?: (messageId: string) => void; boardMade: boolean }) {
+  expected: string, key: string, text: string, options: { reserveMessage?: (originalId: string) => string; beforeSend?: (messageId: string) => void; boardMade: boolean;
+    images?: WorkImage[]; photos?: (messageId: string) => string[] }) {
   if (store.read().coordinator !== expected) throw new Error(t("현재 코디네이터를 다시 확인해 주세요.", "Check the current coordinator again."));
   if (!store.read().projects.length) throw new Error(t("관리할 프로젝트를 하나 이상 선택하세요.", "Choose at least one project to manage."));
   const session = (await fleet.view({ maxAgeMs: 0 })).sessions.get(expected as SessionId);
   if (!session) throw new Error(t("코디네이터 세션을 찾을 수 없습니다. 세션을 확인하거나 새로 지정해 주세요.", "The coordinator session is gone. Check it or choose another."));
   if (store.read().coordinator !== expected) throw new Error(t("코디네이터가 교체되었습니다. 새로 고쳐 주세요.", "The coordinator changed. Refresh the board."));
-  const originalId = requestUuid([expected, key, text]);
+  const images = options.images;
+  const originalId = requestUuid(images?.length ? [expected, key, text, images.map(photoDigest)] : [expected, key, text]);
   const messageId = options.reserveMessage?.(originalId) ?? originalId;
   options.beforeSend?.(messageId);
   const outcome = await fleet.deliver({
     messageId, to: expected as SessionId, text: options.boardMade ? BOARD_PREFIX + "\n" + text : text,
-    subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse",
+    subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse", photos: options.photos?.(messageId) ?? [],
   });
   if (outcome.status === "refused") {
     if (outcome.reason === "working" || outcome.reason === "waiting" || outcome.reason === "blocked") {
@@ -104,6 +113,9 @@ export async function sendCoordinatorRequest(fleet: Pick<Fleet, "view" | "delive
 export function registerOperations(server: PluginServerContext, store: PreferenceStore, fleet: Fleet, decisions: DecisionSender, dataDir: string, deps: OperationDeps,
   facts?: Pick<BoardFacts, "prepareCycle" | "bindMessage">) {
   const lifecycle = new CoordinatorLifecycle(store, fleet, dataDir, { t: deps.t, bin: deps.bin });
+  const photoDirectory = join(dataDir, "session-photos");
+  const sessionPhotos = new SessionPhotoStore(photoDirectory);
+  server.handle(readSessionPhoto, async ({ sessionId, messageId, index }) => sessionPhotos.read(sessionId, messageId, index));
   const unsupportedPin = () => new Error(deps.t()("Orca에서는 플러그인이 워크스페이스를 고정할 수 없습니다.", "Orca does not let a plugin pin a workspace."));
 
   server.handle(coordinatorPinSettings, async () => ({ enabled: false, workspace: null }));
@@ -122,7 +134,7 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
     const coordinator = resolveRoute("M", scope.routing, catalog, false, scope.usageRouting ? usage : []);
     return {
       usage, usageRouting: scope.usageRouting,
-      ...(settings && { workerModeOverrides: scope.workerModeOverrides, displayUsage: usage ?? [] }),
+      ...(settings && { workerModeOverrides: scope.workerModeOverrides, displayUsage: await readDisplayUsage(dataDir, directory.providers, usage ?? []) }),
       providers: directory.providers.map(p => ({ ...p, included: !scope.excludedProviders.includes(p.id) })),
       catalog, coordinatorMode: catalog.find(m => m.provider === coordinator?.provider)?.coordinatorMode ?? null,
       routing: scope.routing, revision: scope.routingRevision,
@@ -221,19 +233,22 @@ export function registerOperations(server: PluginServerContext, store: Preferenc
   });
   server.handle(requestWork, async input => {
     const t = deps.t();
-    if (input.images?.length) throw new Error(t("사진 첨부는 아직 보낼 수 없습니다. 글로만 보내 주세요.", "Photos cannot be sent yet. Send text only."));
     return sendCoordinatorRequest(fleet, store, t, input.coordinator, input.requestKey, input.text, {
       boardMade: false,
+      images: input.images,
+      photos: messageId => input.images?.length ? photoFiles(photoDirectory, input.coordinator, messageId, input.images) : [],
       reserveMessage(originalId) {
-        let messageId = originalId;
+        let messageId = input.images?.length ? boardPhotoMessageId(originalId) : originalId;
         const key = createHash("sha256").update(JSON.stringify([input.coordinator, input.requestKey])).digest("hex");
         // Reserve the content before sending so an uncertain or simultaneous
-        // delivery can only be retried with the same message.
+        // delivery can only be retried with the same message. Retain IDs issued by older versions.
         store.change(scope => {
           const reserved = scope.workRequestIds[key];
-          if (reserved && reserved !== messageId) throw new Error(t("내용이 달라졌습니다. 새 요청으로 보내 주세요.", "The text changed. Send it as a new request."));
+          if (reserved === originalId) messageId = originalId;
+          if (reserved && reserved !== messageId) throw new Error(t("내용이나 사진이 달라졌습니다. 새 요청으로 보내 주세요.", "The text or photos changed. Send it as a new request."));
           scope.workRequestIds[key] = messageId;
         });
+        if (input.images?.length) sessionPhotos.save(input.coordinator, messageId, input.images);
         return messageId;
       },
     });

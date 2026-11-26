@@ -197,7 +197,8 @@ test('the coordinator reads and classifies over the channel with the env its lau
   assert.equal(coordinatorEnv.CB_BIN, '/plugin/bin')
   const cli = async (env: Record<string, string>, argv: string[], files: Record<string, string> = {}) => {
     const out: string[] = []
-    const code = await runCli(argv, { env, readText: async (name) => files[name], stdout: (t) => { out.push(t) }, stderr: (t) => { out.push(t) }, defaultPipe: path })
+    const code = await runCli(argv, { env, readText: async (name) => files[name], stdout: (t) => { out.push(t) }, stderr: (t) => { out.push(t) }, defaultPipe: path,
+      runOrca: async (args, ms) => ({ stdout: await orca.runner(args, ms), error: null }) })
     return { code, text: out.join('').trim() }
   }
   await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
@@ -213,11 +214,22 @@ test('the coordinator reads and classifies over the channel with the env its lau
   const snapshot = await mounted.request('board.snapshot', { fresh: true }) as { sessions: { id: string; decision?: { source: string; recommendation?: string } }[] }
   assert.deepEqual(snapshot.sessions.find((s) => s.id === 'writer')?.decision?.source, 'coordinator')
   assert.equal(snapshot.sessions.find((s) => s.id === 'writer')?.decision?.recommendation, 'Use the second.')
-  assert.equal((await cli(coordinatorEnv, ['plan'])).code, 1)
+  const plan = await cli(coordinatorEnv, ['plan'])
+  assert.equal(plan.code, 0)
+  const { workspaces, routes } = JSON.parse(plan.text) as { workspaces: { id: string; projectId: string }[]; routes: { grade: string; route: unknown; expectedModeId?: string }[] }
+  const d = routes.find((r) => r.grade === 'D')!
+  const job = { projectId: 'studio', workspaceId: workspaces[0].id, grade: 'D', title: 'Ready check', prompt: 'Reply ready.', requestKey: 'worker-test-0001', expectedRoute: d.route, expectedModeId: d.expectedModeId }
+  const assigned = await cli(coordinatorEnv, ['assign', '--input-file', 'job.json'], { 'job.json': JSON.stringify({ job }) })
+  assert.equal(assigned.code, 0, assigned.text)
+  assert.equal((JSON.parse(assigned.text) as { sessionId: string }).sessionId, 'launched-1')
+  assert.equal(orca.launches.length, 1)
 
   const writerEnv = await envOf('term_w')
   assert.equal((await cli(writerEnv, ['read'])).code, 4)
   assert.equal((await cli({ ...writerEnv, CB_CALLER_TOKEN: coordinatorEnv.CB_CALLER_TOKEN }, ['read'])).code, 4)
+  assert.deepEqual(await cli(writerEnv, ['report', '--kind', 'review', '--text-file', '-'], { '-': 'Draft is ready.' }), { code: 1, text: 'Board reporting is disabled for this session.' })
+  await mounted.request('board.set-reporting', { sessionId: 'writer', enabled: true })
+  await mounted.request('board.set-reporting', { sessionId: 'chat', enabled: true })
   assert.deepEqual(await cli(writerEnv, ['report', '--kind', 'review', '--text-file', '-'], { '-': 'Draft is ready.' }), { code: 0, text: 'Reported on your own Coordinator Board card.' })
   assert.equal((await cli({ CB_PIPE: path }, ['read', '--as', 'chat'])).code, 4)
   assert.equal((await cli({ CB_PIPE: path }, ['report', '--as', 'chat', '--kind', 'question', '--text-file', '-'], { '-': 'Ready?' })).code, 0)

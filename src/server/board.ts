@@ -2,7 +2,8 @@
 // and scope, board facts, the tracked decision ledger and its queue, and the session sends
 // (board.send-decision, board.ask-clarification, tracked replies) through fleet.deliver. Paseo's hooks
 // are Orca signals (src/orca/signals.ts) that the worker passes to signal(). Pull request mapping,
-// lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts.
+// lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts. Notes and the reporting
+// flag (./reporting.ts, as Orca has no agent metadata) are saved as Paseo saves them.
 import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, PluginServerContext } from "../orca";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
@@ -10,7 +11,8 @@ import { boardReadiness } from "../paseo/shared/readiness";
 import { decisionCount } from "../paseo/shared/decision-count";
 import { sendDecision } from "../paseo/shared/decision-actions";
 import { askClarification, sourceQuestion } from "../paseo/shared/clarifications";
-import { boardDecisionCount, boardScope, boardSnapshot } from "../paseo/shared/contract";
+import { boardDecisionCount, boardScope, boardSnapshot, saveNote, setReporting } from "../paseo/shared/contract";
+import { ReportingStore } from "./reporting";
 import { SnapshotReads } from "../paseo/server/snapshot-reads";
 import { NoteStore } from "../paseo/server/notes";
 import { isManagedCoordinator, setCoordinator, PreferenceStore } from "../paseo/server/preferences";
@@ -18,14 +20,19 @@ import { catalogProjects, discoverSessions, liveSelection } from "./discovery";
 import { ConversationReader, excerpt } from "./conversation";
 import { decorateDecision, DecisionSender } from "./decisions";
 import { ClarificationSender, clarificationHistory, restoreClarifiedDecision } from "./clarifications";
-import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } from "./session-links";
+import { isCurrentMembership, managedSessions, registerSessionLinks, releaseUnmanagedCoordinator } from "./session-links";
 import { ProjectPullRequests } from "./prs";
 import { MergeNotifications } from "./merge-notifications";
 import type { Command } from "../channel/names";
 import { coordinatorCommands, runCommand } from "./coordinator";
+import { dispatchCommands, WorkerJournal } from "./dispatch";
 import { BoardFacts } from "./board-facts";
 import { trackedReviewTool } from "./tracked-review";
-import { TrackedDecisionStore } from "./tracked-decisions";
+import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
+import { photoFiles } from "./photo-files";
+import { ProjectIcons } from "./project-icons";
+import { HostWatch } from "./hosts";
+import { boardHosts } from "../contract";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
 import { canReceiveBoardInput } from "./discovery";
@@ -34,6 +41,7 @@ import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operatio
 import { translator } from "../i18n";
 import { createHash } from "node:crypto";
 import type { SessionId } from "../orca";
+import type { OrcaCli } from "../orca/cli";
 
 type Sdk = PluginHandlerContext["paseo"];
 
@@ -45,6 +53,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const notes = new NoteStore(join(dataDir, "notes.json"));
   const prefs = new PreferenceStore(join(dataDir, "scope.json"));
   const reader = new ConversationReader();
+  const projectIcons = new ProjectIcons();
   const prs = new ProjectPullRequests(prefs, pulls);
   const decisions = new DecisionSender(prefs, notes, reader, fleet);
   const tracked = new TrackedDecisionStore(join(dataDir, "tracked-decisions.json"),
@@ -55,7 +64,13 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     });
   const facts = new BoardFacts(prefs, notes, reader, fleet);
   facts.register(server);
-  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()) });
+  registerSessionLinks(server, prefs);
+  const hosts = new HostWatch(fleet.cli, () => fleet.view());
+  server.handle(boardHosts, () => hosts.read(host.t()));
+  const workers = new WorkerJournal(join(dataDir, "workers.json"));
+  const reporting = new ReportingStore(join(dataDir, "reporting.json"), id => workers.worker(id)?.reports === true);
+  const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()),
+    ...dispatchCommands(prefs, { fleet, journal: workers }) }, id => reporting.enabled(id));
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
@@ -98,6 +113,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       void mergeNotifications.resume(paseo).catch(() => console.warn("Could not resume queued merge notifications."));
     }
     const visible = sessions.filter(row => isCurrentMembership(row, latest));
+    for (const row of visible) {
+      if (reporting.enabled(row.id)) row.reporting = true;
+      else delete row.reporting;
+    }
     const visibleNotes = notes.visible(new Set(visible.map(s => s.id)));
     facts.decorate(visible, evidence, visibleNotes);
     for (const row of visible) {
@@ -148,9 +167,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   async function buildSessionView(paseo: Sdk, catalog: Awaited<ReturnType<Sdk["projects"]["list"]>>,
     rows: Awaited<ReturnType<typeof discoverSessions>>) {
     const scope = prefs.read();
-    const choices = new Map(catalog.projects.map(p => {
+    const icons = await Promise.all(catalog.projects.map(p => projectIcons.read(p.projectRootPath, p.icon)));
+    const choices = new Map(catalog.projects.map((p, i) => {
       const id = p.projectId;
-      return [id, { id, title: p.projectCustomName || p.projectDisplayName, path: p.projectRootPath, selected: scope.projects.includes(id), icon: p.icon }] as const;
+      return [id, { id, title: p.projectCustomName || p.projectDisplayName, path: p.projectRootPath, selected: scope.projects.includes(id), icon: icons[i] }] as const;
     }));
     for (const row of rows) {
       if (!choices.has(row.projectId)) choices.set(row.projectId, { id: row.projectId, title: row.projectTitle, path: "", selected: scope.projects.includes(row.projectId), icon: undefined });
@@ -189,6 +209,22 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     return JSON.stringify([projects, sessionLinks, coordinator, projectRepositories]);
   }, decisionCount);
   const invalidateCount = () => reads.invalidate();
+  server.handle(saveNote, async (input, { paseo }) => {
+    const sessions = await discoverSessions(paseo);
+    if (!managedSessions(sessions, prefs.read()).some(session => session.id === input.sessionId)) {
+      throw new Error("이 호스트에서 해당 세션을 찾지 못했습니다. 보드를 새로 고쳐 주세요.");
+    }
+    const outcome = notes.update(input);
+    if (outcome.ok) invalidateCount();
+    return outcome;
+  });
+  server.handle(setReporting, async ({ sessionId, enabled }, { paseo }) => {
+    const sessions = await discoverSessions(paseo);
+    if (!managedSessions(sessions, prefs.read()).some(session => session.id === sessionId)) throw new Error("세션을 찾지 못했습니다.");
+    reporting.set(sessionId, enabled);
+    invalidateCount();
+    return { ok: true };
+  });
   server.handle(sendDecision, async (input, { paseo }) => {
     const result = await decisions.send(paseo, input);
     invalidateCount();
@@ -235,17 +271,15 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     if (!current() || !agent || agent.id!==targetId || agent.internal || agent.archivedAt || agent.status==="closed" || agent.status==="error") return null;
     return {
       stillCurrent:current,
-      send:async (answer,messageId)=>{
-        const outcome = await fleet.deliver({ messageId, to: targetId as SessionId, text: answer, subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse" });
-        if (outcome.status !== "delivered") throw new Error("not delivered: " + (outcome.status === "refused" ? outcome.reason : outcome.status));
+      send:async (answer,messageId,images)=>{
+        const photos = images?.length ? photoFiles(join(dataDir, "session-photos"), targetId, messageId, images) : [];
+        const outcome = await fleet.deliver({ messageId, to: targetId as SessionId, text: answer, subject: "Coordinator Board", from: { kind: "person" }, whenWorking: "refuse", photos });
+        if (outcome.status === "refused") throw new NotSent(outcome.reason);
+        if (outcome.status !== "delivered") throw new Error("not delivered: " + outcome.status);
       },
       accepted:async (_answer,messageId)=>(await fleet.reconcile(messageId))?.status === "delivered",
       ready:canReceiveBoardInput(agent,false),
     };
-  }, input => {
-    if (input.recipientId && input.images?.length) {
-      throw new Error(host.t()("사진 첨부는 아직 보낼 수 없습니다. 글로만 보내 주세요.", "Photos cannot be sent yet. Send text only."));
-    }
   });
   prs.register(server, invalidateCount, mergeNotifications);
   async function recipientAvailable(id: string) {
@@ -316,15 +350,20 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     count: () => reads.count(() => buildSnapshot(fleet.paseo)),
     configured: () => prefs.read().projects.length > 0,
     coordinator: () => prefs.read().coordinator,
-    /** The coordinator launch the agent.launch.before hook should give its permission mode. */
-    pendingLaunch: () => lifecycle.pendingLaunch(),
-    /** Names the started coordinator once its terminal reports a session. */
-    adoptCoordinator: () => lifecycle.adopt(),
+    /** The coordinator and worker launches the agent.launch.before hook should give their permission mode. */
+    pendingLaunches: () => [...[lifecycle.pendingLaunch()].filter(l => !!l), ...workers.pending()],
+    /** Names the started coordinator and workers once their terminals report a session. */
+    async adoptCoordinator() {
+      const coordinator = await lifecycle.adopt();
+      return workers.adopt(await fleet.view()) || coordinator;
+    },
+    /** Paseo's metadata of a worker the coordinator started through the board. */
+    worker: (sessionId: string) => workers.worker(sessionId),
     /** Who may run a coordinator-board command: only the designated coordinator, or any session on the board. */
     audience: (command: Command) => commands[command].audience,
     /** A coordinator-board command from the session the channel verified. */
-    async command(command: Command, input: unknown, agentId: string) {
-      const result = await runCommand(commands, command, input, { paseo: fleet.paseo, agent: { id: agentId } });
+    async command(command: Command, input: unknown, agentId: string, caller: OrcaCli | null = null) {
+      const result = await runCommand(commands, command, input, { paseo: fleet.paseo, agent: { id: agentId }, caller });
       if (command !== "read") invalidateCount();
       return result;
     },

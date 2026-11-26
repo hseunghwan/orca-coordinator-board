@@ -14,6 +14,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - 전송 실기 확인: `node scripts/probe-send.mjs --session <id> --yes [--from <term_…>]`(실제 워커 경로로 답장 하나를 보낸다. 사람이 시험용으로 정한 세션에만 쓴다). 에이전트 셸에서 돌리면 그 터미널이 발신자가 되므로 워커의 경우를 보려면 터미널 밖 프로세스로 띄운다.
 - 채널 실기 확인: `node scripts/probe-channel.mjs [--terminal <term_…>]`(빌드 뒤. 실제 워커 코드의 실행 훅과 `bin/coordinator-board`를 실제 orca CLI로 돌린다. 보드 데이터는 임시 폴더).
 - 장부, 사실, PR 실기 확인: `node scripts/probe-ledger.mjs prs|mail|review`(보드 데이터는 임시 폴더). `prs`는 읽기 전용이다. `mail`과 `review --send`는 실제 메시지를 하나 보내므로 사람이 시험용으로 정한 세션에만 `--yes`로 쓴다. `mail`은 터미널 밖 프로세스로 띄운다.
+- 배정 실기 확인: `node scripts/probe-dispatch.mjs check|send|verify|close`(로드된 개발 플러그인이 이 코드일 때만. `check`와 `verify`는 읽기 전용이다. `send --yes`는 등급 D를 Haiku로 바꾸고 코디네이터에게 작업 요청 하나를 보내며, `close --yes`는 작업자 터미널을 닫고 등급 D를 되돌린다. 사람이 정한 코디네이터에만 쓴다).
 - PATH 실기 확인: `node scripts/probe-path.mjs --match <명령 줄의 글>`(Windows. 실행 중인 에이전트 프로세스의 환경 블록을 읽기만 하고 PATH 키 이름과 `CB_*` 이름만 출력한다).
 - 테스트: `orca plugin test .`. `node_modules`에 vitest가 있으면 Orca가 vitest로 돌린다. 그래서 테스트의 `test`는 `vitest`에서 불러온다.
 - 렌더 검사: `orca plugin check .`, manifest 검사: `orca plugin validate .`
@@ -43,6 +44,8 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - 대시보드 `.tsx` 첫 줄의 `/** @jsxImportSource react */`는 지우지 않는다. tsconfig의 기본 JSX는 사이드바 패널용 `orca`다.
 - 대시보드는 워커를 Paseo 계약(`src/paseo/shared/contract.ts` 등의 `defineRpc`)으로 부른다. `src/dashboard/rpc.ts`의 `call`이 출력을 zod로 검사한다. 워커가 보내는 `board.changed`는 다시 읽으라는 신호일 뿐이다.
 - 대시보드 열쇠 파일(`.coordinator-board/`)은 `.git/info/exclude`로 숨기고, 사용자 저장소에 `.gitignore`를 새로 만들지 않는다.
+- 작업자 실행은 `src/server/dispatch.ts`로만 한다. 실행 기록(`workers.json`)을 먼저 쓰고, `orca agent launch`는 채널 protocol 2로 코디네이터의 셸에서 돌린다(`ToolContext.caller`). 워커 자신의 CLI로 작업자를 띄우지 않는다. 작업자 권한은 `src/channel/hook.ts`의 `WORKER_MODES`에서만 고르고, 우회 모드를 넣지 않는다.
+- 사진은 메시지에 붙이지 않고 `fleet.deliver`의 `photos`(파일 경로)로만 보낸다. 표식 뒤 `[사진 n]` 줄의 모양은 `src/orca/conversation.ts`의 `photoLines`와 `readMarked`가 함께 정한다.
 - 터미널 전송은 CLI `orca terminal send`로만 한다. 포커스와 상관없이 들어가므로 보내기 전에 `terminal.focus`로 화면을 옮기지 않는다.
 - 외부 명령(`git`, `gh`)은 `shell:false`, 시간 제한, `maxBuffer`, 대화형 프롬프트를 끈 환경 변수로 실행하고 인자는 배열로 넘긴다(`src/github.ts`의 `run`).
 - GitHub에서 읽은 글은 화면에 내기 전에 제어 문자와 양방향 제어 문자를 지우고 길이를 자른다(`src/server/prs.ts`의 `parseOpenPulls`).

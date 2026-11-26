@@ -81,6 +81,24 @@ export interface Fleet {
 
 export type SendDeps = Pick<DeliverDeps, 'dataDir' | 'mailSender' | 'sleep'>
 
+const launched = z.object({ outcome: z.object({ kind: z.string(), handle: z.string().nullish() }), operationId: z.string().nullish() })
+
+/** orca agent launch through this CLI: the worker's own, or the calling agent's shell, where Orca shows the launch as that agent's handoff. */
+export async function launchAgent(cli: OrcaCli, request: LaunchRequest): Promise<LaunchOutcome> {
+  const selector = request.worktree.startsWith('folder:') ? request.worktree : 'id:' + request.worktree
+  const result = await cli.write('agent launch', [
+    '--agent', request.agent, '--worktree', selector, '--surface', 'terminal', '--model', request.model,
+    ...(request.effort ? ['--effort', request.effort] : []), '--prompt', request.prompt,
+    ...(request.retryLaunch ? ['--retry-launch', request.retryLaunch] : [])
+  ])
+  if (result.kind === 'refused') return { kind: 'refused', message: result.message }
+  if (result.kind === 'ambiguous') return { kind: 'unknown', operationId: result.retryRequest, message: result.message }
+  const parsed = launched.safeParse(result.result)
+  const handle = parsed.success ? parsed.data.outcome.handle : null
+  if (!handle?.startsWith('term_')) return { kind: 'unknown', operationId: parsed.success ? parsed.data.operationId ?? null : null, message: 'no terminal in the launch result' }
+  return { kind: 'started', handle: handle as TerminalHandle, operationId: parsed.data!.operationId ?? null }
+}
+
 const REPO_TTL_MS = 60_000
 const parsePs = (result: unknown) => worktreePs.parse(result)
 const parseRepos = (result: unknown) => repoList.parse(result)
@@ -169,22 +187,10 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now, send?: S
   const sender = send ? createDeliver({ ...send, cli, view, now }) : null
   const sentText = (messageId: string) => sender?.sentText(messageId)
 
-  const launched = z.object({ outcome: z.object({ kind: z.string(), handle: z.string().nullish() }), operationId: z.string().nullish() })
-
   async function launch(request: LaunchRequest): Promise<LaunchOutcome> {
-    const selector = request.worktree.startsWith('folder:') ? request.worktree : 'id:' + request.worktree
-    const result = await cli.write('agent launch', [
-      '--agent', request.agent, '--worktree', selector, '--surface', 'terminal', '--model', request.model,
-      ...(request.effort ? ['--effort', request.effort] : []), '--prompt', request.prompt,
-      ...(request.retryLaunch ? ['--retry-launch', request.retryLaunch] : [])
-    ])
-    if (result.kind === 'refused') return { kind: 'refused', message: result.message }
-    if (result.kind === 'ambiguous') return { kind: 'unknown', operationId: result.retryRequest, message: result.message }
-    const parsed = launched.safeParse(result.result)
-    const handle = parsed.success ? parsed.data.outcome.handle : null
-    if (!handle?.startsWith('term_')) return { kind: 'unknown', operationId: parsed.success ? parsed.data.operationId ?? null : null, message: 'no terminal in the launch result' }
-    current = null
-    return { kind: 'started', handle: handle as TerminalHandle, operationId: parsed.data!.operationId ?? null }
+    const outcome = await launchAgent(cli, request)
+    if (outcome.kind === 'started') current = null
+    return outcome
   }
 
   return {
