@@ -1,0 +1,11 @@
+#!/bin/sh
+# The Coordinator Board command for agents in Orca terminals. See: coordinator-board --help
+here=$(cd "$(dirname "$0")" && pwd -P)
+if [ -n "$CB_NODE" ] && [ -x "$CB_NODE" ]; then
+  ELECTRON_RUN_AS_NODE=1 exec "$CB_NODE" "$here/../dist/cli.cjs" "$@"
+elif command -v node >/dev/null 2>&1; then
+  exec node "$here/../dist/cli.cjs" "$@"
+else
+  echo "coordinator-board: no Node.js found to run the command." >&2
+  exit 2
+fi

@@ -18,6 +18,8 @@ import { decorateDecision, DecisionSender } from "./decisions";
 import { ClarificationSender, clarificationHistory, restoreClarifiedDecision } from "./clarifications";
 import { isCurrentMembership, managedSessions, releaseUnmanagedCoordinator } from "./session-links";
 import { ProjectPullRequests } from "./prs";
+import type { Command } from "../channel/names";
+import { coordinatorCommands, runCommand } from "./coordinator";
 
 type Sdk = PluginHandlerContext["paseo"];
 
@@ -36,6 +38,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const reader = new ConversationReader();
   const prs = new ProjectPullRequests(prefs, pulls);
   const decisions = new DecisionSender(prefs, notes, reader, fleet);
+  const commands = coordinatorCommands(prefs, reader, notes);
   let decisionTitles: string[] = [];
 
   server.handle(boardReadiness, async () => {
@@ -205,6 +208,15 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     invalidate() { fleet.invalidate(); invalidateCount(); },
     count: () => reads.count(() => buildSnapshot(fleet.paseo)),
     configured: () => prefs.read().projects.length > 0,
+    coordinator: () => prefs.read().coordinator,
+    /** Who may run a coordinator-board command: only the designated coordinator, or any session on the board. */
+    audience: (command: Command) => commands[command].audience,
+    /** A coordinator-board command from the session the channel verified. */
+    async command(command: Command, input: unknown, agentId: string) {
+      const result = await runCommand(commands, command, input, { paseo: fleet.paseo, agent: { id: agentId } });
+      if (command !== "read") invalidateCount();
+      return result;
+    },
     /** Version 0.1 kept the chosen projects in plugin storage. Take them once, only into an empty choice. */
     adoptLegacySelection(projectIds: readonly unknown[]): boolean {
       const ids = [...new Set(projectIds.filter((id): id is string => typeof id === "string" && id.length > 0))];

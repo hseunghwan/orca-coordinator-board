@@ -53,6 +53,11 @@
         "tooltip": "Coordinator Board",
         "command": "open-dashboard"
       }
+    ],
+    "hooks": [
+      {
+        "event": "agent.launch.before"
+      }
     ]
   },
   "capabilities": [

@@ -8,6 +8,8 @@ import { createCli } from './orca/cli'
 import { fixturePulls, fixtureRunner, sid } from './orca/fixtures/load'
 import { fakeOrca } from './orca/fixtures/fake-orca'
 import { activateWith, OPEN_DASHBOARD, STATUS_ITEM, type FileDeps } from './worker'
+import { randomUUID } from 'node:crypto'
+import { runCli } from './cli/run'
 
 const APP = 'aaaa1111-0000-4000-8000-000000000000'
 const opened: string[] = []
@@ -20,7 +22,7 @@ function worker(calls: string[][] = []) {
   dirs.push(dataDir)
   let stop: (() => void) | undefined
   return {
-    default: (orca: Parameters<typeof activateWith>[0]) => { stop = activateWith(orca, { cli: createCli(fixtureRunner(calls)), dataDir, files, pollMs: 0, pulls: fixturePulls }) },
+    default: (orca: Parameters<typeof activateWith>[0]) => { stop = activateWith(orca, { cli: createCli(fixtureRunner(calls)), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: null }) },
     deactivate: () => stop?.()
   }
 }
@@ -153,7 +155,7 @@ test('a reply to a chat is mailed from one board terminal, opened once in the fo
     'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false }
   } })
   const mounted = await mountWorker({
-    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls }) },
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: null }) },
     deactivate: () => stop?.()
   }, { host: h })
   await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
@@ -166,5 +168,61 @@ test('a reply to a chat is mailed from one board terminal, opened once in the fo
     action: 'reply', text: 'Use the second.', requestKey: 'worker-reply-000002' })
   assert.deepEqual(h.callsOf('terminal.create'), [{ workspaceId: 'w-dash', title: 'Coordinator Board mail' }])
   assert.deepEqual(orca.writes.map((w) => w[w.indexOf('--from') + 1]), ['term_board', 'term_board'])
+  await mounted.deactivate()
+})
+
+test('the coordinator reads and classifies over the channel with the env its launch got; others are refused', async () => {
+  const orca = fakeOrca([
+    { id: 'coord', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_c', title: 'Coordinator', project: 'studio' },
+    { id: 'writer', surface: 'terminal', state: 'done', updatedAt: 1, handle: 'term_w', title: 'Writer', project: 'studio' },
+    { id: 'chat', surface: 'chat', state: 'done', updatedAt: 1, title: 'Chat', project: 'studio' }
+  ])
+  orca.say('writer', 'assistant', '제목을 골라 주실 수 있나요? 할까요?')
+  const dataDir = mkdtempSync(join(tmpdir(), 'board-worker-'))
+  dirs.push(dataDir)
+  const path = process.platform === 'win32' ? '\\\\.\\pipe\\cb-worker-' + randomUUID() : join(dataDir, 'channel.sock')
+  let stop: (() => void) | undefined
+  const h = mockHost({ storage: { locale: 'en' }, results: { 'statusBar.update': { ok: true }, 'workspace.list': { workspaces: [], truncated: false } } })
+  const mounted = await mountWorker({
+    default: (api: Parameters<typeof activateWith>[0]) => { stop = activateWith(api, { cli: createCli(orca.runner), dataDir, files, pollMs: 0, pulls: fixturePulls, channel: { path, bin: '/plugin/bin', node: '/orca/orca' } }) },
+    deactivate: () => stop?.()
+  }, { host: h })
+  const envOf = async (terminalId: string) => {
+    const decision = await mounted.hooks.fire('agent.launch.before', { agent: 'claude', workspaceId: null, workspaceKind: null, terminalId, command: 'claude', env: {} })
+    assert.equal(decision.kind, 'continue')
+    return (decision as { event: { env: Record<string, string> } }).event.env
+  }
+  const coordinatorEnv = await envOf('term_c')
+  assert.equal(coordinatorEnv.CB_PIPE, path)
+  assert.equal(coordinatorEnv.CB_BIN, '/plugin/bin')
+  const cli = async (env: Record<string, string>, argv: string[], files: Record<string, string> = {}) => {
+    const out: string[] = []
+    const code = await runCli(argv, { env, readText: async (name) => files[name], stdout: (t) => { out.push(t) }, stderr: (t) => { out.push(t) }, defaultPipe: path })
+    return { code, text: out.join('').trim() }
+  }
+  await mounted.request('board.scope', { kind: 'project', projectId: 'studio', enabled: true })
+  assert.equal((await cli(coordinatorEnv, ['read'])).code, 4)
+  await mounted.request('board.scope', { kind: 'coordinator', sessionId: 'coord' })
+  const listing = await cli(coordinatorEnv, ['read'])
+  assert.equal(listing.code, 0)
+  assert.ok((JSON.parse(listing.text) as { id: string }[]).some((row) => row.id === 'writer'))
+  const read = JSON.parse((await cli(coordinatorEnv, ['read', '--session', 'writer'])).text) as { evidenceId: string }
+  const classified = await cli(coordinatorEnv, ['classify', '--session', 'writer', '--evidence', read.evidenceId, '--kind', 'question', '--text-file', '-', '--input-file', 'in.json'],
+    { '-': 'Which title?', 'in.json': JSON.stringify({ content: { question: 'Which title?', recommendation: 'Use the second.' } }) })
+  assert.deepEqual(classified, { code: 0, text: '판단을 해당 세션 카드에 기록했습니다.' })
+  const snapshot = await mounted.request('board.snapshot', { fresh: true }) as { sessions: { id: string; decision?: { source: string; recommendation?: string } }[] }
+  assert.deepEqual(snapshot.sessions.find((s) => s.id === 'writer')?.decision?.source, 'coordinator')
+  assert.equal(snapshot.sessions.find((s) => s.id === 'writer')?.decision?.recommendation, 'Use the second.')
+  assert.equal((await cli(coordinatorEnv, ['plan'])).code, 1)
+
+  const writerEnv = await envOf('term_w')
+  assert.equal((await cli(writerEnv, ['read'])).code, 4)
+  assert.equal((await cli({ ...writerEnv, CB_CALLER_TOKEN: coordinatorEnv.CB_CALLER_TOKEN }, ['read'])).code, 4)
+  assert.deepEqual(await cli(writerEnv, ['report', '--kind', 'review', '--text-file', '-'], { '-': 'Draft is ready.' }), { code: 0, text: 'Reported on your own Coordinator Board card.' })
+  assert.equal((await cli({ CB_PIPE: path }, ['read', '--as', 'chat'])).code, 4)
+  assert.equal((await cli({ CB_PIPE: path }, ['report', '--as', 'chat', '--kind', 'question', '--text-file', '-'], { '-': 'Ready?' })).code, 0)
+  assert.equal((await cli({ CB_PIPE: path }, ['report', '--as', 'writer', '--kind', 'question', '--text-file', '-'], { '-': 'Ready?' })).code, 4)
+  const notes = (await mounted.request('board.snapshot', { fresh: true }) as { notes: Record<string, { text: string; origin: string }> }).notes
+  assert.deepEqual([notes.writer?.text, notes.writer?.origin, notes.chat?.text], ['Draft is ready.', 'agent', 'Ready?'])
   await mounted.deactivate()
 })
