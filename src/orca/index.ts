@@ -76,7 +76,8 @@ export function createFleet(cli: OrcaCli, now: () => number = Date.now): Fleet {
   }
 
   async function timeline(id: string, limit: number): Promise<TimelinePage> {
-    const world = await view()
+    // The snapshot that asked has just read a World; reading another here would cost a ps per transcript.
+    const world = last ?? (await view())
     const session = world.sessions.get(id as SessionId)
     const n = Math.min(limit, MAX_READ)
     // A transcript does not change while its session's updatedAt stays the same.

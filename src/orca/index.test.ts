@@ -25,9 +25,12 @@ test('agents carry their project and workspace, and workspaces filter by project
   expect(folder.entries.map((w) => w.title)).toEqual(['Notes'])
 })
 
-test('a transcript is read once while its session has not changed', async () => {
+test('a transcript is read once while its session has not changed, and never costs another ps', async () => {
   const calls: string[][] = []
-  const fleet = createFleet(createCli(fixtureRunner(calls)))
+  let clock = 0
+  const fleet = createFleet(createCli(fixtureRunner(calls), () => clock), () => clock)
+  await fleet.view()
+  clock = 5_000
   const refetch = () => fleet.paseo.agents.ref(sid(1)).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 48 })
   const [a, b] = await Promise.all([refetch(), refetch()])
   await refetch()
@@ -36,4 +39,5 @@ test('a transcript is read once while its session has not changed', async () => 
   await expect(fleet.paseo.agents.ref(sid(3)).timeline.refetch({ direction: 'tail', projection: 'projected', limit: 128 }))
     .rejects.toMatchObject({ code: 'not_found' })
   expect(calls.at(-1)).toContain('100')
+  expect(calls.filter((c) => c[0] === 'worktree')).toHaveLength(1)
 })
