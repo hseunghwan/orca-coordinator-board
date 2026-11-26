@@ -19,6 +19,7 @@ import { Clarification } from "./clarification";
 import { DecisionActions, type DecisionReceipt } from "./decision-actions";
 import { DecisionEditingRow, keepEditingPositions, useDecisionEditing } from "./decision-editing";
 import { InlineDecisionReceipt } from "./inline-receipt";
+import { OperationsPanel } from "./operations";
 import { ReplyHistory } from "./reply-history";
 import { Project } from "./project-kanban";
 import { SessionProgress } from "./session-progress";
@@ -50,6 +51,8 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed) : null;
   const configured = model ? model.configured : readiness?.configured;
   const pickingProjects = !configured || (!settings && !snapshot?.coordinator);
+  const coordinatorId = snapshot ? snapshot.coordinator : readiness?.coordinator ?? null;
+  const operationsReady = !!snapshot || !!(readiness?.configured && readiness.coordinator && !settings);
   const layoutMode = !settings && snapshot && configured ? view.mode : "classic";
 
   const rankedKeys = model?.ranked.map(row => row.key) ?? [];
@@ -148,10 +151,8 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
     {filters.length > 0 && !model.filteredTotal && model.total > 0 && !model.incomplete && <p className="muted">{t("선택한 프로젝트에 결정할 일이 없습니다.", "No decisions in the selected projects.")}</p>}
     {model.total === 0 && !model.incomplete && <p className="muted">{t("지금 결정할 일이 없습니다.", "No decisions are waiting for you.")}</p>}
   </> : null;
-  const operationsNode = <div className="surface" style={{ ...column, gap: 10, padding: 14, borderRadius: "var(--r-lg)" }}>
-    <span role="heading" aria-level={2} style={{ fontSize: 17, lineHeight: "24px", fontWeight: 600 }}>{t("코디네이터", "Coordinator")}</span>
-    <p className="muted">{t("코디네이터에 요청하는 기능은 다음 단계에서 제공합니다.", "Requests to the coordinator are coming in a later phase.")}</p>
-  </div>;
+  const operationsNode = <OperationsPanel settings={operationsReady && settings} coordinator={operationsReady ? coordinatorId : null}
+    configured={operationsReady && !!configured} projects={snapshot?.projects ?? []} refreshBoard={onRefresh} openCoordinator={onOpen} />;
   const progressNode = model && snapshot && !settings && configured ? <SessionProgress cards={model.visibleProjects.flatMap(project => project.cards)}
     hostLabel={hostLabel} projectName={model.projectName} open={onOpen}>
     {!model.visibleProjects.length && !model.showHostWide && <p className="muted">{t("표시할 세션이 없습니다.", "No sessions to show.")}</p>}
@@ -215,6 +216,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
         : <Disclosure title={t("보드에서 관리할 프로젝트 선택", "Choose projects to manage")} expanded={manage} onPress={() => setManage(!manage)}>
           {projectPicker}
         </Disclosure>)}
+      {operationsNode}
       {!settings && !snapshot && !error && !!readiness?.decisionTitles?.length && <div style={{ ...column, gap: space[1.5] }}>
         <h2 style={{ margin: 0, fontSize: fontSize.base, fontWeight: 500 }}>{t("내 결정", "My decisions")}</h2>
         {readiness.decisionTitles.map((title, index) => <p key={index} className="clamp2">{title}</p>)}
