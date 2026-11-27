@@ -31,6 +31,12 @@ const workItem = z.object({
   /** How many times the coordinator's verify sent the work back, and the last reason it gave. */
   attempts: z.number().int().nonnegative().optional(),
   failure: z.object({ text: z.string(), at: z.number() }).optional(),
+  /**
+   * The phaseAt of the phase entry the board already asked its done check in. Answering the check is a turn of
+   * its own, which clears the candidate and leaves a new one; without this the board would ask again after every
+   * answer that is not a report. One check per phase entry, then the idle rule decides.
+   */
+  doneCheckFor: z.number().optional(),
   history: z.array(historyEntry),
 });
 const file = z.object({ version: z.literal(1), items: z.record(z.string(), workItem), settings: workSettings.optional() });
@@ -184,7 +190,8 @@ export function reduceWorkItem(item: WorkItem, event: WorkEvent): WorkItem {
     case "asked":
       if (!item.candidate || item.candidate.reason !== event.candidate.reason || item.candidate.at !== event.candidate.at) return item;
       if (item.candidate.ask?.messageId === event.messageId && item.candidate.ask.status === event.status) return item;
-      return { ...item, candidate: { ...item.candidate, ask: { messageId: event.messageId, status: event.status, at: event.at } } };
+      return { ...item, candidate: { ...item.candidate, ask: { messageId: event.messageId, status: event.status, at: event.at } },
+        ...(event.status === "sent" || event.status === "unconfirmed" ? { doneCheckFor: item.phaseAt } : {}) };
   }
 }
 

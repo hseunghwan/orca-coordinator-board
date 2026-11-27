@@ -3,8 +3,9 @@
 // board header into a live terminal). A move to reported or stale gets one notice to the coordinator, as Orca's
 // orchestration tells a coordinator about worker_done. A busy or signerless recipient leaves the message queued
 // for the next poll or turn end; each message has one messageId derived from what it is about, so a retry only
-// reconciles and the same candidate is never asked twice. verify is the coordinator's command that confirms a
-// reported item (done) or sends it back (running) with the reason, sent from the coordinator to the session;
+// reconciles. The board asks one done check per phase entry: answering it is a turn that leaves a new
+// candidate, which is not asked again. verify is the coordinator's command that confirms a reported item
+// (done) or sends it back (running) with the reason, sent from the coordinator to the session;
 // once the fix attempts ran out it escalates the item to a person instead and sends the session nothing. The
 // send-back's messageId comes from the attempt it is, never the clock, so running verify again only reconciles.
 import { createHash } from "node:crypto";
@@ -25,6 +26,10 @@ function uuidFrom(parts: unknown[]) {
 
 export const statusOf = (outcome: DeliveryOutcome): Status =>
   outcome.status === "delivered" ? "sent" : outcome.status === "unconfirmed" ? "unconfirmed" : WAIT.includes(outcome.reason) ? "queued" : "unavailable";
+
+/** A done check is due for a running item's unasked candidate, once per phase entry (work-items.ts doneCheckFor). */
+export const doneCheckDue = (item: WorkItem) =>
+  item.phase === "running" && !!item.candidate && (!item.candidate.ask || item.candidate.ask.status === "queued") && item.doneCheckFor !== item.phaseAt;
 
 export const noticeKey = (item: Pick<WorkItem, "phase" | "phaseAt">) => item.phase + "@" + item.phaseAt;
 
@@ -70,7 +75,7 @@ export class WorkNotices {
     for (const item of Object.values(this.items.read().items)) {
       if (!item.sessionId) continue;
       const candidate = item.candidate;
-      if (item.phase === "running" && candidate && (!candidate.ask || candidate.ask.status === "queued")) {
+      if (candidate && doneCheckDue(item)) {
         const messageId = uuidFrom(["done-check", item.itemId, candidate.reason, candidate.at]);
         const outcome = await this.fleet.deliver({ messageId, to: item.sessionId as SessionId, text: doneCheckText(item),
           subject: "Coordinator Board · 완료 확인", from: { kind: "board" }, whenWorking: "refuse" });

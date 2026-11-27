@@ -122,6 +122,29 @@ test('verify sends work back twice; the third failure goes to a person as a deci
   expect(f.file().items[f.task.requestKey]).toMatchObject({ attempts: 0 })
 })
 
+test('the done check is asked once per phase entry, even when the session answers it without a report', async () => {
+  const f = setup()
+  await f.assign()
+  const checks = () => f.sent('[Coordinator Board · 완료 확인]')
+  const turn = async () => {
+    f.board.track([['launched-1', 'working']], [])
+    f.board.track([['launched-1', 'done']], [{ kind: 'turn-ended', session: 'launched-1' as never }])
+    await f.board.watchWork(await f.fleet.view({ maxAgeMs: 0 }))
+  }
+  await turn()
+  expect(checks()).toBe(1)
+  // The session answers the check in a turn of its own and does not report: no second check.
+  await turn()
+  await turn()
+  expect(checks()).toBe(1)
+  // A new phase entry (the coordinator sent the work back) may be asked once again.
+  await f.board.command('report', { kind: 'done', text: '끝났습니다.' }, 'launched-1')
+  await f.board.command('verify', { itemId: f.task.requestKey, result: 'fail', text: '다시' }, 'coord')
+  await turn()
+  await turn()
+  expect(checks()).toBe(2)
+})
+
 test('gone moves work only after a fresh read confirms it, the same check that guards the board\'s records', async () => {
   const f = setup()
   await f.assign()

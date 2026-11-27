@@ -25453,6 +25453,12 @@ var workItem = external_exports.object({
   /** How many times the coordinator's verify sent the work back, and the last reason it gave. */
   attempts: external_exports.number().int().nonnegative().optional(),
   failure: external_exports.object({ text: external_exports.string(), at: external_exports.number() }).optional(),
+  /**
+   * The phaseAt of the phase entry the board already asked its done check in. Answering the check is a turn of
+   * its own, which clears the candidate and leaves a new one; without this the board would ask again after every
+   * answer that is not a report. One check per phase entry, then the idle rule decides.
+   */
+  doneCheckFor: external_exports.number().optional(),
   history: external_exports.array(historyEntry)
 });
 var file3 = external_exports.object({ version: external_exports.literal(1), items: external_exports.record(external_exports.string(), workItem), settings: workSettings.optional() });
@@ -25554,7 +25560,11 @@ function reduceWorkItem(item, event) {
     case "asked":
       if (!item.candidate || item.candidate.reason !== event.candidate.reason || item.candidate.at !== event.candidate.at) return item;
       if (item.candidate.ask?.messageId === event.messageId && item.candidate.ask.status === event.status) return item;
-      return { ...item, candidate: { ...item.candidate, ask: { messageId: event.messageId, status: event.status, at: event.at } } };
+      return {
+        ...item,
+        candidate: { ...item.candidate, ask: { messageId: event.messageId, status: event.status, at: event.at } },
+        ...event.status === "sent" || event.status === "unconfirmed" ? { doneCheckFor: item.phaseAt } : {}
+      };
   }
 }
 function workItemView2(item) {
@@ -25708,6 +25718,7 @@ function uuidFrom(parts) {
   return [h.slice(0, 8), h.slice(8, 12), "4" + h.slice(13, 16), "8" + h.slice(17, 20), h.slice(20, 32)].join("-");
 }
 var statusOf = (outcome2) => outcome2.status === "delivered" ? "sent" : outcome2.status === "unconfirmed" ? "unconfirmed" : WAIT.includes(outcome2.reason) ? "queued" : "unavailable";
+var doneCheckDue = (item) => item.phase === "running" && !!item.candidate && (!item.candidate.ask || item.candidate.ask.status === "queued") && item.doneCheckFor !== item.phaseAt;
 var noticeKey = (item) => item.phase + "@" + item.phaseAt;
 function doneCheckText(item) {
   return [
@@ -25753,7 +25764,7 @@ var WorkNotices = class {
     for (const item of Object.values(this.items.read().items)) {
       if (!item.sessionId) continue;
       const candidate = item.candidate;
-      if (item.phase === "running" && candidate && (!candidate.ask || candidate.ask.status === "queued")) {
+      if (candidate && doneCheckDue(item)) {
         const messageId2 = uuidFrom(["done-check", item.itemId, candidate.reason, candidate.at]);
         const outcome3 = await this.fleet.deliver({
           messageId: messageId2,
