@@ -170,6 +170,13 @@ const shots = [
   ["note-reporting-dark-wide", "theme=dark" + press("진행", "#결제 대시보드 리팩터링 · 상세", "기록 추가", "보드 보고 켜기"), 1280, 900],
   ["note-conflict-light-wide", "theme=light&note=conflict" + press("진행", "#링크 검사 · 상세", "기록 편집", "저장"), 1280, 900],
   ["note-fail-dark-narrow", "theme=dark&note=fail" + press("진행", "#결제 대시보드 리팩터링 · 상세", "기록 추가", "@결정 요청=배포 시간을 정해 주세요", "저장"), 520, 1000],
+  // Plugin directory screenshots: 16:10 at 1600x1000 (1280x800 drawn at 1.25x), English board text.
+  ["listing-1-inbox-dark", "theme=dark&lang=en", 1280, 800, null, 1.25],
+  ["listing-2-focus-light", "theme=light&lang=en&view=focus", 1280, 800, null, 1.25],
+  ["listing-3-matrix-dark", "theme=dark&lang=en&view=matrix", 1280, 800, null, 1.25],
+  ["listing-4-ledger-light", "theme=light&lang=en&ledger=1&coord=1" + press("Set the preview cache", "A · 7 days", "Video"), 1280, 800, null, 1.25],
+  ["listing-5-merge-dark", "theme=dark&lang=en&ledger=1&coord=1" + press("Merge the install guide", "Merge on board"), 1280, 800, null, 1.25],
+  ["listing-6-reply-light", "theme=light&lang=en" + press("Raise payment webhook", "5 retries + 48h TTL"), 1280, 800, null, 1.25],
   ["ledger-merge-preview-en-dark-wide", "theme=dark&ledger=1&coord=1&lang=en" + press("설치 안내 이동", "Merge on board"), 1280, 1000],
 ];
 const only = process.argv[2] ? new RegExp(process.argv[2]) : null;
@@ -205,9 +212,9 @@ const sleep = ms => new Promise(done => setTimeout(done, ms));
 await send("Page.enable");
 mkdirSync("dev/shots", { recursive: true });
 try {
-  for (const [name, query, width, height, hover] of shots) {
+  for (const [name, query, width, height, hover, scale = 1] of shots) {
     if (only && !only.test(name)) continue;
-    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: scale, mobile: false });
     const load = loaded();
     await send("Page.navigate", { url: `${page}?${query}` });
     await load;

@@ -22,10 +22,18 @@ import { askDigest, requestWork, setProviderInclusion, setWorkerMode, updateRout
 import { setUsageRouting } from "../src/paseo/shared/usage-routing";
 import { requestRecommendation } from "../src/paseo/shared/recommendation";
 import { startCoordinator } from "../src/dashboard/rpc";
-import { coordinatorSession, fixtureLedger, fixtureOperations, fixtureSessionLinks, fixtureSnapshot } from "./fixture";
+import * as fixture from "./fixture";
+import { localize } from "./fixture-en";
 import { linkSession } from "../src/paseo/shared/session-links";
 
 const params = new URLSearchParams(location.search);
+// lang=en also swaps the invented board's own text, so English screenshots read in one language.
+const lang = <T>(value: T): T => params.get("lang") === "en" ? localize(value) : value;
+const fixtureSnapshot = () => lang(fixture.fixtureSnapshot());
+const fixtureLedger = () => lang(fixture.fixtureLedger());
+const fixtureOperations = () => lang(fixture.fixtureOperations());
+const fixtureSessionLinks = () => lang(fixture.fixtureSessionLinks());
+const coordinatorSession = lang(fixture.coordinatorSession);
 const theme = params.get("theme") === "dark" ? "dark" : "light";
 document.documentElement.classList.add(theme);
 
