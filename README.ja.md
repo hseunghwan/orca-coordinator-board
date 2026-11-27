@@ -14,7 +14,7 @@
 
 [English](README.md) · [한국어](README.ko.md) · **日本語** · [简体中文](README.zh-CN.md)
 
-<img src="assets/demo.gif" width="860" alt="デモ: Coordinator Board で保留中の判断に返答する様子">
+<img src="https://github.com/hseunghwan/orca-coordinator-board/releases/download/v0.7.2/demo.gif" width="860" alt="デモ: Coordinator Board で保留中の判断に返答する様子">
 
 </div>
 
@@ -39,11 +39,11 @@
 
 | Inbox | Focus |
 | --- | --- |
-| <img src="assets/screenshots/1-inbox-dark.png" alt="Inbox ビュー"> | <img src="assets/screenshots/2-focus-light.png" alt="Focus ビュー"> |
+| <img src="assets/screenshots/1-inbox-dark.webp" alt="Inbox ビュー"> | <img src="assets/screenshots/2-focus-light.webp" alt="Focus ビュー"> |
 | **Matrix** | **選択肢で返答** |
-| <img src="assets/screenshots/3-matrix-dark.png" alt="Matrix ビュー"> | <img src="assets/screenshots/6-reply-light.png" alt="返答カード"> |
+| <img src="assets/screenshots/3-matrix-dark.webp" alt="Matrix ビュー"> | <img src="assets/screenshots/6-reply-light.webp" alt="返答カード"> |
 | **判断レコード** | **ボードからマージ** |
-| <img src="assets/screenshots/4-ledger-light.png" alt="判断レコード"> | <img src="assets/screenshots/5-merge-dark.png" alt="マージレビュー"> |
+| <img src="assets/screenshots/4-ledger-light.webp" alt="判断レコード"> | <img src="assets/screenshots/5-merge-dark.webp" alt="マージレビュー"> |
 
 ## インストール
 

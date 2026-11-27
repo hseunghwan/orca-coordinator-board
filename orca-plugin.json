@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "coordinator-board",
   "name": "Coordinator Board",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Group agent sessions by project and answer the ones waiting for you, from a sidebar panel or a full-width dashboard tab.",
   "author": {
     "name": "hseunghwan",
@@ -13,16 +13,16 @@
   "license": "MIT",
   "icon": "assets/icon.png",
   "cover": {
-    "path": "assets/cover.png",
+    "path": "assets/cover.webp",
     "alt": "Coordinator Board: a focus view of one pending decision above a matrix of projects and session states."
   },
   "screenshots": [
-    { "path": "assets/screenshots/1-inbox-dark.png", "alt": "Inbox view listing decisions by urgency with the selected decision open on the right.", "caption": "Inbox: every session waiting on you, most urgent first", "theme": "dark" },
-    { "path": "assets/screenshots/2-focus-light.png", "alt": "Focus view showing a single overdue decision with a recommendation and a reply box.", "caption": "Focus: one decision at a time, with J/K/S shortcuts", "theme": "light" },
-    { "path": "assets/screenshots/3-matrix-dark.png", "alt": "Matrix view with a ribbon of decisions and a table of projects by session state.", "caption": "Matrix: projects against session states at a glance", "theme": "dark" },
-    { "path": "assets/screenshots/6-reply-light.png", "alt": "A reply card with option buttons that fill the reply, plus questions and answers below.", "caption": "Answer in place: options fill the reply, questions stay on the card", "theme": "light" },
-    { "path": "assets/screenshots/4-ledger-light.png", "alt": "A coordinator's decision record with single and multiple choice questions.", "caption": "Coordinator decision records with recommended options", "theme": "light" },
-    { "path": "assets/screenshots/5-merge-dark.png", "alt": "A merge review card showing branches, reviewed HEAD, checks and merge method buttons.", "caption": "Review and merge pull requests from the board", "theme": "dark" }
+    { "path": "assets/screenshots/1-inbox-dark.webp", "alt": "Inbox view listing decisions by urgency with the selected decision open on the right.", "caption": "Inbox: every session waiting on you, most urgent first", "theme": "dark" },
+    { "path": "assets/screenshots/2-focus-light.webp", "alt": "Focus view showing a single overdue decision with a recommendation and a reply box.", "caption": "Focus: one decision at a time, with J/K/S shortcuts", "theme": "light" },
+    { "path": "assets/screenshots/3-matrix-dark.webp", "alt": "Matrix view with a ribbon of decisions and a table of projects by session state.", "caption": "Matrix: projects against session states at a glance", "theme": "dark" },
+    { "path": "assets/screenshots/6-reply-light.webp", "alt": "A reply card with option buttons that fill the reply, plus questions and answers below.", "caption": "Answer in place: options fill the reply, questions stay on the card", "theme": "light" },
+    { "path": "assets/screenshots/4-ledger-light.webp", "alt": "A coordinator's decision record with single and multiple choice questions.", "caption": "Coordinator decision records with recommended options", "theme": "light" },
+    { "path": "assets/screenshots/5-merge-dark.webp", "alt": "A merge review card showing branches, reviewed HEAD, checks and merge method buttons.", "caption": "Review and merge pull requests from the board", "theme": "dark" }
   ],
   "engines": {
     "orca": ">=1.4.259"

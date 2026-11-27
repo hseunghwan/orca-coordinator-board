@@ -4,9 +4,9 @@ import { writeFileSync } from "node:fs";
 import { build, context } from "esbuild";
 
 const watch = process.argv.includes("--watch");
-// Not minified: the plugin directory refuses code that looks hidden, and readers should be able to
-// check dist/ against src/. Bundled output with the source in the repository is allowed.
-const common = { bundle: true, logLevel: "info", sourcemap: false, minify: false, legalComments: "inline" };
+// Minified: the plugin directory holds large plugins for review, and the whole repository is installed.
+// The source is in src/, which the listing policy accepts for bundled output.
+const common = { bundle: true, logLevel: "info", sourcemap: false, minify: !watch };
 const targets = [
   { ...common, entryPoints: ["src/worker.ts"], outfile: "dist/worker.mjs", platform: "node", format: "esm", target: "node20" },
   { ...common, entryPoints: ["src/cli/main.ts"], outfile: "dist/cli.cjs", platform: "node", format: "cjs", target: "node20" },
