@@ -14,7 +14,7 @@ An [Orca](https://github.com/stablyai/orca) plugin that groups your agent sessio
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
-<img src="assets/demo.gif" width="860" alt="Demo: answering pending agent decisions from the Coordinator Board">
+<img src="https://github.com/hseunghwan/orca-coordinator-board/releases/download/v0.7.2/demo.gif" width="860" alt="Demo: answering pending agent decisions from the Coordinator Board">
 
 </div>
 
@@ -39,11 +39,11 @@ Run five or ten coding agents at once and the bottleneck becomes you: one is ask
 
 | Inbox | Focus |
 | --- | --- |
-| <img src="assets/screenshots/1-inbox-dark.png" alt="Inbox view"> | <img src="assets/screenshots/2-focus-light.png" alt="Focus view"> |
+| <img src="assets/screenshots/1-inbox-dark.webp" alt="Inbox view"> | <img src="assets/screenshots/2-focus-light.webp" alt="Focus view"> |
 | **Matrix** | **Reply with options** |
-| <img src="assets/screenshots/3-matrix-dark.png" alt="Matrix view"> | <img src="assets/screenshots/6-reply-light.png" alt="Reply card"> |
+| <img src="assets/screenshots/3-matrix-dark.webp" alt="Matrix view"> | <img src="assets/screenshots/6-reply-light.webp" alt="Reply card"> |
 | **Decision records** | **Merge from the board** |
-| <img src="assets/screenshots/4-ledger-light.png" alt="Decision record"> | <img src="assets/screenshots/5-merge-dark.png" alt="Merge review"> |
+| <img src="assets/screenshots/4-ledger-light.webp" alt="Decision record"> | <img src="assets/screenshots/5-merge-dark.webp" alt="Merge review"> |
 
 ## Install
 

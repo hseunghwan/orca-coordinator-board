@@ -14,7 +14,7 @@
 
 [English](README.md) · **한국어** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
-<img src="assets/demo.gif" width="860" alt="데모: Coordinator Board에서 대기 중인 결정에 답하는 모습">
+<img src="https://github.com/hseunghwan/orca-coordinator-board/releases/download/v0.7.2/demo.gif" width="860" alt="데모: Coordinator Board에서 대기 중인 결정에 답하는 모습">
 
 </div>
 
@@ -39,11 +39,11 @@
 
 | 인박스 | 집중 |
 | --- | --- |
-| <img src="assets/screenshots/1-inbox-dark.png" alt="인박스 보기"> | <img src="assets/screenshots/2-focus-light.png" alt="집중 보기"> |
+| <img src="assets/screenshots/1-inbox-dark.webp" alt="인박스 보기"> | <img src="assets/screenshots/2-focus-light.webp" alt="집중 보기"> |
 | **매트릭스** | **선택지로 답장** |
-| <img src="assets/screenshots/3-matrix-dark.png" alt="매트릭스 보기"> | <img src="assets/screenshots/6-reply-light.png" alt="답장 카드"> |
+| <img src="assets/screenshots/3-matrix-dark.webp" alt="매트릭스 보기"> | <img src="assets/screenshots/6-reply-light.webp" alt="답장 카드"> |
 | **결정 기록** | **보드에서 병합** |
-| <img src="assets/screenshots/4-ledger-light.png" alt="결정 기록"> | <img src="assets/screenshots/5-merge-dark.png" alt="병합 검토"> |
+| <img src="assets/screenshots/4-ledger-light.webp" alt="결정 기록"> | <img src="assets/screenshots/5-merge-dark.webp" alt="병합 검토"> |
 
 ## 설치
 

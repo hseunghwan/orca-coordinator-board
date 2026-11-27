@@ -67,4 +67,4 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - 한국어 문서와 화면 문구에 em dash를 쓰지 않는다. 마침표, 쉼표, 쌍점, 괄호로 바꾼다.
 - 커밋 제목은 한국어 한 줄로, 명사형으로 끝낸다(예: "답장 카드의 최근 출력을 끝부분부터 표시").
 - 사용자에게 보이는 기능을 바꾸면 README 네 언어판을 함께 고치고 `orca-plugin.json`의 `version`을 올린다.
-- 플러그인 목록 이미지(`assets/icon.png`, `assets/cover.png`, `assets/screenshots/`)는 `orca-plugin.json`이 가리킨다. 스크린샷은 `node dev/shoot.mjs ^listing`(영어 예시 보드, 1600x1000)로 다시 찍어 옮긴다. 데모 GIF(`assets/demo.gif`)는 실제 Orca 화면을 녹화하되 실제 세션 이름, 경로, 계정이 보이지 않게 한다.
+- 플러그인 목록 이미지(`assets/icon.png`, `assets/cover.webp`, `assets/screenshots/*.webp`)는 `orca-plugin.json`이 가리킨다. 스크린샷은 `node dev/shoot.mjs ^listing`(영어 예시 보드, 1600x1000)로 다시 찍고 WEBP로 바꿔 옮긴다. 카탈로그 설치는 저장소 전체를 복사하고 목록은 큰 저장소를 검토로 보류하므로(v0.7.2 이후 약 6MB에서 `size` 보류, 4.97MB는 통과), 저장소를 5MB 아래로 두고 `dist/`는 압축한다. 데모 GIF는 저장소에 넣지 않고 Release 첨부 파일(`v0.7.2`의 `demo.gif`)로 두며, 실제 Orca 화면을 녹화하되 실제 세션 이름, 경로, 계정이 보이지 않게 한다.

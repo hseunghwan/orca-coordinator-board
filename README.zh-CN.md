@@ -14,7 +14,7 @@
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · **简体中文**
 
-<img src="assets/demo.gif" width="860" alt="演示：在 Coordinator Board 中回复待处理的决策">
+<img src="https://github.com/hseunghwan/orca-coordinator-board/releases/download/v0.7.2/demo.gif" width="860" alt="演示：在 Coordinator Board 中回复待处理的决策">
 
 </div>
 
@@ -39,11 +39,11 @@
 
 | Inbox | Focus |
 | --- | --- |
-| <img src="assets/screenshots/1-inbox-dark.png" alt="Inbox 视图"> | <img src="assets/screenshots/2-focus-light.png" alt="Focus 视图"> |
+| <img src="assets/screenshots/1-inbox-dark.webp" alt="Inbox 视图"> | <img src="assets/screenshots/2-focus-light.webp" alt="Focus 视图"> |
 | **Matrix** | **用选项回复** |
-| <img src="assets/screenshots/3-matrix-dark.png" alt="Matrix 视图"> | <img src="assets/screenshots/6-reply-light.png" alt="回复卡片"> |
+| <img src="assets/screenshots/3-matrix-dark.webp" alt="Matrix 视图"> | <img src="assets/screenshots/6-reply-light.webp" alt="回复卡片"> |
 | **决策记录** | **在看板上合并** |
-| <img src="assets/screenshots/4-ledger-light.png" alt="决策记录"> | <img src="assets/screenshots/5-merge-dark.png" alt="合并评审"> |
+| <img src="assets/screenshots/4-ledger-light.webp" alt="决策记录"> | <img src="assets/screenshots/5-merge-dark.webp" alt="合并评审"> |
 
 ## 安装
 
