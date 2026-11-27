@@ -5,6 +5,7 @@
 // lifecycle, merge and merge notices are ./prs.ts and ./merge-notifications.ts. Notes and the reporting
 // flag (./reporting.ts, as Orca has no agent metadata) are saved as Paseo saves them. The coordinator
 // home's project is never a project choice; its coordinator stays known as the board's coordinator.
+// board.focus-cards (Orca only) gives the sidebar panel the Focus queue as cards (../focus-cards.ts).
 import { join } from "node:path";
 import type { Fleet, PluginHandlerContext, PluginServerContext } from "../orca";
 import type { ReplyEntry } from "../paseo/shared/reply-history";
@@ -33,7 +34,8 @@ import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
 import { photoFiles } from "./photo-files";
 import { ProjectIcons } from "./project-icons";
 import { HostWatch } from "./hosts";
-import { boardHosts } from "../contract";
+import { boardHosts, focusCards as boardFocusCards } from "../contract";
+import { focusCards } from "../focus-cards";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
 import { canReceiveBoardInput } from "./discovery";
@@ -303,6 +305,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     if (input.fresh) fleet.invalidate();
     return reads.read(() => buildSnapshot(paseo), input.fresh);
   });
+  // Parsed as the dashboard parses board.snapshot, so both rank the same rows.
+  server.handle(boardFocusCards, async (_input, { paseo }) =>
+    focusCards(boardSnapshot.output.parse(await reads.read(() => buildSnapshot(paseo))), host.t()));
   server.handle(boardDecisionCount, async (_input, { paseo }) => ({
     count: await reads.count(() => buildSnapshot(paseo)),
   }));

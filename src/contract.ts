@@ -36,6 +36,39 @@ export const boardHosts = defineRpc({
   }),
 });
 
+/** The sidebar's focus queue: the dashboard's decision rows in Focus order, each drawn as one card the panel can answer. */
+const focusOption = z.object({ label: z.string(), reply: z.string() });
+export const focusAnswer = z.discriminatedUnion("kind", [
+  /** A session decision answered with board.send-decision; the recipient is the session itself. */
+  z.object({ kind: z.literal("reply"), projectId: z.string(), sessionId: z.string(), version: z.string(), suggested: z.string(), options: z.array(focusOption) }),
+  /** Paseo clears a pending permission when the session gets a message, so it is approved in the session. */
+  z.object({ kind: z.literal("permission") }),
+  /** Nothing to send from here: the session holds the question. */
+  z.object({ kind: z.literal("session") }),
+  /** A ledger record or pull request, answered on the board. */
+  z.object({ kind: z.literal("board") }),
+]);
+export const focusCard = z.object({
+  key: z.string(),
+  tone: z.enum(["danger", "warning", "success", "muted"]),
+  priority: z.string(),
+  projects: z.string(),
+  session: z.string().nullable(),
+  headline: z.string(),
+  body: z.string().nullable(),
+  recommendation: z.string().nullable(),
+  recommendationReason: z.string().nullable(),
+  openSessionId: z.string().nullable(),
+  answer: focusAnswer,
+});
+export const focusCards = defineRpc({
+  name: "board.focus-cards",
+  input: z.strictObject({}),
+  output: z.object({ configured: z.boolean(), incomplete: z.boolean(), cards: z.array(focusCard) }),
+});
+export type FocusCard = z.output<typeof focusCard>;
+export type FocusDeck = z.output<typeof focusCards.output>;
+
 export const startCoordinator = defineRpc({
   name: setupCoordinator.name,
   input: setupCoordinator.input.extend({ workspaceId: z.string().min(1).max(256).optional() }),

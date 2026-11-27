@@ -1,6 +1,7 @@
 // @ts-nocheck
 // Ported from paseo-coordinator-board test/merge-notifications.test.ts @ 2e9d128. Assertions are Paseo's; the
-// send is fleet.deliver, so provenance is the board sender instead of sourceAgentId, and a refused send stays queued.
+// send is fleet.deliver, so provenance is the board sender instead of sourceAgentId (mail from the board's terminal
+// to a chat, typed input under the board header to a terminal), and a refused send stays queued.
 import { afterEach, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,10 @@ import { TrackedDecisionStore } from "./tracked-decisions";
 import { PreferenceStore } from "../paseo/server/preferences";
 import { MergeNotifications } from "./merge-notifications";
 import type { PullMergeActivity } from "../paseo/shared/prs";
+import { createCli } from "../orca/cli";
+import { readMarked, readBoardHeader } from "../orca/conversation";
+import { fakeOrca } from "../orca/fixtures/fake-orca";
+import { createFleet } from "../orca";
 
 const paths:string[] = [];
 afterEach(()=>{for(const path of paths.splice(0)) rmSync(path,{recursive:true,force:true});});
@@ -118,4 +123,26 @@ test("PR target ownership uses the trusted matching project ledger, and ambiguou
   expect(store.mergeRecipient(target,"board")).toBeNull();
   config.partial = true;
   expect(store.mergeRecipient({...target,number:51},"board")).toBeNull();
+});
+
+test("through the real fleet a terminal owner gets the notice typed under the board header, and a chat owner gets board mail", async()=>{
+  for (const surface of ["terminal","chat"] as const) {
+    const path = mkdtempSync(join(tmpdir(),"coord-notify-fleet-")); paths.push(path);
+    const store = new PreferenceStore(join(path,"scope.json"));
+    store.change(s=>{s.projects=[target.projectId];s.coordinator="configured";});
+    const orca = fakeOrca([{id:"configured",surface,state:"done",updatedAt:1,project:target.projectId,...(surface==="terminal"?{handle:"term_c"}:{})}]);
+    const fleet = createFleet(createCli(orca.runner),Date.now,{dataDir:path,sleep:async()=>{},mailSender:async()=>"term_board"});
+    const notices = new MergeNotifications(store,()=>"configured",async()=>()=>true,fleet);
+    expect(await notices.confirmed(fleet.paseo,entry,notices.owner(target))).toEqual({status:"sent",recipientId:"configured"});
+    await notices.resume(fleet.paseo);
+    expect(orca.writes).toHaveLength(1);
+    const [verb,flag] = surface==="terminal" ? ["terminal send","--text"] : ["orchestration send","--from"];
+    expect(orca.writes[0].slice(0,2).join(" ")).toBe(verb);
+    if (surface==="terminal") {
+      const typed = readBoardHeader(readMarked(orca.writes[0][orca.writes[0].indexOf(flag)+1])!.body)!;
+      expect(typed.from).toBe("board");
+      expect(typed.body).toContain("https://github.com/team/sample/pull/27");
+      expect(orca.mailbox).toEqual([]);
+    } else expect(orca.writes[0][orca.writes[0].indexOf(flag)+1]).toBe("term_board");
+  }
 });

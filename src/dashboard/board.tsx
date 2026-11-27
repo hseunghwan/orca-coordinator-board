@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-// Paseo's BoardView (client/board.tsx): header, project filters, notices, settings and the classic stack,
-// and the decision entries every view places. A sent reply leaves an inline receipt in its row's place.
+// Paseo's BoardView (client/board.tsx): header, project filters, notices, the settings and setup page,
+// and the decision entries every view places. Orca's board has no classic view; the page below the views is settings. A sent reply leaves an inline receipt in its row's place.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { priorityLabel } from "../paseo/client/decision-priority";
 import { pullRowKey, recordRowKey, sessionRowKey, withReceiptPositions, type CompletedAction, type InlineReceipt } from "../paseo/client/decision-receipts";
@@ -52,7 +52,6 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   const [showError, setShowError] = useState(false);
   const [manage, setManage] = useState(false);
   const [pickSession, setPickSession] = useState(false);
-  const [digestLimit, setDigestLimit] = useState(5);
   const [inlineReceipts, setInlineReceipts] = useState<InlineReceipt[]>([]);
   const [receipts, setReceipts] = useState<DecisionReceipt[]>([]);
   const [historyOpen, setHistoryOpen] = useState<boolean | null>(null);
@@ -63,15 +62,13 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   const pickingProjects = !configured || (!settings && !snapshot?.coordinator);
   const coordinatorId = snapshot ? snapshot.coordinator : readiness?.coordinator ?? null;
   const operationsReady = !!snapshot || !!(readiness?.configured && readiness.coordinator && !settings);
-  const layoutMode = !settings && snapshot && configured ? view.mode : "classic";
+  const layoutMode = !settings && snapshot && configured ? view.mode : null;
 
   const rankedKeys = model?.ranked.map(row => row.key) ?? [];
   const { positions, onEditing } = useDecisionEditing(rankedKeys);
   const allKeys = keepEditingPositions(rankedKeys, positions);
-  const shownKeys = layoutMode === "classic" ? allKeys.slice(0, digestLimit) : allKeys;
-  const remaining = rankedKeys.length - shownKeys.length;
   const scopedReceipts = model ? inlineReceipts.filter(receipt => receipt.projectIds.some(id => model.byProject.has(id) && model.inFilter(id))) : [];
-  const orderedKeys = withReceiptPositions(shownKeys, scopedReceipts);
+  const orderedKeys = withReceiptPositions(allKeys, scopedReceipts);
   function remember(action: CompletedAction) {
     // The order is the one on screen when the person pressed send.
     setInlineReceipts(previous => previous.some(entry => entry.actionKey === action.actionKey && entry.rowKey === action.rowKey)
@@ -188,7 +185,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
 
   const rowsByKey = new Map(model?.ranked.map(row => [row.key, row]));
   const activeRows = new Map<string, ReactNode>();
-  shownKeys.forEach((key, position) => {
+  allKeys.forEach((key, position) => {
     const row = rowsByKey.get(key)!;
     const label = priorityLabel(row, t, now);
     const content = row.kind === "pull" ? renderPull(row.pr, row.pr.projectIds.find(id => model!.inFilter(id)) ?? row.pr.projectIds[0], true, false, false, key, row.pr.projectIds, label)
@@ -254,7 +251,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
     ? <ReplyHistory entries={filteredHistory} links={historyLinks} open={onOpen} expanded={showHistory} onToggle={() => setHistoryOpen(!showHistory)} />
     : null;
 
-  if (layoutMode !== "classic" && model) {
+  if (layoutMode && model) {
     const entries: DecisionEntry[] = orderedKeys.map(key => {
       const row = rowsByKey.get(key) ?? null;
       return { key, row, summary: row && decisionRowSummary(row, t), label: row && priorityLabel(row, t, now), card: activeRows.get(key) ?? null, receipts: receiptsFor(key) };
@@ -294,7 +291,6 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   return <div className="scroll" style={{ height: "100%", background: "var(--bg)" }}>
     <div style={{ ...column, gap: space[6], padding: pad }}>
       {header}
-      {filtersNode}
       {errorDetail}
       {settings && <BoardViewSetting view={view} />}
       {settings && <BoardLanguageSetting />}
@@ -328,18 +324,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
         {readiness.decisionTitles.map((title, index) => <p key={index} className="clamp2">{title}</p>)}
         <p className="muted">{t("세션과 PR 상태를 확인하고 있어요.", "Checking session and PR status…")}</p>
       </div>}
-      {!settings && model && configured && <div style={{ ...column, gap: compact ? space[3] : space[4] }}>
-        <h2 style={{ margin: 0, fontSize: fontSize.base, fontWeight: 500 }}>{filters.length ? t(`내 결정 · ${model.filteredTotal}건 / 전체 ${model.total}건`, `My decisions · ${model.filteredTotal} of ${model.total}`) : t(`내 결정 · ${model.total}건`, `My decisions · ${model.total}`)}</h2>
-        {noticesNode}
-        {orderedKeys.map(key => <article key={key} className="surface" style={{ ...column, gap: space[2], padding: compact ? space[3] : space[4], borderRadius: "var(--r-xl)" }}>
-          {receiptsFor(key).map(renderReceipt)}
-          {activeRows.get(key)}
-        </article>)}
-        {remaining > 0 && <div><Button label={t(`결정 ${remaining}건 더 보기`, `Show ${remaining} more decisions`)} onPress={() => setDigestLimit(model.total)} /></div>}
-      </div>}
-      {historyNode}
       {!settings && snapshot && !configured && !snapshot.projects.length && <p className="muted">{t("표시할 세션이 없습니다. 워크스페이스에서 세션을 시작하면 여기에 나타납니다.", "Start a session in a workspace to see it here.")}</p>}
-      {progressNode}
     </div>
   </div>;
 }
