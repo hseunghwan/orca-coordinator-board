@@ -205,6 +205,14 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   function observe(observation: Observation): void {
     const { state, signals } = reduceSignals(signalState, observation)
     signalState = state
+    // The same observation moves the work items: Orca state mirrors running and awaiting-input, turn-ended leaves a done candidate.
+    const states = observation.kind === 'status' ? [[observation.session, observation.state] as const]
+      : observation.kind === 'world' ? [...observation.world.sessions].map(([id, session]) => [id, session.state] as const) : []
+    try {
+      if (board.track(states, signals)) changed()
+    } catch (error) {
+      orca.log(`work item update failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
     for (const signal of signals) {
       void board.signal(signal).then(changed, (error: unknown) => orca.log(`queued reply check failed: ${error instanceof Error ? error.message : String(error)}`))
     }

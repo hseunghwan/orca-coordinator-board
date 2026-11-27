@@ -1,6 +1,6 @@
 {
   "name": "orca-coordinator-board",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "private": true,
   "description": "Orca plugin: group agent sessions by project and answer the ones waiting for you.",
   "license": "MIT",

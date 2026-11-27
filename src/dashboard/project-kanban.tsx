@@ -11,6 +11,8 @@ import type { ReplyEntry } from "../paseo/shared/reply-history";
 import type { TrackedDecision } from "../paseo/shared/tracked-decisions";
 import type { OpenSession } from "./board-layout";
 import { EditNote } from "./note-editor";
+import { workStatus } from "./board-model";
+import { WorkItemsContext } from "./work-items";
 import { ReplyCard } from "./reply-history";
 import { TrackedSessionChips, type TrackedSessionLinks } from "./tracked-session-chips";
 import { useWidth } from "./use-width";
@@ -33,6 +35,8 @@ export function CardView({ card, open, sessionHostLabel }: { card: Card; open: O
   const { t } = useBoardLanguage();
   const edit = useContext(EditNote);
   const { session, note } = card;
+  const item = useContext(WorkItemsContext).get(session.id);
+  const tracked = workStatus(item, card.lane, t);
   const fact = session.boardFact;
   const question = session.decision?.question;
   const displayedQuestion = session.decision?.source === "permission" && question ? sessionDetail(question, t)
@@ -51,6 +55,7 @@ export function CardView({ card, open, sessionHostLabel }: { card: Card; open: O
       </span>
       <span className="muted sm ellipsis" style={{ width: "100%" }}>
         {card.lane === "human" ? t("내 답을 기다리는 중", "Waiting for my decision")
+          : tracked ? tracked
           : session.detail ? sessionDetail(session.detail, t) : laneLabel(card.lane, t)}
       </span>
       {!!sessionHostLabel && <span className="muted sm">{t("실행 호스트", "Host")} · {sessionHostLabel}</span>}
@@ -65,6 +70,11 @@ export function CardView({ card, open, sessionHostLabel }: { card: Card; open: O
       <p className="muted sm">{[session.sourceProjectTitle && t(`원래 소속 ${session.sourceProjectTitle}`, `From ${session.sourceProjectTitle}`), session.workspaceTitle, runtime].filter(Boolean).join(" · ")}</p>
       {!!session.detail && !detailIsQuestion && <Markdown source={sessionDetail(session.detail, t)} muted />}
       {!!displayedQuestion && note?.text !== question && <Markdown source={displayedQuestion} />}
+      {item && <div style={{ ...column, gap: 3 }}>
+        <p className="muted sm">{t("작업", "Work")} · {item.title}{tracked ? " · " + tracked : ""}</p>
+        {item.doneMeans && <p className="muted sm">{t("완료 기준", "Done means")} · {item.doneMeans}</p>}
+        {item.report && note?.text !== item.report.text && <Markdown source={item.report.text} />}
+      </div>}
       {noteTitle && note && <div style={{ ...column, gap: 3 }}>
         <p className="muted sm">{noteTitle}</p>
         <Markdown source={note.text} />

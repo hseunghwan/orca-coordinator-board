@@ -74,3 +74,27 @@ export const startCoordinator = defineRpc({
   input: setupCoordinator.input.extend({ workspaceId: z.string().min(1).max(256).optional() }),
   output: setupCoordinator.output,
 });
+
+/**
+ * A unit of work the board tracks for one session, as Orca's orchestration tracks a worker: started by assign,
+ * linked to the session once it reports, moved by explicit reports and Orca state (src/server/work-items.ts).
+ * running: working or idle without a report. awaiting-input: blocked, waiting or asked a question.
+ * reported: the session said it is done (its own word, not yet checked). verifying, done: checked and
+ * confirmed (done only by a person or, later, the coordinator). stale: left without progress (later).
+ */
+export const workPhase = z.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale"]);
+export type WorkPhase = z.output<typeof workPhase>;
+/** A turn ended without a report: a hint that the work may be done, never the done itself. */
+export const workCandidate = z.object({ reason: z.literal("turn-ended"), at: z.number() });
+export const workItemView = z.object({
+  itemId: z.string(), phase: workPhase, phaseAt: z.number(), title: z.string(), doneMeans: z.string().nullable(),
+  candidate: workCandidate.optional(),
+  report: z.object({ text: z.string(), at: z.number() }).optional(),
+});
+export type WorkItemView = z.output<typeof workItemView>;
+/** The tracked work by session id, read beside board.snapshot (whose session rows are Paseo's). */
+export const boardWorkItems = defineRpc({
+  name: "board.work-items",
+  input: z.strictObject({}),
+  output: z.object({ items: z.record(z.string(), workItemView) }),
+});

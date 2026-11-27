@@ -14623,7 +14623,7 @@ var require_jsx_runtime = __commonJS({
 var import_client = __toESM(require_client());
 
 // src/dashboard/app.tsx
-var import_react28 = __toESM(require_react());
+var import_react29 = __toESM(require_react());
 
 // src/paseo/plugin-shim.ts
 var RPC_NAME = /^[a-z][a-z0-9._-]*$/;
@@ -35065,7 +35065,7 @@ var boardReadiness = defineRpc({
 });
 
 // src/dashboard/board.tsx
-var import_react27 = __toESM(require_react());
+var import_react28 = __toESM(require_react());
 
 // src/paseo/shared/decision-priority.ts
 var rank = { overdue: 0, now: 0, permission: 1, reply: 1, blocker: 1, today: 2, week: 3, scheduled: 4, undated: 5 };
@@ -36837,8 +36837,32 @@ function sortRecords(items) {
   return [...items].sort((a, b) => urgencyRank(a.urgency) - urgencyRank(b.urgency) || (a.where === "human" ? 0 : 1) - (b.where === "human" ? 0 : 1) || (a.since ?? "~").localeCompare(b.since ?? "~"));
 }
 var count = (list) => list.records.length + list.sessions.length + list.prs.length;
-function boardModel(snapshot, chosen, t, now = Date.now(), completed = /* @__PURE__ */ new Set()) {
+function workLane(lane, item) {
+  if (!item || lane === "human" || lane === "done") return lane;
+  if (item.phase === "done") return "done";
+  if (item.phase === "reported" || item.phase === "verifying") return "review";
+  if (item.phase === "running" && item.candidate && lane !== "running") return "review";
+  return lane;
+}
+var phaseText = {
+  running: ["\uC9C4\uD589 \uC911", "In progress"],
+  "awaiting-input": ["\uC785\uB825 \uB300\uAE30", "Waiting for input"],
+  reported: ["\uC644\uB8CC \uBCF4\uACE0\uB428 \xB7 \uD655\uC778 \uD544\uC694", "Reported done \xB7 Check it"],
+  verifying: ["\uAC80\uC99D \uC911", "Verifying"],
+  done: ["\uC644\uB8CC", "Done"],
+  stale: ["\uBC29\uCE58\uB428", "Stale"]
+};
+function workStatus(item, lane, t) {
+  if (!item || lane === "human") return null;
+  if (item.phase === "running" && item.candidate && lane !== "running") {
+    return t("\uC644\uB8CC \uD6C4\uBCF4 \xB7 \uD134\uC774 \uB05D\uB0AC\uC9C0\uB9CC \uC644\uB8CC \uBCF4\uACE0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4", "Done candidate \xB7 The turn ended without a done report");
+  }
+  const [ko, en] = phaseText[item.phase];
+  return t(ko, en);
+}
+function boardModel(snapshot, chosen, t, now = Date.now(), completed = /* @__PURE__ */ new Set(), work = /* @__PURE__ */ new Map()) {
   const { human, projects } = projectCards(snapshot);
+  for (const project2 of projects) for (const card of project2.cards) card.lane = workLane(card.lane, work.get(card.session.id));
   const pullRequests = snapshot.pullRequests;
   const readyPrs = pullRequests?.items.filter((pr) => pr.lane === "review") ?? [];
   const records = sortRecords(snapshot.trackedDecisions?.items ?? []);
@@ -36901,11 +36925,15 @@ function toggleFilter(previous, id4, listed) {
 var shownViewModes = boardViewModes.filter((mode) => mode !== "classic");
 var shownViewMode = (mode) => mode === "classic" ? "inbox" : mode;
 
+// src/dashboard/work-items.ts
+var import_react = __toESM(require_react());
+var WorkItemsContext = (0, import_react.createContext)(/* @__PURE__ */ new Map());
+
 // src/dashboard/clarification.tsx
-var import_react8 = __toESM(require_react());
+var import_react9 = __toESM(require_react());
 
 // src/dashboard/decision-editing.tsx
-var import_react = __toESM(require_react());
+var import_react2 = __toESM(require_react());
 
 // src/paseo/client/decision-edit-order.ts
 function keepEditingPositions(ranked, positions) {
@@ -36929,14 +36957,14 @@ function keepEditingPositions(ranked, positions) {
 
 // src/dashboard/decision-editing.tsx
 var import_jsx_runtime = __toESM(require_jsx_runtime());
-var Editing = (0, import_react.createContext)(null);
+var Editing = (0, import_react2.createContext)(null);
 function useDecisionEditing(rankedKeys) {
-  const [positions, setPositions] = (0, import_react.useState)(() => /* @__PURE__ */ new Map());
-  const ordered = (0, import_react.useRef)(rankedKeys);
-  (0, import_react.useLayoutEffect)(() => {
+  const [positions, setPositions] = (0, import_react2.useState)(() => /* @__PURE__ */ new Map());
+  const ordered = (0, import_react2.useRef)(rankedKeys);
+  (0, import_react2.useLayoutEffect)(() => {
     ordered.current = keepEditingPositions(rankedKeys, positions);
   }, [rankedKeys, positions]);
-  const onEditing = (0, import_react.useCallback)((rowKey, position, active) => {
+  const onEditing = (0, import_react2.useCallback)((rowKey, position, active) => {
     const order2 = ordered.current;
     if (active && order2[position] !== rowKey) position = order2.indexOf(rowKey);
     setPositions((previous) => {
@@ -36950,12 +36978,12 @@ function useDecisionEditing(rankedKeys) {
   return { positions, onEditing };
 }
 function DecisionEditingRow({ rowKey, position, onEditing, children }) {
-  const active = (0, import_react.useRef)(0);
-  const index = (0, import_react.useRef)(position);
-  (0, import_react.useLayoutEffect)(() => {
+  const active = (0, import_react2.useRef)(0);
+  const index = (0, import_react2.useRef)(position);
+  (0, import_react2.useLayoutEffect)(() => {
     index.current = position;
   }, [position]);
-  const register = (0, import_react.useCallback)(() => {
+  const register = (0, import_react2.useCallback)(() => {
     if (++active.current === 1) onEditing(rowKey, index.current, true);
     return () => {
       if (--active.current === 0) onEditing(rowKey, index.current, false);
@@ -36964,17 +36992,17 @@ function DecisionEditingRow({ rowKey, position, onEditing, children }) {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Editing.Provider, { value: register, children });
 }
 function useDecisionInteraction(hasDraft) {
-  const register = (0, import_react.useContext)(Editing);
-  const [focused, setFocused] = (0, import_react.useState)(false);
+  const register = (0, import_react2.useContext)(Editing);
+  const [focused, setFocused] = (0, import_react2.useState)(false);
   const active = focused || hasDraft;
-  (0, import_react.useLayoutEffect)(() => {
+  (0, import_react2.useLayoutEffect)(() => {
     if (active) return register?.();
   }, [active, register]);
   return { onFocus: () => setFocused(true), onBlur: () => setFocused(false) };
 }
 
 // src/dashboard/photo-composer.tsx
-var import_react5 = __toESM(require_react());
+var import_react6 = __toESM(require_react());
 
 // src/paseo/shared/usage-routing.ts
 var stamp = external_exports.string().nullable();
@@ -37294,7 +37322,7 @@ function isFileDrag(data) {
 }
 
 // src/dashboard/ui/controls.tsx
-var import_react2 = __toESM(require_react());
+var import_react3 = __toESM(require_react());
 
 // src/dashboard/ui/icons.tsx
 var import_jsx_runtime2 = __toESM(require_jsx_runtime());
@@ -37334,7 +37362,7 @@ var Loader = (props) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Icon, { ...
 
 // src/dashboard/ui/controls.tsx
 var import_jsx_runtime3 = __toESM(require_jsx_runtime());
-var ProjectIconSources = (0, import_react2.createContext)(/* @__PURE__ */ new Map());
+var ProjectIconSources = (0, import_react3.createContext)(/* @__PURE__ */ new Map());
 var space = { 0.5: 2, 1: 4, 1.5: 6, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 };
 var fontSize = { sm: 12, base: 14, content: 15, lg: 16 };
 var row = { display: "flex", flexDirection: "row", alignItems: "center", flexWrap: "wrap" };
@@ -37421,9 +37449,9 @@ function RunningMark({ label }) {
 }
 var iconColors = ["var(--link)", "var(--success)", "var(--warning)", "var(--destructive)"];
 function ProjectIcon({ name, projectId: projectId4 }) {
-  const sources = (0, import_react2.useContext)(ProjectIconSources);
+  const sources = (0, import_react3.useContext)(ProjectIconSources);
   const uri = sources.get(projectId4 ? "id:" + projectId4 : "name:" + name);
-  const [failed, setFailed] = (0, import_react2.useState)();
+  const [failed, setFailed] = (0, import_react3.useState)();
   if (uri && uri !== failed) return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("img", { className: "project-icon", alt: "", "aria-hidden": "true", src: uri, onError: () => setFailed(uri) });
   const color = iconColors[projectColorIndex(name, iconColors.length)];
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "project-icon", "aria-hidden": "true", style: { background: `color-mix(in oklab, ${color} 24%, transparent)` }, children: projectInitial(name) });
@@ -37464,21 +37492,21 @@ function Disclose({ label, accessibilityLabel, expanded, onPress }) {
 }
 
 // src/dashboard/ui/language.tsx
-var import_react4 = __toESM(require_react());
+var import_react5 = __toESM(require_react());
 
 // src/dashboard/device-setting.ts
-var import_react3 = __toESM(require_react());
+var import_react4 = __toESM(require_react());
 function deviceSettingKey(id4) {
   return "device-setting:" + id4;
 }
 function useDeviceSetting(definition) {
-  const [saved, setSaved] = (0, import_react3.useState)(null);
-  const [temporary, setTemporary] = (0, import_react3.useState)(null);
-  const [saving, setSaving] = (0, import_react3.useState)(false);
-  const [saveFailed, setSaveFailed] = (0, import_react3.useState)(false);
-  const [loadFailed, setLoadFailed] = (0, import_react3.useState)(false);
+  const [saved, setSaved] = (0, import_react4.useState)(null);
+  const [temporary, setTemporary] = (0, import_react4.useState)(null);
+  const [saving, setSaving] = (0, import_react4.useState)(false);
+  const [saveFailed, setSaveFailed] = (0, import_react4.useState)(false);
+  const [loadFailed, setLoadFailed] = (0, import_react4.useState)(false);
   const fallback = () => definition.schema.parse({});
-  const reload = (0, import_react3.useCallback)(async () => {
+  const reload = (0, import_react4.useCallback)(async () => {
     try {
       const stored = await orca.storage.get(deviceSettingKey(definition.id));
       const parsed = definition.schema.safeParse(stored ?? {});
@@ -37489,7 +37517,7 @@ function useDeviceSetting(definition) {
       setLoadFailed(true);
     }
   }, [definition]);
-  (0, import_react3.useEffect)(() => {
+  (0, import_react4.useEffect)(() => {
     void reload();
   }, [reload]);
   async function save(next) {
@@ -37526,17 +37554,17 @@ function usePreference() {
   const language = state.values.language;
   return { state, language, t: translators[language] };
 }
-var Context = (0, import_react4.createContext)(null);
+var Context = (0, import_react5.createContext)(null);
 function BoardLanguageProvider({ children }) {
   const preference = usePreference();
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Context.Provider, { value: preference, children });
 }
 function useBoardLanguage() {
-  const pref = (0, import_react4.useContext)(Context);
+  const pref = (0, import_react5.useContext)(Context);
   return pref ?? { language: "ko", t: translators.ko };
 }
 function BoardLanguageSetting() {
-  const pref = (0, import_react4.useContext)(Context);
+  const pref = (0, import_react5.useContext)(Context);
   if (!pref) return null;
   const { state, t, language } = pref;
   const save = async (value) => {
@@ -37565,14 +37593,14 @@ function BoardLanguageSetting() {
 // src/dashboard/photo-composer.tsx
 var import_jsx_runtime5 = __toESM(require_jsx_runtime());
 function usePhotoDraft() {
-  const [photos, setPhotos] = (0, import_react5.useState)([]);
-  const latest = (0, import_react5.useRef)([]);
-  const failed = (0, import_react5.useRef)(/* @__PURE__ */ new Map());
-  const [errors, setErrors] = (0, import_react5.useState)(failed.current);
-  const [inputScope, setInputScope] = (0, import_react5.useState)();
-  const [reading, setReading] = (0, import_react5.useState)(false);
-  const readPending = (0, import_react5.useRef)(false);
-  const sequence = (0, import_react5.useRef)(0);
+  const [photos, setPhotos] = (0, import_react6.useState)([]);
+  const latest = (0, import_react6.useRef)([]);
+  const failed = (0, import_react6.useRef)(/* @__PURE__ */ new Map());
+  const [errors, setErrors] = (0, import_react6.useState)(failed.current);
+  const [inputScope, setInputScope] = (0, import_react6.useState)();
+  const [reading, setReading] = (0, import_react6.useState)(false);
+  const readPending = (0, import_react6.useRef)(false);
+  const sequence = (0, import_react6.useRef)(0);
   function update(next) {
     latest.current = next;
     setPhotos(next);
@@ -37634,8 +37662,8 @@ function usePhotoDraft() {
 }
 function PhotoComposer({ children, disabled, draft, questionIndex, showHint }) {
   const { t } = useBoardLanguage();
-  const fileInput = (0, import_react5.useRef)(null);
-  const [dragging, setDragging] = (0, import_react5.useState)(false);
+  const fileInput = (0, import_react6.useRef)(null);
+  const [dragging, setDragging] = (0, import_react6.useState)(false);
   const locked = disabled || draft.reading;
   const photos = draft.photos.filter((photo) => photo.questionIndex === questionIndex);
   const attachLabel = t("\uCCA8\uBD80 \uD30C\uC77C \uCD94\uAC00", "Add attachment");
@@ -37821,6 +37849,22 @@ var startCoordinator = defineRpc({
   input: setupCoordinator.input.extend({ workspaceId: external_exports.string().min(1).max(256).optional() }),
   output: setupCoordinator.output
 });
+var workPhase = external_exports.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale"]);
+var workCandidate = external_exports.object({ reason: external_exports.literal("turn-ended"), at: external_exports.number() });
+var workItemView = external_exports.object({
+  itemId: external_exports.string(),
+  phase: workPhase,
+  phaseAt: external_exports.number(),
+  title: external_exports.string(),
+  doneMeans: external_exports.string().nullable(),
+  candidate: workCandidate.optional(),
+  report: external_exports.object({ text: external_exports.string(), at: external_exports.number() }).optional()
+});
+var boardWorkItems = defineRpc({
+  name: "board.work-items",
+  input: external_exports.strictObject({}),
+  output: external_exports.object({ items: external_exports.record(external_exports.string(), workItemView) })
+});
 
 // src/dashboard/rpc.ts
 var request = (name, input2) => orca.plugin.request.call(orca.plugin, name, input2);
@@ -37829,7 +37873,7 @@ async function call(contract, input2) {
 }
 
 // src/dashboard/send-input.tsx
-var import_react6 = __toESM(require_react());
+var import_react7 = __toESM(require_react());
 
 // src/paseo/client/send-shortcut.ts
 function sendModifier(platform) {
@@ -37852,11 +37896,11 @@ function SendTextInput({ send, className, ...props }) {
   } });
 }
 function SendButton({ send, ...props }) {
-  const hintId = (0, import_react6.useId)();
-  const [hovered, setHovered] = (0, import_react6.useState)(false);
-  const [focused, setFocused] = (0, import_react6.useState)(false);
+  const hintId = (0, import_react7.useId)();
+  const [hovered, setHovered] = (0, import_react7.useState)(false);
+  const [focused, setFocused] = (0, import_react7.useState)(false);
   const showHint = hovered || focused;
-  (0, import_react6.useEffect)(() => {
+  (0, import_react7.useEffect)(() => {
     if (!showHint) return;
     const dismiss = (event) => {
       if (event.key === "Escape") {
@@ -37884,7 +37928,7 @@ function SendButton({ send, ...props }) {
 }
 
 // src/dashboard/ui/markdown.tsx
-var import_react7 = __toESM(require_react());
+var import_react8 = __toESM(require_react());
 var import_jsx_runtime7 = __toESM(require_jsx_runtime());
 function openLink(href) {
   void orca.shell?.openExternal(href).catch(() => void 0);
@@ -37922,7 +37966,7 @@ function inline(tokens) {
   });
 }
 function Markdown({ source, preview = false, heading = false, muted = false }) {
-  const tokens = (0, import_react7.useMemo)(() => w.lex(source, { gfm: true, breaks: true }), [source]);
+  const tokens = (0, import_react8.useMemo)(() => w.lex(source, { gfm: true, breaks: true }), [source]);
   function paragraph(token, i, className = "", style2, title = false) {
     const isHeading = title || token.type === "heading";
     return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
@@ -37974,15 +38018,15 @@ var import_jsx_runtime8 = __toESM(require_jsx_runtime());
 function Clarification({ card, title, recipientId, recipientTitle, entries, prior = [], onRefresh, onDraftChange }) {
   const { t } = useBoardLanguage();
   const photos = usePhotoDraft();
-  const [expanded, setExpanded] = (0, import_react8.useState)(false);
-  const [draftTarget, setDraftTarget] = (0, import_react8.useState)("");
-  const [text2, setText] = (0, import_react8.useState)("");
-  const [busy, setBusy] = (0, import_react8.useState)(false);
-  const [error62, setError] = (0, import_react8.useState)(false);
-  const [sent, setSent] = (0, import_react8.useState)([]);
-  const [visibleCount, setVisibleCount] = (0, import_react8.useState)(3);
-  const sending = (0, import_react8.useRef)(false);
-  const retry = (0, import_react8.useRef)(noRetry);
+  const [expanded, setExpanded] = (0, import_react9.useState)(false);
+  const [draftTarget, setDraftTarget] = (0, import_react9.useState)("");
+  const [text2, setText] = (0, import_react9.useState)("");
+  const [busy, setBusy] = (0, import_react9.useState)(false);
+  const [error62, setError] = (0, import_react9.useState)(false);
+  const [sent, setSent] = (0, import_react9.useState)([]);
+  const [visibleCount, setVisibleCount] = (0, import_react9.useState)(3);
+  const sending = (0, import_react9.useRef)(false);
+  const retry = (0, import_react9.useRef)(noRetry);
   const label = (ko, en) => title + " \xB7 " + t(ko, en);
   const key = card ? clarificationKey(card) : "";
   const saved = entries.filter((entry) => entry.cardKey === key);
@@ -37991,7 +38035,7 @@ function Clarification({ card, title, recipientId, recipientTitle, entries, prio
   const hasDraft = !!text2.trim() || photos.photos.length > 0;
   const editing = hasDraft || photos.blocked || busy;
   const focus = useDecisionInteraction(expanded || editing);
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     onDraftChange?.(editing);
   }, [editing, onDraftChange]);
   const target2 = JSON.stringify([card, recipientId]);
@@ -38094,7 +38138,7 @@ function Clarification({ card, title, recipientId, recipientTitle, entries, prio
 }
 
 // src/dashboard/decision-actions.tsx
-var import_react10 = __toESM(require_react());
+var import_react11 = __toESM(require_react());
 
 // src/paseo/client/decision-reply-state.ts
 function isLongReply(text2) {
@@ -38122,11 +38166,11 @@ var requestRecommendation = defineRpc({
 });
 
 // src/dashboard/decision-reply.tsx
-var import_react9 = __toESM(require_react());
+var import_react10 = __toESM(require_react());
 var import_jsx_runtime9 = __toESM(require_jsx_runtime());
 function DecisionReplyInput({ send, value, onChangeText, accessibilityLabel, placeholder, maxLength, disabled, onFocus, onBlur, reviewRequired = false, onReview }) {
   const { t } = useBoardLanguage();
-  const [expanded, setExpanded] = (0, import_react9.useState)(false);
+  const [expanded, setExpanded] = (0, import_react10.useState)(false);
   const long = isLongReply(value);
   const showFull = long && expanded && !reviewRequired;
   const toggleLabel = showFull ? t("\uC785\uB825\uCC3D \uC811\uAE30", "Collapse editor") : t("\uB2F5\uC7A5 \uC804\uBB38 \uBCF4\uAE30", "View full reply");
@@ -38184,21 +38228,21 @@ function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle, open:
   const { t, language } = useBoardLanguage();
   const { session: session2 } = card;
   const decision = session2.decision;
-  const [showMethods, setShowMethods] = (0, import_react10.useState)(false);
-  const [reviewedReply, setReviewedReply] = (0, import_react10.useState)(null);
-  const [showEvidence, setShowEvidence] = (0, import_react10.useState)(false);
-  const [requestedFrom, setRequestedFrom] = (0, import_react10.useState)(null);
-  const recommendationKey = (0, import_react10.useRef)({ recipient: "", key: "" });
-  const [selection, setSelection] = (0, import_react10.useState)(null);
-  const [draft, setDraft] = (0, import_react10.useState)(null);
-  const [coordination, setCoordination] = (0, import_react10.useState)(null);
+  const [showMethods, setShowMethods] = (0, import_react11.useState)(false);
+  const [reviewedReply, setReviewedReply] = (0, import_react11.useState)(null);
+  const [showEvidence, setShowEvidence] = (0, import_react11.useState)(false);
+  const [requestedFrom, setRequestedFrom] = (0, import_react11.useState)(null);
+  const recommendationKey = (0, import_react11.useRef)({ recipient: "", key: "" });
+  const [selection, setSelection] = (0, import_react11.useState)(null);
+  const [draft, setDraft] = (0, import_react11.useState)(null);
+  const [coordination, setCoordination] = (0, import_react11.useState)(null);
   const replyPhotos = usePhotoDraft();
   const editorPhotos = usePhotoDraft();
-  const [busy, setBusy] = (0, import_react10.useState)(false);
-  const [error62, setError] = (0, import_react10.useState)(null);
-  const pending = (0, import_react10.useRef)(false);
-  const retry = (0, import_react10.useRef)(noRetry);
-  const delivered = (0, import_react10.useRef)("");
+  const [busy, setBusy] = (0, import_react11.useState)(false);
+  const [error62, setError] = (0, import_react11.useState)(null);
+  const pending = (0, import_react11.useRef)(false);
+  const retry = (0, import_react11.useRef)(noRetry);
+  const delivered = (0, import_react11.useRef)("");
   const chosen = selection === null ? null : decision?.options?.[selection];
   const proposed = chosen?.reply || (decision?.needsInput ? void 0 : decision?.recommendation);
   const reply = sessionReplyDraft(proposed, draft, reviewedReply, !!replyPhotos.photos.length);
@@ -38442,7 +38486,7 @@ function InlineDecisionReceipt({ receipt, onOpen, onDismiss }) {
 }
 
 // src/dashboard/operations.tsx
-var import_react15 = __toESM(require_react());
+var import_react16 = __toESM(require_react());
 
 // src/paseo/client/route-options.ts
 var koreanText = (ko) => ko;
@@ -38527,15 +38571,15 @@ function browseModels(data, grade, providerId, query, limit, t = koreanText, act
 }
 
 // src/dashboard/fact-reply-controls.tsx
-var import_react11 = __toESM(require_react());
+var import_react12 = __toESM(require_react());
 var import_jsx_runtime12 = __toESM(require_jsx_runtime());
 function FactReplyControls() {
   const { t } = useBoardLanguage();
-  const mounted = (0, import_react11.useRef)(false);
-  const pending = (0, import_react11.useRef)(false);
-  const [enabled, setEnabled] = (0, import_react11.useState)(null);
-  const [busy, setBusy] = (0, import_react11.useState)(true);
-  const [failed, setFailed] = (0, import_react11.useState)(false);
+  const mounted = (0, import_react12.useRef)(false);
+  const pending = (0, import_react12.useRef)(false);
+  const [enabled, setEnabled] = (0, import_react12.useState)(null);
+  const [busy, setBusy] = (0, import_react12.useState)(true);
+  const [failed, setFailed] = (0, import_react12.useState)(false);
   async function refresh(next) {
     if (pending.current) return;
     pending.current = true;
@@ -38554,7 +38598,7 @@ function FactReplyControls() {
       if (mounted.current) setBusy(false);
     }
   }
-  (0, import_react11.useEffect)(() => {
+  (0, import_react12.useEffect)(() => {
     mounted.current = true;
     void refresh();
     return () => {
@@ -38576,14 +38620,14 @@ function FactReplyControls() {
 }
 
 // src/dashboard/providers.tsx
-var import_react13 = __toESM(require_react());
+var import_react14 = __toESM(require_react());
 
 // src/dashboard/use-width.ts
-var import_react12 = __toESM(require_react());
+var import_react13 = __toESM(require_react());
 function useWidth() {
-  const ref = (0, import_react12.useRef)(null);
-  const [width, setWidth] = (0, import_react12.useState)(0);
-  (0, import_react12.useLayoutEffect)(() => {
+  const ref = (0, import_react13.useRef)(null);
+  const [width, setWidth] = (0, import_react13.useState)(0);
+  (0, import_react13.useLayoutEffect)(() => {
     const element = ref.current;
     if (!element) return;
     setWidth(element.getBoundingClientRect().width);
@@ -38613,7 +38657,7 @@ function roles(id4, catalog, t) {
 }
 function ProviderSettings({ providers, catalog, busy, change, overrides, setMode }) {
   const { t } = useBoardLanguage();
-  const [expanded, setExpanded] = (0, import_react13.useState)(true);
+  const [expanded, setExpanded] = (0, import_react14.useState)(true);
   const [ref, width] = useWidth();
   const columns = Math.max(1, Math.floor((width + 8) / 260));
   if (!providers.length) return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "muted", children: t("Orca\uAC00 \uC54C\uB824 \uC900 \uC2E4\uD589\uAE30\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. Orca\uC5D0\uC11C \uC5D0\uC774\uC804\uD2B8\uB97C \uC5F0\uACB0\uD55C \uB4A4 \uC0C8\uB85C \uACE0\uCCD0 \uC8FC\uC138\uC694.", "Orca reported no providers. Connect an agent in Orca, then refresh.") });
@@ -38659,7 +38703,7 @@ function ProviderSettings({ providers, catalog, busy, change, overrides, setMode
 }
 function WorkerPermissions({ provider, modes, selected, busy, save }) {
   const { t } = useBoardLanguage();
-  const [open2, setOpen] = (0, import_react13.useState)(false);
+  const [open2, setOpen] = (0, import_react14.useState)(false);
   const current = selected ?? recommendedWorkerMode(provider);
   const label = modes?.find((m) => m.id === current)?.label ?? current ?? t("\uC2E4\uD589\uAE30 \uAE30\uBCF8", "Provider default");
   return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { style: { ...column, gap: 5, alignItems: "flex-start" }, children: [
@@ -38685,7 +38729,7 @@ function WorkerPermissions({ provider, modes, selected, busy, save }) {
 }
 
 // src/dashboard/route-editor.tsx
-var import_react14 = __toESM(require_react());
+var import_react15 = __toESM(require_react());
 var import_jsx_runtime14 = __toESM(require_jsx_runtime());
 var wrap3 = { ...row, gap: 6 };
 function gradeName(grade, t) {
@@ -38697,7 +38741,7 @@ function routeName(route, t) {
 }
 function RouteEditor({ data, busy, save }) {
   const { t } = useBoardLanguage();
-  const [grade, setGrade] = (0, import_react14.useState)("C");
+  const [grade, setGrade] = (0, import_react15.useState)("C");
   return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: { ...column, gap: 8 }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { style: { fontWeight: 600 }, children: t("\uC791\uC5C5 \uB09C\uC774\uB3C4", "Task difficulty") }),
     /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: wrap3, children: workerGradeSchema.options.map((g2) => /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(Button, { size: "sm", label: gradeName(g2, t), selected: g2 === grade, onPress: () => setGrade(g2) }, g2)) }),
@@ -38711,11 +38755,11 @@ function RouteEditor({ data, busy, save }) {
 }
 function CandidateList({ data, busy, grade, save }) {
   const { t } = useBoardLanguage();
-  const [rows, setRows] = (0, import_react14.useState)(data.routing[grade] ?? []);
-  const [query, setQuery] = (0, import_react14.useState)("");
-  const [limit, setLimit] = (0, import_react14.useState)(6);
-  const [provider, setProvider] = (0, import_react14.useState)(null);
-  const [edit, setSelection] = (0, import_react14.useState)(null);
+  const [rows, setRows] = (0, import_react15.useState)(data.routing[grade] ?? []);
+  const [query, setQuery] = (0, import_react15.useState)("");
+  const [limit, setLimit] = (0, import_react15.useState)(6);
+  const [provider, setProvider] = (0, import_react15.useState)(null);
+  const [edit, setSelection] = (0, import_react15.useState)(null);
   const route = resolveRoute(grade, data.routing, data.catalog, false, data.usageRouting ? data.usage : void 0);
   const saved = data.routing[grade]?.length;
   const browser = browseModels(data, grade, provider, query, limit, t, route);
@@ -38922,20 +38966,20 @@ function Section({ title, children, aside }) {
 }
 function OperationsPanel({ settings, coordinator, configured, projects, refreshBoard, openCoordinator }) {
   const { t, language } = useBoardLanguage();
-  const [data, setData] = (0, import_react15.useState)(null);
-  const [loading, setLoading] = (0, import_react15.useState)(false);
-  const [busy, setBusy] = (0, import_react15.useState)(false);
-  const [feedback, setFeedback] = (0, import_react15.useState)(null);
-  const [text2, setText] = (0, import_react15.useState)("");
-  const [editorExpanded, setEditorExpanded] = (0, import_react15.useState)(false);
+  const [data, setData] = (0, import_react16.useState)(null);
+  const [loading, setLoading] = (0, import_react16.useState)(false);
+  const [busy, setBusy] = (0, import_react16.useState)(false);
+  const [feedback, setFeedback] = (0, import_react16.useState)(null);
+  const [text2, setText] = (0, import_react16.useState)("");
+  const [editorExpanded, setEditorExpanded] = (0, import_react16.useState)(false);
   const photoDraft = usePhotoDraft();
-  const [confirm, setConfirm] = (0, import_react15.useState)(false);
-  const [chosenWorkspace, setChosenWorkspace] = (0, import_react15.useState)(null);
-  const live = (0, import_react15.useRef)(false);
-  const pending = (0, import_react15.useRef)(false);
-  const generation = (0, import_react15.useRef)(0);
-  const delivery = (0, import_react15.useRef)({ work: noRetry, digest: noRetry });
-  const refresh = (0, import_react15.useCallback)(async (setup, clearError = true) => {
+  const [confirm, setConfirm] = (0, import_react16.useState)(false);
+  const [chosenWorkspace, setChosenWorkspace] = (0, import_react16.useState)(null);
+  const live = (0, import_react16.useRef)(false);
+  const pending = (0, import_react16.useRef)(false);
+  const generation = (0, import_react16.useRef)(0);
+  const delivery = (0, import_react16.useRef)({ work: noRetry, digest: noRetry });
+  const refresh = (0, import_react16.useCallback)(async (setup, clearError = true) => {
     const token = ++generation.current;
     setLoading(true);
     try {
@@ -38951,21 +38995,21 @@ function OperationsPanel({ settings, coordinator, configured, projects, refreshB
     }
   }, []);
   const needsModels = settings || configured && !coordinator;
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     live.current = true;
     return () => {
       live.current = false;
       generation.current++;
     };
   }, []);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     if (needsModels) void refresh(!settings);
   }, [needsModels, settings, refresh]);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     setConfirm(false);
     delivery.current = { work: noRetry, digest: noRetry };
   }, [coordinator]);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     setConfirm(false);
     setFeedback(null);
   }, [settings, language]);
@@ -39175,14 +39219,14 @@ function OperationsPanel({ settings, coordinator, configured, projects, refreshB
 }
 
 // src/dashboard/reply-history.tsx
-var import_react16 = __toESM(require_react());
+var import_react17 = __toESM(require_react());
 var import_jsx_runtime17 = __toESM(require_jsx_runtime());
 function LocalPhoto({ entryKey, index }) {
   const { t } = useBoardLanguage();
-  const [uri, setUri] = (0, import_react16.useState)(null);
-  const [failed, setFailed] = (0, import_react16.useState)(false);
-  const [attempt, setAttempt] = (0, import_react16.useState)(0);
-  (0, import_react16.useEffect)(() => {
+  const [uri, setUri] = (0, import_react17.useState)(null);
+  const [failed, setFailed] = (0, import_react17.useState)(false);
+  const [attempt, setAttempt] = (0, import_react17.useState)(0);
+  (0, import_react17.useEffect)(() => {
     let current = true;
     setFailed(false);
     setUri(null);
@@ -39225,9 +39269,9 @@ function SessionReference({ session: session2, state, open: open2 }) {
 }
 function ReplyCard({ entry, links, open: open2 }) {
   const { t, language } = useBoardLanguage();
-  const [full, setFull] = (0, import_react16.useState)(false);
-  const [showOrigin, setShowOrigin] = (0, import_react16.useState)(false);
-  const [photoIndex, setPhotoIndex] = (0, import_react16.useState)(null);
+  const [full, setFull] = (0, import_react17.useState)(false);
+  const [showOrigin, setShowOrigin] = (0, import_react17.useState)(false);
+  const [photoIndex, setPhotoIndex] = (0, import_react17.useState)(null);
   const origin = entry.origin;
   const long = [entry.answer, entry.response].some((text2) => text2 && (text2.length > 160 || text2.split("\n").length > 3));
   const merge2 = entry.pullMerge;
@@ -39283,7 +39327,7 @@ function ReplyCard({ entry, links, open: open2 }) {
 }
 function ReplyHistory({ entries, links, open: open2, expanded, onToggle }) {
   const { t } = useBoardLanguage();
-  const [limit, setLimit] = (0, import_react16.useState)(1);
+  const [limit, setLimit] = (0, import_react17.useState)(1);
   if (!entries.length) return null;
   return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(Disclosure, { expanded, onPress: onToggle, title: t(`\uCD5C\uADFC \uACB0\uC815 \uAE30\uB85D \xB7 ${entries.length}\uAC74`, `Recent decision activity \xB7 ${entries.length}`), children: [
     entries.slice(0, limit).map((entry) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(ReplyCard, { entry, links, open: open2 }, entry.key)),
@@ -39292,7 +39336,7 @@ function ReplyHistory({ entries, links, open: open2, expanded, onToggle }) {
 }
 
 // src/dashboard/project-kanban.tsx
-var import_react19 = __toESM(require_react());
+var import_react20 = __toESM(require_react());
 
 // src/paseo/client/lane-width.ts
 var MIN_WIDTH = 212;
@@ -39440,9 +39484,9 @@ function entryDisplay(entry, selected) {
 }
 
 // src/dashboard/note-editor.tsx
-var import_react17 = __toESM(require_react());
+var import_react18 = __toESM(require_react());
 var import_jsx_runtime18 = __toESM(require_jsx_runtime());
-var EditNote = (0, import_react17.createContext)(null);
+var EditNote = (0, import_react18.createContext)(null);
 function NoteEditor({ session: session2, note, onClose, onSave, onSetReporting }) {
   const { t } = useBoardLanguage();
   const notices = {
@@ -39452,15 +39496,15 @@ function NoteEditor({ session: session2, note, onClose, onSave, onSetReporting }
     save: t("\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.", "Could not save the note. Try again."),
     host: t("\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uC5F0\uACB0\uC744 \uD655\uC778\uD558\uACE0 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.", "Could not save the note. Check the connection and try again.")
   };
-  const dialog = (0, import_react17.useRef)(null);
-  const [kind, setKind] = (0, import_react17.useState)(note && note.kind !== "clear" ? note.kind : "question");
-  const [text2, setText] = (0, import_react17.useState)(note?.text ?? "");
-  const [evidenceId] = (0, import_react17.useState)(session2.evidenceId);
-  const [revision2, setRevision] = (0, import_react17.useState)(note?.revision ?? 0);
-  const [busy, setBusy] = (0, import_react17.useState)(false);
-  const [message3, setMessage] = (0, import_react17.useState)(null);
-  const submitting = (0, import_react17.useRef)(false);
-  (0, import_react17.useEffect)(() => {
+  const dialog = (0, import_react18.useRef)(null);
+  const [kind, setKind] = (0, import_react18.useState)(note && note.kind !== "clear" ? note.kind : "question");
+  const [text2, setText] = (0, import_react18.useState)(note?.text ?? "");
+  const [evidenceId] = (0, import_react18.useState)(session2.evidenceId);
+  const [revision2, setRevision] = (0, import_react18.useState)(note?.revision ?? 0);
+  const [busy, setBusy] = (0, import_react18.useState)(false);
+  const [message3, setMessage] = (0, import_react18.useState)(null);
+  const submitting = (0, import_react18.useRef)(false);
+  (0, import_react18.useEffect)(() => {
     const element = dialog.current;
     if (element && !element.open) element.showModal();
   }, []);
@@ -39564,14 +39608,14 @@ function NoteEditor({ session: session2, note, onClose, onSave, onSetReporting }
 }
 
 // src/dashboard/tracked-session-chips.tsx
-var import_react18 = __toESM(require_react());
+var import_react19 = __toESM(require_react());
 var import_jsx_runtime19 = __toESM(require_jsx_runtime());
 function VerifiedSessionChip({ verify, ...props }) {
   const { t } = useBoardLanguage();
-  const [state, setState] = (0, import_react18.useState)("ready");
-  const active = (0, import_react18.useRef)(true);
-  const pending = (0, import_react18.useRef)(false);
-  (0, import_react18.useEffect)(() => {
+  const [state, setState] = (0, import_react19.useState)("ready");
+  const active = (0, import_react19.useRef)(true);
+  const pending = (0, import_react19.useRef)(false);
+  (0, import_react19.useEffect)(() => {
     active.current = true;
     return () => {
       active.current = false;
@@ -39630,10 +39674,12 @@ function accent(lane) {
   return "var(--muted-fg)";
 }
 function CardView({ card, open: open2, sessionHostLabel }) {
-  const [expanded, setExpanded] = (0, import_react19.useState)(false);
+  const [expanded, setExpanded] = (0, import_react20.useState)(false);
   const { t } = useBoardLanguage();
-  const edit = (0, import_react19.useContext)(EditNote);
+  const edit = (0, import_react20.useContext)(EditNote);
   const { session: session2, note } = card;
+  const item = (0, import_react20.useContext)(WorkItemsContext).get(session2.id);
+  const tracked = workStatus(item, card.lane, t);
   const fact = session2.boardFact;
   const question = session2.decision?.question;
   const displayedQuestion = session2.decision?.source === "permission" && question ? sessionDetail(question, t) : session2.decision?.questionMarkdown ?? question;
@@ -39656,7 +39702,7 @@ function CardView({ card, open: open2, sessionHostLabel }) {
             /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { style: { fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: session2.title }),
             /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "muted", style: { display: "inline-flex" }, children: expanded ? /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ChevronUp, { size: 14 }) : /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ChevronDown, { size: 14 }) })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "muted sm ellipsis", style: { width: "100%" }, children: card.lane === "human" ? t("\uB0B4 \uB2F5\uC744 \uAE30\uB2E4\uB9AC\uB294 \uC911", "Waiting for my decision") : session2.detail ? sessionDetail(session2.detail, t) : laneLabel(card.lane, t) }),
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "muted sm ellipsis", style: { width: "100%" }, children: card.lane === "human" ? t("\uB0B4 \uB2F5\uC744 \uAE30\uB2E4\uB9AC\uB294 \uC911", "Waiting for my decision") : tracked ? tracked : session2.detail ? sessionDetail(session2.detail, t) : laneLabel(card.lane, t) }),
           !!sessionHostLabel && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "muted sm", children: [
             t("\uC2E4\uD589 \uD638\uC2A4\uD2B8", "Host"),
             " \xB7 ",
@@ -39682,6 +39728,20 @@ function CardView({ card, open: open2, sessionHostLabel }) {
       /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("p", { className: "muted sm", children: [session2.sourceProjectTitle && t(`\uC6D0\uB798 \uC18C\uC18D ${session2.sourceProjectTitle}`, `From ${session2.sourceProjectTitle}`), session2.workspaceTitle, runtime].filter(Boolean).join(" \xB7 ") }),
       !!session2.detail && !detailIsQuestion && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: sessionDetail(session2.detail, t), muted: true }),
       !!displayedQuestion && note?.text !== question && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: displayedQuestion }),
+      item && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...column, gap: 3 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("p", { className: "muted sm", children: [
+          t("\uC791\uC5C5", "Work"),
+          " \xB7 ",
+          item.title,
+          tracked ? " \xB7 " + tracked : ""
+        ] }),
+        item.doneMeans && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("p", { className: "muted sm", children: [
+          t("\uC644\uB8CC \uAE30\uC900", "Done means"),
+          " \xB7 ",
+          item.doneMeans
+        ] }),
+        item.report && note?.text !== item.report.text && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: item.report.text })
+      ] }),
       noteTitle && note && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...column, gap: 3 }, children: [
         /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("p", { className: "muted sm", children: noteTitle }),
         /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: note.text })
@@ -39699,9 +39759,9 @@ function CardView({ card, open: open2, sessionHostLabel }) {
   ] });
 }
 function RecordPreview({ item, render, links }) {
-  const [expanded, setExpanded] = (0, import_react19.useState)(false);
+  const [expanded, setExpanded] = (0, import_react20.useState)(false);
   const { t } = useBoardLanguage();
-  const title = (0, import_react19.useMemo)(() => plainDecisionTitle(item.title), [item.title]);
+  const title = (0, import_react20.useMemo)(() => plainDecisionTitle(item.title), [item.title]);
   return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...column, gap: 4 }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       Button,
@@ -39718,7 +39778,7 @@ function RecordPreview({ item, render, links }) {
 }
 function Column({ lane, entries }) {
   const { t } = useBoardLanguage();
-  const [limit, setLimit] = (0, import_react19.useState)(4);
+  const [limit, setLimit] = (0, import_react20.useState)(4);
   return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "surface", style: { ...column, padding: 8, borderRadius: "var(--r-md)", gap: 7 }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: 6 }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { style: { width: 7, height: 7, borderRadius: 9999, flex: "none", background: accent(lane) } }),
@@ -39758,7 +39818,7 @@ function Project({ projectId: projectId4, title, decisions, cards, records, hist
 }
 
 // src/dashboard/pull-requests.tsx
-var import_react20 = __toESM(require_react());
+var import_react21 = __toESM(require_react());
 var import_jsx_runtime21 = __toESM(require_jsx_runtime());
 var labels4 = {
   ready: ["\uBCD1\uD569 \uAC80\uD1A0 \uAC00\uB2A5", "Ready for merge review"],
@@ -39811,7 +39871,7 @@ function MergeFeedback({ notice }) {
 }
 function GitHubPullLink({ repo, number: number4 }) {
   const { t } = useBoardLanguage();
-  const [failed, setFailed] = (0, import_react20.useState)(false);
+  const [failed, setFailed] = (0, import_react21.useState)(false);
   const url2 = pullUrl(repo, number4);
   const label = repo + " #" + number4;
   function open2() {
@@ -39837,8 +39897,8 @@ function GitHubPullLink({ repo, number: number4 }) {
 }
 function TrackedPullStatus({ repo, number: number4, projectId: projectId4, securityGate }) {
   const { t } = useBoardLanguage();
-  const [state, setState] = (0, import_react20.useState)(null);
-  (0, import_react20.useEffect)(() => {
+  const [state, setState] = (0, import_react21.useState)(null);
+  (0, import_react21.useEffect)(() => {
     let active = true;
     let timer;
     setState(null);
@@ -39868,12 +39928,12 @@ function TrackedPullStatus({ repo, number: number4, projectId: projectId4, secur
 }
 function PullRequestCard({ pr, projectId: projectId4, decision = false, showDivider = true, securityGate = false, openCoordinator, workSessions, onResult, clarification, priorityLabel: priorityLabel2 }) {
   const { t } = useBoardLanguage();
-  const [preview, setPreview] = (0, import_react20.useState)(null);
-  const [method, setMethod] = (0, import_react20.useState)(null);
-  const [notice, setNotice] = (0, import_react20.useState)(null);
-  const [lookupError, setLookupError] = (0, import_react20.useState)(false);
-  const [busy, setBusy] = (0, import_react20.useState)(null);
-  const locked = (0, import_react20.useRef)(false);
+  const [preview, setPreview] = (0, import_react21.useState)(null);
+  const [method, setMethod] = (0, import_react21.useState)(null);
+  const [notice, setNotice] = (0, import_react21.useState)(null);
+  const [lookupError, setLookupError] = (0, import_react21.useState)(false);
+  const [busy, setBusy] = (0, import_react21.useState)(null);
+  const locked = (0, import_react21.useRef)(false);
   const target2 = pr.repo + " #" + pr.number;
   const named = (label) => ({ label, accessibilityLabel: target2 + " \xB7 " + label });
   const ready = !securityGate && !!projectId4 && pr.lane === "review" && pr.reason === "ready" && notice?.status !== "merged" && notice?.status !== "already-merged";
@@ -39976,7 +40036,7 @@ function PullRequestCard({ pr, projectId: projectId4, decision = false, showDivi
 }
 function PullRequestSettings({ view, names, refresh }) {
   const { t } = useBoardLanguage();
-  const [expanded, setExpanded] = (0, import_react20.useState)(false);
+  const [expanded, setExpanded] = (0, import_react21.useState)(false);
   return /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(Disclosure, { title: t("\uD504\uB85C\uC81D\uD2B8\uBCC4 GitHub \uC800\uC7A5\uC18C", "GitHub repositories by project"), expanded, onPress: () => setExpanded(!expanded), children: view.projects.map((project2) => /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
     RepositorySetting,
     {
@@ -39989,9 +40049,9 @@ function PullRequestSettings({ view, names, refresh }) {
 }
 function RepositorySetting({ project: project2, title, refresh }) {
   const { t } = useBoardLanguage();
-  const [repo, setText] = (0, import_react20.useState)(project2.repo ?? "");
-  const [pending, setPending] = (0, import_react20.useState)(false);
-  const [error62, setError] = (0, import_react20.useState)(false);
+  const [repo, setText] = (0, import_react21.useState)(project2.repo ?? "");
+  const [pending, setPending] = (0, import_react21.useState)(false);
+  const [error62, setError] = (0, import_react21.useState)(false);
   async function change(mode) {
     if (pending) return;
     setPending(true);
@@ -40036,7 +40096,7 @@ function RepositorySetting({ project: project2, title, refresh }) {
 }
 
 // src/dashboard/tracked-decisions.tsx
-var import_react21 = __toESM(require_react());
+var import_react22 = __toESM(require_react());
 var import_jsx_runtime22 = __toESM(require_jsx_runtime());
 var kinds = {
   check: ["\uD655\uC778", "Check"],
@@ -40071,22 +40131,22 @@ function TrackedDecisionCard(props) {
 function DecisionRecord({ item, links, recipientId, onResolved, children, pull: pull2, renderClarification, priorityLabel: priorityLabel2 }) {
   const { t } = useBoardLanguage();
   const queue = item.queuedReply;
-  const [expanded, setExpanded] = (0, import_react21.useState)(false);
-  const [confirming, setConfirming] = (0, import_react21.useState)(false);
-  const [confirmedOwner, setConfirmedOwner] = (0, import_react21.useState)(item.sourceCoordinatorId);
-  const [skipped, setSkipped] = (0, import_react21.useState)({});
-  const [editedReply, setEditedReply] = (0, import_react21.useState)(null);
-  const [typed, setTyped] = (0, import_react21.useState)({});
-  const [selected, setSelected] = (0, import_react21.useState)({});
-  const [result, setResult] = (0, import_react21.useState)(null);
-  (0, import_react21.useEffect)(() => {
+  const [expanded, setExpanded] = (0, import_react22.useState)(false);
+  const [confirming, setConfirming] = (0, import_react22.useState)(false);
+  const [confirmedOwner, setConfirmedOwner] = (0, import_react22.useState)(item.sourceCoordinatorId);
+  const [skipped, setSkipped] = (0, import_react22.useState)({});
+  const [editedReply, setEditedReply] = (0, import_react22.useState)(null);
+  const [typed, setTyped] = (0, import_react22.useState)({});
+  const [selected, setSelected] = (0, import_react22.useState)({});
+  const [result, setResult] = (0, import_react22.useState)(null);
+  (0, import_react22.useEffect)(() => {
     if (queue && result === "queued") setResult(null);
   }, [queue, result]);
-  const [refreshFailed, setRefreshFailed] = (0, import_react21.useState)(false);
-  const [busy, setBusy] = (0, import_react21.useState)(false);
-  const [hasQuestionDraft, setHasQuestionDraft] = (0, import_react21.useState)(false);
+  const [refreshFailed, setRefreshFailed] = (0, import_react22.useState)(false);
+  const [busy, setBusy] = (0, import_react22.useState)(false);
+  const [hasQuestionDraft, setHasQuestionDraft] = (0, import_react22.useState)(false);
   const attachments = usePhotoDraft();
-  const pending = (0, import_react21.useRef)(false);
+  const pending = (0, import_react22.useRef)(false);
   const [kindKo, kindEn] = kinds[item.kind];
   const isMerge = item.kind === "merge";
   const target2 = trackedPullTarget(item);
@@ -40426,7 +40486,7 @@ function DecisionRecord({ item, links, recipientId, onResolved, children, pull: 
 }
 
 // src/dashboard/session-links.tsx
-var import_react22 = __toESM(require_react());
+var import_react23 = __toESM(require_react());
 
 // src/paseo/shared/session-links.ts
 var projectId3 = external_exports.string().min(1).max(4096);
@@ -40461,16 +40521,16 @@ function projectName(project2, projects) {
 }
 function LinkPicker({ projects, onChange }) {
   const { t } = useBoardLanguage();
-  const generation = (0, import_react22.useRef)(0);
-  const sending = (0, import_react22.useRef)(false);
-  const [rows, setRows] = (0, import_react22.useState)([]);
-  const [query, setQuery] = (0, import_react22.useState)("");
-  const [limit, setLimit] = (0, import_react22.useState)(12);
-  const [chosen, setChosen] = (0, import_react22.useState)(null);
-  const [target2, setTarget] = (0, import_react22.useState)(null);
-  const [error62, setError] = (0, import_react22.useState)(null);
-  const [saved, setSaved] = (0, import_react22.useState)(null);
-  const [busy, setBusy] = (0, import_react22.useState)(true);
+  const generation = (0, import_react23.useRef)(0);
+  const sending = (0, import_react23.useRef)(false);
+  const [rows, setRows] = (0, import_react23.useState)([]);
+  const [query, setQuery] = (0, import_react23.useState)("");
+  const [limit, setLimit] = (0, import_react23.useState)(12);
+  const [chosen, setChosen] = (0, import_react23.useState)(null);
+  const [target2, setTarget] = (0, import_react23.useState)(null);
+  const [error62, setError] = (0, import_react23.useState)(null);
+  const [saved, setSaved] = (0, import_react23.useState)(null);
+  const [busy, setBusy] = (0, import_react23.useState)(true);
   const load = async () => {
     const seq = ++generation.current;
     setBusy(true);
@@ -40487,7 +40547,7 @@ function LinkPicker({ projects, onChange }) {
       if (generation.current === seq) setBusy(false);
     }
   };
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     void load();
     return () => {
       generation.current++;
@@ -40620,7 +40680,7 @@ function LinkPicker({ projects, onChange }) {
 }
 function SessionLinks(props) {
   const { t } = useBoardLanguage();
-  const [opened, setOpened] = (0, import_react22.useState)(false);
+  const [opened, setOpened] = (0, import_react23.useState)(false);
   return /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(Disclosure, { title: t("\uB2E4\uB978 \uD504\uB85C\uC81D\uD2B8\uC758 \uC138\uC158 \uD558\uB098 \uC5F0\uACB0", "Link a session from another project"), expanded: opened, onPress: () => setOpened(!opened), children: /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(LinkPicker, { ...props }) });
 }
 
@@ -40707,7 +40767,7 @@ function BoardViewSetting({ view }) {
 }
 
 // src/dashboard/hosts.tsx
-var import_react23 = __toESM(require_react());
+var import_react24 = __toESM(require_react());
 var import_jsx_runtime26 = __toESM(require_jsx_runtime());
 var statusText = {
   online: ["\uC5F0\uACB0\uB428", "Online"],
@@ -40728,9 +40788,9 @@ var tone = {
 var unsupported = (error62) => /unknown[_ ]method|no handler|not (?:registered|found)/i.test(error62 instanceof Error ? error62.message : String(error62));
 function BoardHosts() {
   const { t } = useBoardLanguage();
-  const [hosts, setHosts] = (0, import_react23.useState)(null);
-  const [state, setState] = (0, import_react23.useState)("loading");
-  const generation = (0, import_react23.useRef)(0);
+  const [hosts, setHosts] = (0, import_react24.useState)(null);
+  const [state, setState] = (0, import_react24.useState)("loading");
+  const generation = (0, import_react24.useRef)(0);
   async function load() {
     const seq = ++generation.current;
     setState("loading");
@@ -40744,7 +40804,7 @@ function BoardHosts() {
       if (seq === generation.current) setState(unsupported(error62) ? "unsupported" : "error");
     }
   }
-  (0, import_react23.useEffect)(() => {
+  (0, import_react24.useEffect)(() => {
     void load();
     return () => {
       generation.current++;
@@ -40776,7 +40836,7 @@ function BoardHosts() {
 }
 
 // src/dashboard/view-inbox.tsx
-var import_react24 = __toESM(require_react());
+var import_react25 = __toESM(require_react());
 
 // src/paseo/client/inbox.ts
 var inboxNarrowWidth = 600;
@@ -40895,16 +40955,16 @@ function InboxListRow({ row: item, projectNames: projectNames2, selected, onPres
 }
 function InboxView({ compact, entries, renderReceipt, slots, projects }) {
   const { t } = useBoardLanguage();
-  const [tab, setTab] = (0, import_react24.useState)("decisions");
+  const [tab, setTab] = (0, import_react25.useState)("decisions");
   const [box, width] = useWidth();
-  const [requesting, setRequesting] = (0, import_react24.useState)(false);
-  const [detailOpen, setDetailOpen] = (0, import_react24.useState)(false);
-  const [chosen, setChosen] = (0, import_react24.useState)(null);
+  const [requesting, setRequesting] = (0, import_react25.useState)(false);
+  const [detailOpen, setDetailOpen] = (0, import_react25.useState)(false);
+  const [chosen, setChosen] = (0, import_react25.useState)(null);
   const sections = inboxSections(entries);
   const order2 = inboxOrder(sections);
-  const lastOrder = (0, import_react24.useRef)(order2);
+  const lastOrder = (0, import_react25.useRef)(order2);
   const selected = keepSelection(lastOrder.current, order2, chosen);
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     lastOrder.current = order2;
     if (selected !== chosen) setChosen(selected);
   });
@@ -40913,18 +40973,18 @@ function InboxView({ compact, entries, renderReceipt, slots, projects }) {
   const showDetail = narrow && detailOpen && !!selectedEntry;
   const pad = compact ? space[3] : space[6];
   const now = Date.now();
-  const detail = (0, import_react24.useRef)(null);
-  (0, import_react24.useEffect)(() => {
+  const detail = (0, import_react25.useRef)(null);
+  (0, import_react25.useEffect)(() => {
     detail.current?.scrollTo({ top: 0 });
   }, [selected]);
-  const step = (0, import_react24.useRef)((_delta) => {
+  const step = (0, import_react25.useRef)((_delta) => {
   });
   step.current = (delta) => {
     const next = stepSelection(order2, selected, delta);
     if (next !== null) setChosen(next);
   };
   const listening = tab === "decisions";
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     if (!listening) return;
     const onKey = (event) => {
       const delta = inboxKeyStep(event, event.target);
@@ -41028,7 +41088,7 @@ function InboxView({ compact, entries, renderReceipt, slots, projects }) {
 }
 
 // src/dashboard/view-focus.tsx
-var import_react25 = __toESM(require_react());
+var import_react26 = __toESM(require_react());
 
 // src/paseo/client/focus-queue.ts
 var isActive = (entry) => entry.row !== null;
@@ -41117,18 +41177,18 @@ function FocusView(props) {
   const [box, width] = useWidth();
   const narrow = compact || width > 0 && width < 600;
   const pad = narrow ? space[3] : space[6];
-  const [deferred, setDeferred] = (0, import_react25.useState)([]);
-  const [chosen, setChosen] = (0, import_react25.useState)(null);
-  const lastQueue = (0, import_react25.useRef)([]);
+  const [deferred, setDeferred] = (0, import_react26.useState)([]);
+  const [chosen, setChosen] = (0, import_react26.useState)(null);
+  const lastQueue = (0, import_react26.useRef)([]);
   const rail = focusRail(entries, deferred);
   const queue = rail.filter((entry) => entry.row !== null).map((entry) => entry.key);
   const current = resolveFocus(chosen, lastQueue.current, queue);
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     lastQueue.current = queue;
     if (current !== chosen) setChosen(current);
   });
-  const [operationsOpen, setOperationsOpen] = (0, import_react25.useState)(false);
-  const [progressOpen, setProgressOpen] = (0, import_react25.useState)(false);
+  const [operationsOpen, setOperationsOpen] = (0, import_react26.useState)(false);
+  const [progressOpen, setProgressOpen] = (0, import_react26.useState)(false);
   const index = current === null ? -1 : queue.indexOf(current);
   const act = (action) => {
     if (action === "next") setChosen(stepFocus(queue, current, 1));
@@ -41139,9 +41199,9 @@ function FocusView(props) {
       setChosen(result.current);
     }
   };
-  const latest = (0, import_react25.useRef)(act);
+  const latest = (0, import_react26.useRef)(act);
   latest.current = act;
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     const onKey = (event) => {
       const target2 = event.target instanceof HTMLElement ? event.target : null;
       const action = focusKeyAction({
@@ -41285,16 +41345,16 @@ function ActivityStrip({ props, pad, open: open2, onToggle, t }) {
 }
 
 // src/dashboard/view-matrix.tsx
-var import_react26 = __toESM(require_react());
+var import_react27 = __toESM(require_react());
 var import_jsx_runtime29 = __toESM(require_jsx_runtime());
 function MatrixView(props) {
   const { compact, entries, renderReceipt, slots, projects } = props;
   const { t } = useBoardLanguage();
   const [box, width] = useWidth();
-  const [operations2, setOperations] = (0, import_react26.useState)({ open: false, mounted: false });
-  const [progress, setProgress] = (0, import_react26.useState)({ open: false, mounted: false });
-  const [cell, setCell] = (0, import_react26.useState)(null);
-  const [opened, setOpened] = (0, import_react26.useState)([]);
+  const [operations2, setOperations] = (0, import_react27.useState)({ open: false, mounted: false });
+  const [progress, setProgress] = (0, import_react27.useState)({ open: false, mounted: false });
+  const [cell, setCell] = (0, import_react27.useState)(null);
+  const [opened, setOpened] = (0, import_react27.useState)([]);
   const narrow = isNarrow(compact, width);
   const rows = matrixRows({ ...projects, peers: [] }, t("\uACF5\uD1B5", "Host-wide"));
   const mounted = liveCells(opened, rows);
@@ -41339,7 +41399,7 @@ function Hideable({ hidden, style: style2, children }) {
 }
 function DecisionRibbon({ entries, renderReceipt, name }) {
   const { t } = useBoardLanguage();
-  const [selected, setSelected] = (0, import_react26.useState)(null);
+  const [selected, setSelected] = (0, import_react27.useState)(null);
   const active = ribbonEntries(entries);
   return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(SectionLabel, { count: active.length, children: t("\uB0B4 \uACB0\uC815", "My decisions") }),
@@ -41462,7 +41522,7 @@ function WideMatrix({ rows, projects, cell, mounted, onCell, wide }) {
 }
 function NarrowMatrix({ rows, projects, cell, mounted, onCell }) {
   const { t } = useBoardLanguage();
-  const [open2, setOpen] = (0, import_react26.useState)(/* @__PURE__ */ new Set());
+  const [open2, setOpen] = (0, import_react27.useState)(/* @__PURE__ */ new Set());
   const toggle = (key) => setOpen((current) => {
     const next = new Set(current);
     if (!next.delete(key)) next.add(key);
@@ -41515,17 +41575,18 @@ var import_jsx_runtime30 = __toESM(require_jsx_runtime());
 function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, loading, updatedAt, changing, onRefresh, onProject, onCoordinator, onOpen }) {
   const { t, language } = useBoardLanguage();
   const view = useBoardViewMode();
-  const [chosenProjects, setChosenProjects] = (0, import_react27.useState)([]);
-  const [settings, setSettings] = (0, import_react27.useState)(false);
-  const [showError, setShowError] = (0, import_react27.useState)(false);
-  const [manage, setManage] = (0, import_react27.useState)(false);
-  const [pickSession, setPickSession] = (0, import_react27.useState)(false);
-  const [inlineReceipts, setInlineReceipts] = (0, import_react27.useState)([]);
-  const [receipts, setReceipts] = (0, import_react27.useState)([]);
-  const [historyOpen, setHistoryOpen] = (0, import_react27.useState)(null);
+  const [chosenProjects, setChosenProjects] = (0, import_react28.useState)([]);
+  const [settings, setSettings] = (0, import_react28.useState)(false);
+  const [showError, setShowError] = (0, import_react28.useState)(false);
+  const [manage, setManage] = (0, import_react28.useState)(false);
+  const [pickSession, setPickSession] = (0, import_react28.useState)(false);
+  const [inlineReceipts, setInlineReceipts] = (0, import_react28.useState)([]);
+  const [receipts, setReceipts] = (0, import_react28.useState)([]);
+  const [historyOpen, setHistoryOpen] = (0, import_react28.useState)(null);
   const now = Date.now();
   const completed = new Set(inlineReceipts.map((receipt) => receipt.actionKey));
-  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed) : null;
+  const work = (0, import_react28.useContext)(WorkItemsContext);
+  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed, work) : null;
   const configured = model ? model.configured : readiness?.configured;
   const pickingProjects = !configured || !settings && !snapshot?.coordinator;
   const coordinatorId = snapshot ? snapshot.coordinator : readiness?.coordinator ?? null;
@@ -41540,10 +41601,10 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
     setInlineReceipts((previous) => previous.some((entry) => entry.actionKey === action.actionKey && entry.rowKey === action.rowKey) ? previous : [...previous, { ...action, order: orderedKeys }]);
   }
   const matches = (receipt, card) => receipt.projectId === card.session.projectId && receipt.sessionId === card.session.id && receipt.version === card.session.decision?.version;
-  const historyRepos = (0, import_react27.useMemo)(() => new Map(snapshot?.pullRequests?.projects.flatMap((project2) => project2.repo && project2.mode !== "off" ? [[project2.projectId, project2.repo]] : []) ?? []), [snapshot?.pullRequests?.projects]);
+  const historyRepos = (0, import_react28.useMemo)(() => new Map(snapshot?.pullRequests?.projects.flatMap((project2) => project2.repo && project2.mode !== "off" ? [[project2.projectId, project2.repo]] : []) ?? []), [snapshot?.pullRequests?.projects]);
   const historyLinks = (entry) => historySessionLinks(entry, { sessions: snapshot?.sessions ?? [], peers: [], repos: historyRepos });
-  const [mergeNotice, setMergeNotice] = (0, import_react27.useState)(null);
-  (0, import_react27.useEffect)(() => {
+  const [mergeNotice, setMergeNotice] = (0, import_react28.useState)(null);
+  (0, import_react28.useEffect)(() => {
     const stored = new Map(snapshot?.replyHistory?.flatMap((entry) => entry.pullMerge?.status === "merged" && entry.pullMerge.notification ? [[JSON.stringify([entry.projectId, pullRowKey(entry.pullMerge)]), entry.pullMerge.notification]] : []));
     if (!stored.size) return;
     setInlineReceipts((previous) => {
@@ -41956,8 +42017,8 @@ var POLL_MS = 3e4;
 var message2 = (error62) => error62 instanceof Error ? error62.message : String(error62);
 function useCompact() {
   const narrow = () => window.innerWidth < 600;
-  const [compact, setCompact] = (0, import_react28.useState)(narrow);
-  (0, import_react28.useEffect)(() => {
+  const [compact, setCompact] = (0, import_react29.useState)(narrow);
+  (0, import_react29.useEffect)(() => {
     const onResize = () => setCompact(narrow());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -41967,26 +42028,31 @@ function useCompact() {
 function HostBoard() {
   const { t } = useBoardLanguage();
   const compact = useCompact();
-  const latest = (0, import_react28.useRef)(0);
-  const pending = (0, import_react28.useRef)(false);
-  const active = (0, import_react28.useRef)(false);
-  const [snapshot, setSnapshot] = (0, import_react28.useState)(null);
-  const [readiness, setReadiness] = (0, import_react28.useState)(null);
-  const [error62, setError] = (0, import_react28.useState)(null);
-  const [actionError, setActionError] = (0, import_react28.useState)(null);
-  const [loading, setLoading] = (0, import_react28.useState)(true);
-  const [updatedAt, setUpdatedAt] = (0, import_react28.useState)(null);
-  const [changing, setChanging] = (0, import_react28.useState)(false);
-  const [editing, setEditing] = (0, import_react28.useState)(null);
-  const refresh = (0, import_react28.useCallback)(async (reason) => {
+  const latest = (0, import_react29.useRef)(0);
+  const pending = (0, import_react29.useRef)(false);
+  const active = (0, import_react29.useRef)(false);
+  const [snapshot, setSnapshot] = (0, import_react29.useState)(null);
+  const [work, setWork] = (0, import_react29.useState)(/* @__PURE__ */ new Map());
+  const [readiness, setReadiness] = (0, import_react29.useState)(null);
+  const [error62, setError] = (0, import_react29.useState)(null);
+  const [actionError, setActionError] = (0, import_react29.useState)(null);
+  const [loading, setLoading] = (0, import_react29.useState)(true);
+  const [updatedAt, setUpdatedAt] = (0, import_react29.useState)(null);
+  const [changing, setChanging] = (0, import_react29.useState)(false);
+  const [editing, setEditing] = (0, import_react29.useState)(null);
+  const refresh = (0, import_react29.useCallback)(async (reason) => {
     if (!active.current || pending.current && reason === "poll") return;
     const request2 = ++latest.current;
     pending.current = true;
     if (reason === "manual") setLoading(true);
     try {
-      const next = await call(boardSnapshot, reason === "manual" ? { fresh: true } : {});
+      const [next, tracked] = await Promise.all([
+        call(boardSnapshot, reason === "manual" ? { fresh: true } : {}),
+        call(boardWorkItems, {}).catch(() => null)
+      ]);
       if (active.current && request2 === latest.current) {
         setSnapshot(next);
+        setWork(new Map(Object.entries(tracked?.items ?? {})));
         setError(null);
         setUpdatedAt(/* @__PURE__ */ new Date());
       }
@@ -41999,7 +42065,7 @@ function HostBoard() {
       }
     }
   }, []);
-  (0, import_react28.useEffect)(() => {
+  (0, import_react29.useEffect)(() => {
     active.current = true;
     void refresh("changed");
     const initial = latest.current;
@@ -42037,9 +42103,9 @@ function HostBoard() {
       if (!result.opened) setActionError(t("\uC138\uC158\uC744 \uC5F4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uC138\uC158\uC774 \uC544\uC9C1 \uC788\uB294\uC9C0 \uD655\uC778\uD574 \uC8FC\uC138\uC694.", "Could not open the session. Check that it still exists."));
     }).catch((e) => setActionError(message2(e)));
   }
-  const icons = (0, import_react28.useMemo)(() => projectIconSources(snapshot?.projects ?? []), [snapshot?.projects]);
+  const icons = (0, import_react29.useMemo)(() => projectIconSources(snapshot?.projects ?? []), [snapshot?.projects]);
   const session2 = editing ? snapshot?.sessions.find((row2) => row2.id === editing) : void 0;
-  return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(ProjectIconSources.Provider, { value: icons, children: /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(EditNote.Provider, { value: setEditing, children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(WorkItemsContext.Provider, { value: work, children: /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(ProjectIconSources.Provider, { value: icons, children: /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(EditNote.Provider, { value: setEditing, children: [
     /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
       BoardView,
       {
@@ -42076,7 +42142,7 @@ function HostBoard() {
       },
       session2.id
     )
-  ] }) });
+  ] }) }) });
 }
 function App() {
   return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(BoardLanguageProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(HostBoard, {}) });

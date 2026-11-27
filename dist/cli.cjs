@@ -72,7 +72,7 @@ var USAGE = [
   "                                            session's recent turns and evidenceId",
   "  classify --session <id> --evidence <id> --kind question|review|idle --text-file <path|->",
   "                                            record a judgment on the session's card (content via --input-file)",
-  "  report --kind question|review --text-file <path|->",
+  "  report --kind question|review|done --text-file <path|->",
   "                                            post a question or a result on your own card",
   "  fact --cycle <cycleId> --session <id> --evidence <id>",
   "                                            during a digest that names a cycle, answer a board fact for that session",

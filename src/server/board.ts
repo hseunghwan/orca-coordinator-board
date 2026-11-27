@@ -34,12 +34,14 @@ import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
 import { photoFiles } from "./photo-files";
 import { ProjectIcons } from "./project-icons";
 import { HostWatch } from "./hosts";
-import { boardHosts, focusCards as boardFocusCards } from "../contract";
+import { boardHosts, boardWorkItems, focusCards as boardFocusCards } from "../contract";
+import { WorkItemStore, workItemView, type WorkEvent } from "./work-items";
 import { focusCards } from "../focus-cards";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
 import { canReceiveBoardInput } from "./discovery";
 import type { Signal } from "../orca/signals";
+import type { OrcaState } from "../orca/view";
 import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operations";
 import { cliPath } from "../channel/hook";
 import { translator } from "../i18n";
@@ -72,9 +74,17 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const hosts = new HostWatch(fleet.cli, () => fleet.view());
   server.handle(boardHosts, () => hosts.read(host.t()));
   const workers = new WorkerJournal(join(dataDir, "workers.json"));
+  const items = new WorkItemStore(join(dataDir, "work-items.json"));
+  const work = {
+    view: (sessionId: string) => { const item = items.bySession().get(sessionId); return item && workItemView(item); },
+    reported: (sessionId: string, report: { kind: "question" | "review" | "done"; text: string }) => {
+      items.apply([[sessionId, { kind: "report", report: report.kind, text: report.text, at: Date.now() }]]);
+    },
+  };
+  server.handle(boardWorkItems, async () => ({ items: Object.fromEntries([...items.bySession()].map(([id, item]) => [id, workItemView(item)])) }));
   const reporting = new ReportingStore(join(dataDir, "reporting.json"), id => workers.worker(id)?.reports === true);
   const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()),
-    ...dispatchCommands(prefs, { fleet, journal: workers, bin: host.bin }) }, id => reporting.enabled(id));
+    ...dispatchCommands(prefs, { fleet, journal: workers, items, bin: host.bin }) }, id => reporting.enabled(id), work);
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
@@ -223,6 +233,8 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     }
     const outcome = notes.update(input);
     if (outcome.ok) invalidateCount();
+    // A person's done is the one confirmation the board takes for now (the coordinator's verify comes later).
+    if (outcome.ok && input.kind === "done") items.apply([[input.sessionId, { kind: "confirmed", at: Date.now() }]]);
     return outcome;
   });
   server.handle(setReporting, async ({ sessionId, enabled }, { paseo }) => {
@@ -348,6 +360,16 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       if (signal.kind === "gone") await resumeReplies({ paseo: fleet.paseo }, signal.session);
       else await recipientAvailable(signal.session);
     },
+    /**
+     * Moves the work items by what Orca reported: each session's state, and a turn that ended without a report
+     * as a done candidate (./work-items.ts). True when an item changed.
+     */
+    track(states: readonly (readonly [string, OrcaState])[], signals: readonly Signal[]): boolean {
+      const at = Date.now();
+      const events: [string, WorkEvent][] = states.map(([id, state]) => [id, { kind: "state", state, at }]);
+      for (const signal of signals) if (signal.kind === "turn-ended") events.push([signal.session, { kind: "turn-ended", at }]);
+      return items.apply(events);
+    },
     /** Retries every queue; the poll's catch-all for transitions no event reported. */
     async resumeWaiting(): Promise<boolean> {
       const merges = Object.values(prefs.read().pullMergeHistory).some(entry => entry.pullMerge.notification?.status === "queued");
@@ -366,7 +388,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     /** Names the started coordinator and workers once their terminals report a session. */
     async adoptCoordinator() {
       const coordinator = await lifecycle.adopt();
-      return workers.adopt(await fleet.view()) || coordinator;
+      const adopted = workers.adopt(await fleet.view());
+      const linked = items.link(Object.values(workers.read().launches).flatMap(l => l.sessionId ? [[l.requestKey, l.sessionId] as const] : []));
+      return adopted || linked || coordinator;
     },
     /** Paseo's metadata of a worker the coordinator started through the board. */
     worker: (sessionId: string) => workers.worker(sessionId),

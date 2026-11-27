@@ -44,7 +44,7 @@ function setup() {
   const task: DispatchInput = { projectId: 'acme', workspaceId: 'acme::/w/acme', grade: 'C', requestKey: 'request-dispatch-01',
     title: '문서 교정', prompt: '오탈자를 확인해 줘.', expectedRoute: sol }
   const launches = () => orca.writes.filter(w => w[0] === 'agent' && w[1] === 'launch')
-  return { orca, fleet, board, prefs, caller, shell, deps, state, task, launches, journal }
+  return { orca, fleet, board, prefs, caller, shell, deps, state, task, launches, journal, handlers }
 }
 
 test('read marks the calling session as itself, so a coordinator does not take another running session for itself', async () => {
@@ -159,4 +159,37 @@ test('a worker whose terminal has not reported yet is named on the board\'s next
   expect(f.board.worker('launched-1')).toMatchObject({ parent: 'coord', grade: 'C' })
   expect(await dispatchWorker(f.deps, f.caller, f.task, () => f.state)).toMatchObject({ sessionId: 'launched-1' })
   expect(f.launches()).toHaveLength(1)
+})
+
+test('assign opens a work item with what done means; a turn end is only a candidate, the report moves it to reported, and a person confirms done', async () => {
+  const f = setup()
+  type Items = { items: Record<string, { phase: string; doneMeans: string | null; candidate?: unknown; report?: { text: string } }> }
+  const workItems = async () => (await f.handlers.get('board.work-items')!({}) as Items).items
+  const doneMeans = '오탈자 수정 커밋이 있고 테스트가 통과한다.'
+  await f.board.command('assign', { job: { ...f.task, doneMeans } }, 'coord', f.caller)
+  const [args] = f.launches()
+  expect(args[args.indexOf('--prompt') + 1].endsWith(workerNote('/plugin/bin', doneMeans))).toBe(true)
+  expect(workerNote('/plugin/bin', doneMeans)).toContain('완료 기준: ' + doneMeans)
+  expect((await workItems())['launched-1']).toMatchObject({ phase: 'running', doneMeans })
+
+  // Orca's state and the turn-ended signal never decide done.
+  expect(f.board.track([['launched-1', 'working']], [])).toBe(false)
+  expect(f.board.track([['launched-1', 'done']], [{ kind: 'turn-ended', session: 'launched-1' as never }])).toBe(true)
+  expect((await workItems())['launched-1']).toMatchObject({ phase: 'running', candidate: { reason: 'turn-ended' } })
+  const listing = JSON.parse((await f.board.command('read', {}, 'coord')).text) as { id: string; work?: unknown }[]
+  expect(listing.find(r => r.id === 'launched-1')?.work).toEqual({ itemId: f.task.requestKey, phase: 'running', doneMeans, candidate: 'turn-ended' })
+
+  await f.board.command('report', { kind: 'done', text: '수정했고 테스트가 통과했습니다.' }, 'launched-1')
+  expect((await workItems())['launched-1']).toMatchObject({ phase: 'reported', report: { text: '수정했고 테스트가 통과했습니다.' } })
+  expect((await workItems())['launched-1'].candidate).toBeUndefined()
+
+  await f.handlers.get('board.save-note')!({ sessionId: 'launched-1', kind: 'done', text: '확인함', expectedRevision: 1 })
+  expect((await workItems())['launched-1'].phase).toBe('done')
+})
+
+test('a session with no work item is left alone, and a coordinator report moves no work item', async () => {
+  const f = setup()
+  expect(f.board.track([['coord', 'waiting']], [{ kind: 'turn-ended', session: 'coord' as never }])).toBe(false)
+  await f.board.command('report', { kind: 'done', text: 'Done.' }, 'coord')
+  expect(await f.handlers.get('board.work-items')!({})).toEqual({ items: {} })
 })

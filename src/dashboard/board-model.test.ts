@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import type { Snapshot } from "../paseo/client/model";
 import { trackedDecisionSchema } from "../paseo/shared/tracked-decisions";
 import { sessionRowKey } from "../paseo/client/decision-receipts";
-import { boardModel, shownViewMode, shownViewModes, toggleFilter } from "./board-model";
+import { boardModel, shownViewMode, shownViewModes, toggleFilter, workLane, workStatus } from "./board-model";
 
 const NOW = Date.parse("2026-11-26T12:00:00Z");
 const t = (ko: string) => ko;
@@ -96,3 +96,23 @@ test("the board offers inbox, focus and matrix, and a saved classic view opens t
   expect(shownViewMode("classic")).toBe("inbox");
   expect(shownViewMode("matrix")).toBe("matrix");
 });
+
+test('a tracked session work phase places its card before the lane, but never hides a decision or a person done', () => {
+  const view = (phase: 'running' | 'reported' | 'done' | 'awaiting-input', candidate = false) =>
+    ({ itemId: 'r', phase, phaseAt: 1, title: 'w', doneMeans: null, ...(candidate && { candidate: { reason: 'turn-ended' as const, at: 2 } }) })
+  expect(workLane('idle', undefined)).toBe('idle')
+  expect(workLane('idle', view('reported'))).toBe('review')
+  expect(workLane('idle', view('done'))).toBe('done')
+  expect(workLane('idle', view('running', true))).toBe('review')
+  expect(workLane('running', view('running', true))).toBe('running')
+  expect(workLane('human', view('done'))).toBe('human')
+  expect(workLane('done', view('running'))).toBe('done')
+  expect(workStatus(view('reported'), 'review', t)).toBe('완료 보고됨 · 확인 필요')
+  expect(workStatus(view('running', true), 'review', t)).toContain('완료 후보')
+  expect(workStatus(view('done'), 'human', t)).toBeNull()
+
+  const shown = boardModel(snapshot(), [], t, NOW, new Set(), new Map([['busy', view('reported')], ['needs-permission', view('done')]]))
+  const cards = shown.visibleProjects.flatMap(project => project.cards)
+  expect(cards.find(card => card.session.id === 'busy')?.lane).toBe('review')
+  expect(cards.find(card => card.session.id === 'needs-permission')?.lane).toBe('human')
+})

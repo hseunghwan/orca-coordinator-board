@@ -21,6 +21,7 @@ import type { PreferenceStore } from "../paseo/server/preferences";
 import { readAccountUsage, readDirectory } from "./catalog";
 import { managedRowsForCoordinator, tool, type Tool } from "./coordinator";
 import { isCurrentMembership } from "./session-links";
+import type { WorkItemStore } from "./work-items";
 
 type DispatchScope = { projects: string[]; routing: RoutePolicy; coordinator: string | null; excludedProviders: string[]; usageRouting?: boolean; workerModeOverrides?: Record<string, string> };
 
@@ -122,18 +123,24 @@ export function managedWorkspaces(world: World, projects: readonly string[]): Wo
 const uncertain = "이전 작업자 실행 결과를 확인하지 못했습니다. 두 개가 뜨지 않게 같은 요청으로는 다시 띄우지 않습니다. 워크스페이스의 터미널을 확인한 뒤 필요하면 새 requestKey로 배정하세요.";
 
 /** bin: the plugin's bin folder, named in the worker's prompt for its report command. */
-export type DispatchDeps = { fleet: Pick<Fleet, "view" | "cli" | "invalidate">; journal: WorkerJournal; bin?: string; sleep?: (ms: number) => Promise<void> };
+/** items: the work item each assign opens (./work-items.ts), linked to the worker once it reports. */
+export type DispatchDeps = { fleet: Pick<Fleet, "view" | "cli" | "invalidate">; journal: WorkerJournal; items?: WorkItemStore; bin?: string; sleep?: (ms: number) => Promise<void> };
 
 /** What the board adds under the coordinator's prompt: a board worker reports on its own card (Paseo's report_to_board). */
-export const workerNote = (bin: string) =>
-  "보드에 결정할 일이나 확인할 결과를 보고할 때는 절대 경로로 `" + cliCommand(bin) + " report --kind question --text-file -`(확인할 결과는 `--kind review`)를 실행하고 글은 표준 입력으로 넘기세요. " + CLI_PATH_NOTE;
+export const workerNote = (bin: string, doneMeans?: string | null) =>
+  (doneMeans ? "완료 기준: " + doneMeans + "\n" : "") +
+  "보드에 결정할 일이나 확인할 결과를 보고할 때는 절대 경로로 `" + cliCommand(bin) + " report --kind question --text-file -`(확인할 결과는 `--kind review`)를 실행하고 글은 표준 입력으로 넘기세요. " +
+  "맡은 일을 완료 기준까지 끝냈으면 마지막에 `--kind done`으로 한 번 보고하세요. 글에는 한 일, 산출물(PR, 파일), 검증 근거를 적습니다. " + CLI_PATH_NOTE;
 
-export async function dispatchWorker(deps: DispatchDeps, caller: OrcaCli | null | undefined, request: DispatchInput, getScope: () => DispatchScope) {
+/** assign's job: Paseo's dispatch input and what done means for the work, kept on the board's work item. */
+export const assignJobSchema = dispatchInputSchema.extend({ doneMeans: z.string().trim().min(1).max(2000).optional() });
+
+export async function dispatchWorker(deps: DispatchDeps, caller: OrcaCli | null | undefined, request: DispatchInput, getScope: () => DispatchScope, doneMeans: string | null = null) {
   const input = dispatchInputSchema.parse(request);
-  return deps.journal.serial(input.requestKey, () => dispatchOnce(deps, caller, input, getScope));
+  return deps.journal.serial(input.requestKey, () => dispatchOnce(deps, caller, input, getScope, doneMeans));
 }
 
-async function dispatchOnce(deps: DispatchDeps, caller: OrcaCli | null | undefined, input: DispatchInput, getScope: () => DispatchScope) {
+async function dispatchOnce(deps: DispatchDeps, caller: OrcaCli | null | undefined, input: DispatchInput, getScope: () => DispatchScope, doneMeans: string | null) {
   const scopeForProject = () => {
     const state = getScope();
     if (typeof state.coordinator !== "string" || !state.coordinator) throw new Error("현재 기기의 코디네이터를 먼저 지정해 주세요.");
@@ -197,10 +204,11 @@ async function dispatchOnce(deps: DispatchDeps, caller: OrcaCli | null | undefin
         if (j.launches[input.requestKey]) throw new Error("같은 요청을 이미 실행하고 있습니다. 결과를 확인한 뒤 다시 실행하세요.");
         j.launches[input.requestKey] = fresh;
       });
+      deps.items?.create({ itemId: input.requestKey, projectId: input.projectId, workspaceId: target.id, title: input.title, doneMeans });
     }
     const outcome = await launchAgent(caller, {
       agent: route.provider, worktree: target.id, model: route.model, effort: route.effort,
-      prompt: launchMarker(launch.launchId) + "\n" + input.prompt + (deps.bin ? "\n\n" + workerNote(deps.bin) : ""), retryLaunch: launch.operationId,
+      prompt: launchMarker(launch.launchId) + "\n" + input.prompt + (deps.bin ? "\n\n" + workerNote(deps.bin, deps.items?.read().items[input.requestKey]?.doneMeans ?? doneMeans) : ""), retryLaunch: launch.operationId,
     });
     if (outcome.kind === "refused") {
       deps.journal.change(j => { delete j.launches[input.requestKey]; });
@@ -221,6 +229,7 @@ async function dispatchOnce(deps: DispatchDeps, caller: OrcaCli | null | undefin
     const session = sessionOf(await deps.fleet.view({ maxAgeMs: 0 }), launch.handle!);
     if (session) {
       deps.journal.change(j => settle(j, input.requestKey, session.id));
+      deps.items?.link([[input.requestKey, session.id]]);
       return result(session.id, launch.handle);
     }
     await sleep(ADOPT_WAIT_MS);
@@ -259,13 +268,13 @@ export function dispatchCommands(store: PreferenceStore, deps: DispatchDeps): { 
     });
     return { text: JSON.stringify({ projects, workspaces: managedWorkspaces(world, first.projects).filter(w => selected(w.projectId)), sessions, routes }) };
   });
-  const assign = tool("coordinator", z.strictObject({ job: dispatchInputSchema }), async ({ job }, { paseo, agent, caller }) => {
+  const assign = tool("coordinator", z.strictObject({ job: assignJobSchema }), async ({ job: { doneMeans, ...job } }, { paseo, agent, caller }) => {
     ownerScope(agent.id);
     await managedRowsForCoordinator(paseo, store, agent.id);
     return { text: JSON.stringify(await dispatchWorker(deps, caller, job, () => {
       const scope = ownerScope(agent.id);
       return { projects: scope.projects, routing: scope.routing, coordinator: agent.id, excludedProviders: scope.excludedProviders, usageRouting: scope.usageRouting, workerModeOverrides: scope.workerModeOverrides };
-    })) };
+    }, doneMeans ?? null)) };
   });
   return { plan, assign };
 }

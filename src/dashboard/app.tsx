@@ -10,6 +10,9 @@ import { boardReadiness, type BoardReadiness } from "../paseo/shared/readiness";
 import { BoardView } from "./board";
 import { EditNote, NoteEditor } from "./note-editor";
 import { call, openSession } from "./rpc";
+import { boardWorkItems } from "../contract";
+import type { WorkItems } from "./board-model";
+import { WorkItemsContext } from "./work-items";
 import { ProjectIconSources } from "./ui/controls";
 import { BoardLanguageProvider, useBoardLanguage } from "./ui/language";
 
@@ -39,6 +42,7 @@ function HostBoard() {
   const pending = useRef(false);
   const active = useRef(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [work, setWork] = useState<WorkItems>(new Map());
   const [readiness, setReadiness] = useState<BoardReadiness | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -53,9 +57,12 @@ function HostBoard() {
     pending.current = true;
     if (reason === "manual") setLoading(true);
     try {
-      const next = await call(boardSnapshot, reason === "manual" ? { fresh: true } : {});
+      // A worker without work items (older, or a failed read) leaves the lanes as they are.
+      const [next, tracked] = await Promise.all([call(boardSnapshot, reason === "manual" ? { fresh: true } : {}),
+        call(boardWorkItems, {}).catch(() => null)]);
       if (active.current && request === latest.current) {
         setSnapshot(next);
+        setWork(new Map(Object.entries(tracked?.items ?? {})));
         setError(null);
         setUpdatedAt(new Date());
       }
@@ -106,7 +113,7 @@ function HostBoard() {
 
   const icons = useMemo(() => projectIconSources(snapshot?.projects ?? []), [snapshot?.projects]);
   const session = editing ? snapshot?.sessions.find(row => row.id === editing) : undefined;
-  return <ProjectIconSources.Provider value={icons}><EditNote.Provider value={setEditing}>
+  return <WorkItemsContext.Provider value={work}><ProjectIconSources.Provider value={icons}><EditNote.Provider value={setEditing}>
     <BoardView snapshot={snapshot} readiness={readiness} hostLabel={t("이 기기", "This device")} compact={compact}
       error={actionError || error} loading={loading} updatedAt={updatedAt} changing={changing}
       onRefresh={() => void refresh("manual")} onProject={(projectId, enabled) => void updateScope({ kind: "project", projectId, enabled })}
@@ -114,7 +121,7 @@ function HostBoard() {
     {session && <NoteEditor key={session.id} session={session} note={snapshot?.notes[session.id]} onClose={() => setEditing(null)}
       onSave={async input => { const result = await call(saveNote, input); await refresh("manual"); return result; }}
       onSetReporting={async enabled => { const result = await call(setReporting, { sessionId: session.id, enabled }); await refresh("manual"); return result.ok; }} />}
-  </EditNote.Provider></ProjectIconSources.Provider>;
+  </EditNote.Provider></ProjectIconSources.Provider></WorkItemsContext.Provider>;
 }
 
 export function App() {

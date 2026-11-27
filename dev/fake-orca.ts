@@ -10,6 +10,7 @@
 // links=fail makes the session link list fail and links=conflict makes every link change fail. hosts=1 answers
 // board.hosts with three hosts and hosts=fail fails it; without it the method is unknown, like an older worker.
 // note=conflict makes the next note save find a newer note, note=fail makes note saves and report toggles fail.
+// work=1 answers board.work-items: a done report, a done candidate and running work; without it the method is unknown.
 import type { z } from "zod";
 import { clarificationKey, askClarification } from "../src/paseo/shared/clarifications";
 import { factReplySettings, setFactAutoReply } from "../src/paseo/shared/board-facts";
@@ -232,6 +233,16 @@ const handlers: Record<string, (input: any) => unknown> = {
     entry.targetProjectId = input.targetProjectId;
     return { ok: true };
   },
+  ...(params.get("work") && { "board.work-items": async () => {
+    await settle();
+    const at = Date.now() - 10 * 60_000;
+    return { items: {
+      "s-refund": { itemId: "request-refund-docs", phase: "reported", phaseAt: at, title: "환불 API 문서", doneMeans: "환불 API 세 개의 예시가 문서에 있고 링크 검사가 통과한다.",
+        report: { text: "환불 API 예시 세 개를 추가했고 링크 검사를 통과했습니다. PR #42", at } },
+      "s-links": { itemId: "request-link-check", phase: "running", phaseAt: at, title: "링크 검사", doneMeans: "깨진 링크가 0개다.", candidate: { reason: "turn-ended", at } },
+      "s-dashboard": { itemId: "request-dashboard", phase: "running", phaseAt: at, title: "결제 대시보드 리팩터링", doneMeans: null },
+    } };
+  } }),
   ...(params.get("hosts") && { "board.hosts": async () => {
     await settle();
     if (params.get("hosts") === "fail") throw new Error("unavailable");
