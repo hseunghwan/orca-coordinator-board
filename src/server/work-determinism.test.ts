@@ -110,10 +110,13 @@ test('verify sends work back twice; the third failure goes to a person as a deci
   expect((await f.item()).phase).toBe('escalated')
   await expect(f.board.command('verify', { itemId: f.task.requestKey, result: 'pass', text: '확인' }, 'coord')).rejects.toThrow('escalated')
 
-  type Row = { id: string; projectId: string; decision?: { source: string; question: string; version: string } }
+  type Row = { id: string; projectId: string; lane: string; decision?: { source: string; question: string; version: string } }
   const snapshot = await f.handlers.get('board.snapshot')!({ fresh: true }) as { sessions: Row[] }
   const row = snapshot.sessions.find(s => s.id === 'launched-1')!
   expect(row.decision).toMatchObject({ source: 'coordinator', question: expect.stringContaining('테스트가 깨집니다 3') })
+  // A person's decision, with no note of anyone's on the card: it is counted and listed with the other decisions.
+  expect(row.lane).toBe('human')
+  expect(await f.handlers.get('board.decision-count')!({})).toEqual({ count: 1 })
   await f.handlers.get('board.send-decision')!({ projectId: row.projectId, sessionId: row.id, recipientId: row.id, version: row.decision!.version,
     action: 'reply', text: '테스트를 고치고 다시 보고해 주세요.', requestKey: 'escalation-reply-0001' })
   const back = await f.item()

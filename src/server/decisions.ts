@@ -41,6 +41,8 @@ export function decorateDecision(row: SessionRow, note: Note | undefined, prefs:
     content = { source: "permission", question: row.detail };
   } else if (escalation && row.status === "idle" && row.evidenceId) {
     content = { source: "coordinator", question: escalation };
+    row.lane = "human";
+    row.detail = "보드 · 검증이 반복해서 실패해 사람 결정이 필요합니다";
   } else if (row.status === "idle" && row.evidenceId && !dismissed && row.lane === "human") {
     const judgment = prefs.judgments[row.id];
     const structured = judgment?.kind === "question" && judgment.evidenceId === row.evidenceId && judgment.projectId === row.projectId;

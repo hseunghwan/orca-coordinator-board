@@ -22774,6 +22774,8 @@ function decorateDecision(row, note, prefs, evidence, escalation) {
     content = { source: "permission", question: row.detail };
   } else if (escalation && row.status === "idle" && row.evidenceId) {
     content = { source: "coordinator", question: escalation };
+    row.lane = "human";
+    row.detail = "\uBCF4\uB4DC \xB7 \uAC80\uC99D\uC774 \uBC18\uBCF5\uD574\uC11C \uC2E4\uD328\uD574 \uC0AC\uB78C \uACB0\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4";
   } else if (row.status === "idle" && row.evidenceId && !dismissed && row.lane === "human") {
     const judgment2 = prefs.judgments[row.id];
     const structured = judgment2?.kind === "question" && judgment2.evidenceId === row.evidenceId && judgment2.projectId === row.projectId;
