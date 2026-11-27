@@ -31,6 +31,7 @@ Run five or ten coding agents at once and the bottleneck becomes you: one is ask
 - **Coordinator agent.** Start or appoint a coordinator session that writes digests, recommends answers and dispatches worker agents by difficulty tier, using the `coordinator-board` shell command.
 - **Decision records.** Coordinators leave structured records with single or multiple choice questions, evidence and history. Replies to busy sessions are queued and sent once when the turn ends.
 - **Pull requests.** Review the target branch, reviewed HEAD and checks, pick a merge method and merge from the board. The coordinator is told to follow up.
+- **Work tracking.** Work the coordinator assigns carries what done means. A turn that ends without a report, or a pull request that merges or closes, is only a done candidate: the board asks the session once, tells the coordinator when work is reported done or goes stale, and only the coordinator's `verify` or a person confirms done.
 - **Photos.** Attach up to 4 images (JPEG, PNG, WebP) to replies, questions and coordinator requests.
 - **Korean and English** interface, light and dark themes.
 

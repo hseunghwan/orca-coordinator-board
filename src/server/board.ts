@@ -34,17 +34,20 @@ import { NotSent, TrackedDecisionStore } from "./tracked-decisions";
 import { photoFiles } from "./photo-files";
 import { ProjectIcons } from "./project-icons";
 import { HostWatch } from "./hosts";
-import { boardHosts, focusCards as boardFocusCards } from "../contract";
+import { boardHosts, boardWorkItems, boardWorkSettings, focusCards as boardFocusCards, setWorkSettings } from "../contract";
+import { WorkItemStore, workItemView, type WorkEvent } from "./work-items";
+import { verifyTool, WorkNotices } from "./work-notices";
 import { focusCards } from "../focus-cards";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
 import { trackedRecipient, usesSourceCoordinator } from "../paseo/shared/tracked-decisions";
 import { canReceiveBoardInput } from "./discovery";
 import type { Signal } from "../orca/signals";
+import type { OrcaState } from "../orca/view";
 import { BOARD_PREFIX, registerOperations, type OperationDeps } from "./operations";
 import { cliPath } from "../channel/hook";
 import { translator } from "../i18n";
 import { createHash } from "node:crypto";
-import type { SessionId } from "../orca";
+import type { SessionId, World } from "../orca";
 import type { OrcaCli } from "../orca/cli";
 
 type Sdk = PluginHandlerContext["paseo"];
@@ -72,9 +75,27 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const hosts = new HostWatch(fleet.cli, () => fleet.view());
   server.handle(boardHosts, () => hosts.read(host.t()));
   const workers = new WorkerJournal(join(dataDir, "workers.json"));
+  const items = new WorkItemStore(join(dataDir, "work-items.json"));
+  const notices = new WorkNotices(items, fleet, () => prefs.read().coordinator);
+  /** Done checks and coordinator notices go out after any change, and again on each poll and turn end. */
+  const runNotices = () => void notices.run().then(changed => { if (changed) invalidateCount(); },
+    (error: unknown) => console.warn("Could not send work notices: " + (error instanceof Error ? error.message : String(error))));
+  const work = {
+    view: (sessionId: string) => { const item = items.bySession().get(sessionId); return item && workItemView(item); },
+    reported: (sessionId: string, report: { kind: "question" | "review" | "done"; text: string }) => {
+      if (items.apply([[sessionId, { kind: "report", report: report.kind, text: report.text, at: Date.now() }]]).changed) runNotices();
+    },
+  };
+  /** When each linked pull request was last asked about: GitHub is read at most every PULL_CHECK_MS per item. */
+  const pullChecked = new Map<string, number>();
+  const PULL_CHECK_MS = 2 * 60_000;
+  server.handle(boardWorkItems, async () => ({ items: Object.fromEntries([...items.bySession()].map(([id, item]) => [id, workItemView(item)])) }));
+  server.handle(boardWorkSettings, async () => items.settings());
+  server.handle(setWorkSettings, async input => items.setSettings(input));
   const reporting = new ReportingStore(join(dataDir, "reporting.json"), id => workers.worker(id)?.reports === true);
   const commands = coordinatorCommands(prefs, reader, notes, { fact: facts.tool, review: trackedReviewTool(prefs, tracked, prs, reader, () => invalidateCount()),
-    ...dispatchCommands(prefs, { fleet, journal: workers, bin: host.bin }) }, id => reporting.enabled(id));
+    verify: verifyTool(prefs, items, fleet, () => invalidateCount()),
+    ...dispatchCommands(prefs, { fleet, journal: workers, items, bin: host.bin }) }, id => reporting.enabled(id), work);
   const lifecycle = registerOperations(server, prefs, fleet, decisions, dataDir, host, facts);
   // A chat gets no launch environment: it learns the CLI's path and its own id from one board message.
   async function introduceChatCoordinator(sessionId: string) {
@@ -216,6 +237,20 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     return JSON.stringify([projects, sessionLinks, coordinator, projectRepositories]);
   }, decisionCount);
   const invalidateCount = () => reads.invalidate();
+  /**
+   * A session that left Orca takes its board records with it: the coordinator's judgment, the card's note and the
+   * worker metadata (its work item stays, as stale, for the record). Checked against a fresh read first, so an
+   * Orca restart that briefly lists nothing clears nothing.
+   */
+  async function forget(sessionId: SessionId) {
+    const world = await fleet.view({ maxAgeMs: 0 });
+    if (!world.sessions.size || world.sessions.has(sessionId)) return;
+    prefs.change(scope => { delete scope.judgments[sessionId]; });
+    const note = notes.visible(new Set([sessionId]))[sessionId];
+    if (note && note.kind !== "clear") notes.update({ sessionId, kind: "clear", text: "", expectedRevision: note.revision }, note.origin ?? "person");
+    workers.forget(sessionId);
+    invalidateCount();
+  }
   server.handle(saveNote, async (input, { paseo }) => {
     const sessions = await discoverSessions(paseo);
     if (!managedSessions(sessions, prefs.read()).some(session => session.id === input.sessionId)) {
@@ -223,6 +258,8 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     }
     const outcome = notes.update(input);
     if (outcome.ok) invalidateCount();
+    // A person's done is the one confirmation the board takes for now (the coordinator's verify comes later).
+    if (outcome.ok && input.kind === "done") items.apply([[input.sessionId, { kind: "confirmed", at: Date.now() }]]);
     return outcome;
   });
   server.handle(setReporting, async ({ sessionId, enabled }, { paseo }) => {
@@ -345,8 +382,55 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   return {
     /** A session may take a queued board message now (src/orca/signals.ts). */
     async signal(signal: Signal) {
-      if (signal.kind === "gone") await resumeReplies({ paseo: fleet.paseo }, signal.session);
-      else await recipientAvailable(signal.session);
+      if (signal.kind === "gone") {
+        await resumeReplies({ paseo: fleet.paseo }, signal.session);
+        await forget(signal.session);
+      } else {
+        await recipientAvailable(signal.session);
+        runNotices();
+      }
+    },
+    /**
+     * Moves the work items by what Orca reported: each session's state, and a turn that ended without a report
+     * as a done candidate (./work-items.ts). True when an item changed.
+     */
+    track(states: readonly (readonly [string, OrcaState])[], signals: readonly Signal[]): boolean {
+      const at = Date.now();
+      const events: [string, WorkEvent][] = states.map(([id, state]) => [id, { kind: "state", state, at }]);
+      for (const signal of signals) {
+        if (signal.kind === "turn-ended" || signal.kind === "gone") events.push([signal.session, { kind: signal.kind, at }]);
+      }
+      const applied = items.apply(events);
+      if (applied.changed) runNotices();
+      return applied.changed;
+    },
+    /**
+     * The poll's part in tracked work: the stale clock for each session in this World, the state of linked pull
+     * requests, and any done check or coordinator notice still waiting. True when an item changed.
+     */
+    async watchWork(world: World): Promise<boolean> {
+      const at = Date.now();
+      const settings = items.settings();
+      const tracked = items.bySession();
+      const events: [string, WorkEvent][] = [];
+      for (const [sessionId] of tracked) {
+        const session = world.sessions.get(sessionId as SessionId);
+        if (session) events.push([sessionId, { kind: "tick", at, state: session.state, idleSince: session.state === "working" ? null : session.stateStartedAt, settings }]);
+      }
+      let changed = items.apply(events).changed;
+      const scope = prefs.read();
+      for (const item of tracked.values()) {
+        if (!item.pull || !["running", "reported", "verifying"].includes(item.phase) || !scope.projects.includes(item.projectId)) continue;
+        if (at - (pullChecked.get(item.itemId) ?? 0) < PULL_CHECK_MS) continue;
+        pullChecked.set(item.itemId, at);
+        const state = await prs.lifecycle(fleet.paseo, { projectId: item.projectId, repo: item.pull.repo, number: item.pull.number });
+        if (state !== "UNKNOWN") changed = items.applyToItems([[item.itemId, { kind: "pull", state, at: Date.now() }]]).changed || changed;
+      }
+      return (await notices.run()) || changed;
+    },
+    /** A person opened the session from the board: stale work is back in progress. */
+    reopened(sessionId: string): boolean {
+      return items.apply([[sessionId, { kind: "reopened", at: Date.now() }]]).changed;
     },
     /** Retries every queue; the poll's catch-all for transitions no event reported. */
     async resumeWaiting(): Promise<boolean> {
@@ -366,7 +450,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     /** Names the started coordinator and workers once their terminals report a session. */
     async adoptCoordinator() {
       const coordinator = await lifecycle.adopt();
-      return workers.adopt(await fleet.view()) || coordinator;
+      const adopted = workers.adopt(await fleet.view());
+      const linked = items.link(Object.values(workers.read().launches).flatMap(l => l.sessionId ? [[l.requestKey, l.sessionId] as const] : []));
+      return adopted || linked || coordinator;
     },
     /** Paseo's metadata of a worker the coordinator started through the board. */
     worker: (sessionId: string) => workers.worker(sessionId),

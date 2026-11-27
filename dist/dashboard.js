@@ -14623,7 +14623,7 @@ var require_jsx_runtime = __commonJS({
 var import_client = __toESM(require_client());
 
 // src/dashboard/app.tsx
-var import_react28 = __toESM(require_react());
+var import_react30 = __toESM(require_react());
 
 // src/paseo/plugin-shim.ts
 var RPC_NAME = /^[a-z][a-z0-9._-]*$/;
@@ -35065,7 +35065,7 @@ var boardReadiness = defineRpc({
 });
 
 // src/dashboard/board.tsx
-var import_react27 = __toESM(require_react());
+var import_react29 = __toESM(require_react());
 
 // src/paseo/shared/decision-priority.ts
 var rank = { overdue: 0, now: 0, permission: 1, reply: 1, blocker: 1, today: 2, week: 3, scheduled: 4, undated: 5 };
@@ -35161,10 +35161,10 @@ var labels2 = {
   scheduled: ["\uAE30\uD55C \uC788\uC74C", "Scheduled"],
   undated: ["\uAE30\uD55C \uC5C6\uC74C", "No deadline"]
 };
-function waitDuration(minutes) {
-  if (minutes < 1) return ["1\uBD84 \uBBF8\uB9CC", "<1m"];
-  if (minutes < 60) return [minutes + "\uBD84", minutes + "m"];
-  const hours = Math.floor(minutes / 60);
+function waitDuration(minutes2) {
+  if (minutes2 < 1) return ["1\uBD84 \uBBF8\uB9CC", "<1m"];
+  if (minutes2 < 60) return [minutes2 + "\uBD84", minutes2 + "m"];
+  const hours = Math.floor(minutes2 / 60);
   if (hours < 24) return [hours + "\uC2DC\uAC04", hours + "h"];
   const days = Math.floor(hours / 24);
   return [days + "\uC77C", days + "d"];
@@ -36837,8 +36837,45 @@ function sortRecords(items) {
   return [...items].sort((a, b) => urgencyRank(a.urgency) - urgencyRank(b.urgency) || (a.where === "human" ? 0 : 1) - (b.where === "human" ? 0 : 1) || (a.since ?? "~").localeCompare(b.since ?? "~"));
 }
 var count = (list) => list.records.length + list.sessions.length + list.prs.length;
-function boardModel(snapshot, chosen, t, now = Date.now(), completed = /* @__PURE__ */ new Set()) {
+function workLane(lane, item) {
+  if (!item || lane === "human" || lane === "done") return lane;
+  if (item.phase === "done") return "done";
+  if (item.phase === "reported" || item.phase === "verifying" || item.phase === "stale") return "review";
+  if (item.phase === "running" && item.candidate && lane !== "running") return "review";
+  return lane;
+}
+var phaseText = {
+  running: ["\uC9C4\uD589 \uC911", "In progress"],
+  "awaiting-input": ["\uC785\uB825 \uB300\uAE30", "Waiting for input"],
+  reported: ["\uC644\uB8CC \uBCF4\uACE0\uB428 \xB7 \uD655\uC778 \uD544\uC694", "Reported done \xB7 Check it"],
+  verifying: ["\uAC80\uC99D \uC911", "Verifying"],
+  done: ["\uC644\uB8CC", "Done"],
+  stale: ["\uBC29\uCE58\uB428", "Stale"]
+};
+var candidateText = {
+  "turn-ended": ["\uC644\uB8CC \uD6C4\uBCF4 \xB7 \uD134\uC774 \uB05D\uB0AC\uC9C0\uB9CC \uC644\uB8CC \uBCF4\uACE0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4", "Done candidate \xB7 The turn ended without a done report"],
+  "pr-merged": ["\uC644\uB8CC \uD6C4\uBCF4 \xB7 PR\uC774 \uBCD1\uD569\uB410\uC9C0\uB9CC \uC644\uB8CC \uBCF4\uACE0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4", "Done candidate \xB7 The pull request merged without a done report"],
+  "pr-closed": ["\uC644\uB8CC \uD6C4\uBCF4 \xB7 PR\uC774 \uBCD1\uD569\uB418\uC9C0 \uC54A\uACE0 \uB2EB\uD614\uC2B5\uB2C8\uB2E4", "Done candidate \xB7 The pull request closed without merging"]
+};
+var staleText = {
+  idle: ["\uBC29\uCE58\uB428 \xB7 \uC624\uB798 \uBA48\uCDB0 \uC788\uC2B5\uB2C8\uB2E4", "Stale \xB7 Idle too long"],
+  "no-answer": ["\uBC29\uCE58\uB428 \xB7 \uC644\uB8CC \uD655\uC778\uC5D0 \uB2F5\uC774 \uC5C6\uC2B5\uB2C8\uB2E4", "Stale \xB7 No answer to the done check"],
+  gone: ["\uBC29\uCE58\uB428 \xB7 \uC138\uC158\uC774 \uC0AC\uB77C\uC84C\uC2B5\uB2C8\uB2E4", "Stale \xB7 The session is gone"]
+};
+function workStatus(item, lane, t) {
+  if (!item || lane === "human") return null;
+  if (item.phase === "running" && item.candidate && lane !== "running") {
+    const [ko2, en2] = candidateText[item.candidate.reason];
+    const asked = item.candidate.ask?.status === "sent" || item.candidate.ask?.status === "unconfirmed";
+    return asked ? t(ko2 + " \xB7 \uC138\uC158\uC5D0 \uBB3C\uC5C8\uC2B5\uB2C8\uB2E4", en2 + " \xB7 Asked the session") : t(ko2, en2);
+  }
+  if (item.phase === "stale" && item.staleReason) return t(...staleText[item.staleReason]);
+  const [ko, en] = phaseText[item.phase];
+  return t(ko, en);
+}
+function boardModel(snapshot, chosen, t, now = Date.now(), completed = /* @__PURE__ */ new Set(), work = /* @__PURE__ */ new Map()) {
   const { human, projects } = projectCards(snapshot);
+  for (const project2 of projects) for (const card of project2.cards) card.lane = workLane(card.lane, work.get(card.session.id));
   const pullRequests = snapshot.pullRequests;
   const readyPrs = pullRequests?.items.filter((pr) => pr.lane === "review") ?? [];
   const records = sortRecords(snapshot.trackedDecisions?.items ?? []);
@@ -36901,11 +36938,15 @@ function toggleFilter(previous, id4, listed) {
 var shownViewModes = boardViewModes.filter((mode) => mode !== "classic");
 var shownViewMode = (mode) => mode === "classic" ? "inbox" : mode;
 
+// src/dashboard/work-items.ts
+var import_react = __toESM(require_react());
+var WorkItemsContext = (0, import_react.createContext)(/* @__PURE__ */ new Map());
+
 // src/dashboard/clarification.tsx
-var import_react8 = __toESM(require_react());
+var import_react9 = __toESM(require_react());
 
 // src/dashboard/decision-editing.tsx
-var import_react = __toESM(require_react());
+var import_react2 = __toESM(require_react());
 
 // src/paseo/client/decision-edit-order.ts
 function keepEditingPositions(ranked, positions) {
@@ -36929,14 +36970,14 @@ function keepEditingPositions(ranked, positions) {
 
 // src/dashboard/decision-editing.tsx
 var import_jsx_runtime = __toESM(require_jsx_runtime());
-var Editing = (0, import_react.createContext)(null);
+var Editing = (0, import_react2.createContext)(null);
 function useDecisionEditing(rankedKeys) {
-  const [positions, setPositions] = (0, import_react.useState)(() => /* @__PURE__ */ new Map());
-  const ordered = (0, import_react.useRef)(rankedKeys);
-  (0, import_react.useLayoutEffect)(() => {
+  const [positions, setPositions] = (0, import_react2.useState)(() => /* @__PURE__ */ new Map());
+  const ordered = (0, import_react2.useRef)(rankedKeys);
+  (0, import_react2.useLayoutEffect)(() => {
     ordered.current = keepEditingPositions(rankedKeys, positions);
   }, [rankedKeys, positions]);
-  const onEditing = (0, import_react.useCallback)((rowKey, position, active) => {
+  const onEditing = (0, import_react2.useCallback)((rowKey, position, active) => {
     const order2 = ordered.current;
     if (active && order2[position] !== rowKey) position = order2.indexOf(rowKey);
     setPositions((previous) => {
@@ -36950,12 +36991,12 @@ function useDecisionEditing(rankedKeys) {
   return { positions, onEditing };
 }
 function DecisionEditingRow({ rowKey, position, onEditing, children }) {
-  const active = (0, import_react.useRef)(0);
-  const index = (0, import_react.useRef)(position);
-  (0, import_react.useLayoutEffect)(() => {
+  const active = (0, import_react2.useRef)(0);
+  const index = (0, import_react2.useRef)(position);
+  (0, import_react2.useLayoutEffect)(() => {
     index.current = position;
   }, [position]);
-  const register = (0, import_react.useCallback)(() => {
+  const register = (0, import_react2.useCallback)(() => {
     if (++active.current === 1) onEditing(rowKey, index.current, true);
     return () => {
       if (--active.current === 0) onEditing(rowKey, index.current, false);
@@ -36964,17 +37005,17 @@ function DecisionEditingRow({ rowKey, position, onEditing, children }) {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Editing.Provider, { value: register, children });
 }
 function useDecisionInteraction(hasDraft) {
-  const register = (0, import_react.useContext)(Editing);
-  const [focused, setFocused] = (0, import_react.useState)(false);
+  const register = (0, import_react2.useContext)(Editing);
+  const [focused, setFocused] = (0, import_react2.useState)(false);
   const active = focused || hasDraft;
-  (0, import_react.useLayoutEffect)(() => {
+  (0, import_react2.useLayoutEffect)(() => {
     if (active) return register?.();
   }, [active, register]);
   return { onFocus: () => setFocused(true), onBlur: () => setFocused(false) };
 }
 
 // src/dashboard/photo-composer.tsx
-var import_react5 = __toESM(require_react());
+var import_react6 = __toESM(require_react());
 
 // src/paseo/shared/usage-routing.ts
 var stamp = external_exports.string().nullable();
@@ -37294,7 +37335,7 @@ function isFileDrag(data) {
 }
 
 // src/dashboard/ui/controls.tsx
-var import_react2 = __toESM(require_react());
+var import_react3 = __toESM(require_react());
 
 // src/dashboard/ui/icons.tsx
 var import_jsx_runtime2 = __toESM(require_jsx_runtime());
@@ -37334,7 +37375,7 @@ var Loader = (props) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Icon, { ...
 
 // src/dashboard/ui/controls.tsx
 var import_jsx_runtime3 = __toESM(require_jsx_runtime());
-var ProjectIconSources = (0, import_react2.createContext)(/* @__PURE__ */ new Map());
+var ProjectIconSources = (0, import_react3.createContext)(/* @__PURE__ */ new Map());
 var space = { 0.5: 2, 1: 4, 1.5: 6, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 };
 var fontSize = { sm: 12, base: 14, content: 15, lg: 16 };
 var row = { display: "flex", flexDirection: "row", alignItems: "center", flexWrap: "wrap" };
@@ -37421,9 +37462,9 @@ function RunningMark({ label }) {
 }
 var iconColors = ["var(--link)", "var(--success)", "var(--warning)", "var(--destructive)"];
 function ProjectIcon({ name, projectId: projectId4 }) {
-  const sources = (0, import_react2.useContext)(ProjectIconSources);
+  const sources = (0, import_react3.useContext)(ProjectIconSources);
   const uri = sources.get(projectId4 ? "id:" + projectId4 : "name:" + name);
-  const [failed, setFailed] = (0, import_react2.useState)();
+  const [failed, setFailed] = (0, import_react3.useState)();
   if (uri && uri !== failed) return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("img", { className: "project-icon", alt: "", "aria-hidden": "true", src: uri, onError: () => setFailed(uri) });
   const color = iconColors[projectColorIndex(name, iconColors.length)];
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "project-icon", "aria-hidden": "true", style: { background: `color-mix(in oklab, ${color} 24%, transparent)` }, children: projectInitial(name) });
@@ -37464,21 +37505,21 @@ function Disclose({ label, accessibilityLabel, expanded, onPress }) {
 }
 
 // src/dashboard/ui/language.tsx
-var import_react4 = __toESM(require_react());
+var import_react5 = __toESM(require_react());
 
 // src/dashboard/device-setting.ts
-var import_react3 = __toESM(require_react());
+var import_react4 = __toESM(require_react());
 function deviceSettingKey(id4) {
   return "device-setting:" + id4;
 }
 function useDeviceSetting(definition) {
-  const [saved, setSaved] = (0, import_react3.useState)(null);
-  const [temporary, setTemporary] = (0, import_react3.useState)(null);
-  const [saving, setSaving] = (0, import_react3.useState)(false);
-  const [saveFailed, setSaveFailed] = (0, import_react3.useState)(false);
-  const [loadFailed, setLoadFailed] = (0, import_react3.useState)(false);
+  const [saved, setSaved] = (0, import_react4.useState)(null);
+  const [temporary, setTemporary] = (0, import_react4.useState)(null);
+  const [saving, setSaving] = (0, import_react4.useState)(false);
+  const [saveFailed, setSaveFailed] = (0, import_react4.useState)(false);
+  const [loadFailed, setLoadFailed] = (0, import_react4.useState)(false);
   const fallback = () => definition.schema.parse({});
-  const reload = (0, import_react3.useCallback)(async () => {
+  const reload = (0, import_react4.useCallback)(async () => {
     try {
       const stored = await orca.storage.get(deviceSettingKey(definition.id));
       const parsed = definition.schema.safeParse(stored ?? {});
@@ -37489,7 +37530,7 @@ function useDeviceSetting(definition) {
       setLoadFailed(true);
     }
   }, [definition]);
-  (0, import_react3.useEffect)(() => {
+  (0, import_react4.useEffect)(() => {
     void reload();
   }, [reload]);
   async function save(next) {
@@ -37526,17 +37567,17 @@ function usePreference() {
   const language = state.values.language;
   return { state, language, t: translators[language] };
 }
-var Context = (0, import_react4.createContext)(null);
+var Context = (0, import_react5.createContext)(null);
 function BoardLanguageProvider({ children }) {
   const preference = usePreference();
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Context.Provider, { value: preference, children });
 }
 function useBoardLanguage() {
-  const pref = (0, import_react4.useContext)(Context);
+  const pref = (0, import_react5.useContext)(Context);
   return pref ?? { language: "ko", t: translators.ko };
 }
 function BoardLanguageSetting() {
-  const pref = (0, import_react4.useContext)(Context);
+  const pref = (0, import_react5.useContext)(Context);
   if (!pref) return null;
   const { state, t, language } = pref;
   const save = async (value) => {
@@ -37565,14 +37606,14 @@ function BoardLanguageSetting() {
 // src/dashboard/photo-composer.tsx
 var import_jsx_runtime5 = __toESM(require_jsx_runtime());
 function usePhotoDraft() {
-  const [photos, setPhotos] = (0, import_react5.useState)([]);
-  const latest = (0, import_react5.useRef)([]);
-  const failed = (0, import_react5.useRef)(/* @__PURE__ */ new Map());
-  const [errors, setErrors] = (0, import_react5.useState)(failed.current);
-  const [inputScope, setInputScope] = (0, import_react5.useState)();
-  const [reading, setReading] = (0, import_react5.useState)(false);
-  const readPending = (0, import_react5.useRef)(false);
-  const sequence = (0, import_react5.useRef)(0);
+  const [photos, setPhotos] = (0, import_react6.useState)([]);
+  const latest = (0, import_react6.useRef)([]);
+  const failed = (0, import_react6.useRef)(/* @__PURE__ */ new Map());
+  const [errors, setErrors] = (0, import_react6.useState)(failed.current);
+  const [inputScope, setInputScope] = (0, import_react6.useState)();
+  const [reading, setReading] = (0, import_react6.useState)(false);
+  const readPending = (0, import_react6.useRef)(false);
+  const sequence = (0, import_react6.useRef)(0);
   function update(next) {
     latest.current = next;
     setPhotos(next);
@@ -37634,8 +37675,8 @@ function usePhotoDraft() {
 }
 function PhotoComposer({ children, disabled, draft, questionIndex, showHint }) {
   const { t } = useBoardLanguage();
-  const fileInput = (0, import_react5.useRef)(null);
-  const [dragging, setDragging] = (0, import_react5.useState)(false);
+  const fileInput = (0, import_react6.useRef)(null);
+  const [dragging, setDragging] = (0, import_react6.useState)(false);
   const locked = disabled || draft.reading;
   const photos = draft.photos.filter((photo) => photo.questionIndex === questionIndex);
   const attachLabel = t("\uCCA8\uBD80 \uD30C\uC77C \uCD94\uAC00", "Add attachment");
@@ -37821,6 +37862,34 @@ var startCoordinator = defineRpc({
   input: setupCoordinator.input.extend({ workspaceId: external_exports.string().min(1).max(256).optional() }),
   output: setupCoordinator.output
 });
+var workPhase = external_exports.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale"]);
+var noticeStatus = external_exports.enum(["queued", "sent", "unconfirmed", "unavailable"]);
+var workCandidate = external_exports.object({
+  reason: external_exports.enum(["turn-ended", "pr-merged", "pr-closed"]),
+  at: external_exports.number(),
+  ask: external_exports.object({ messageId: external_exports.string(), status: noticeStatus, at: external_exports.number() }).optional()
+});
+var staleReason = external_exports.enum(["idle", "no-answer", "gone"]);
+var workPull = external_exports.object({ repo: external_exports.string(), number: external_exports.number().int().positive(), state: external_exports.enum(["OPEN", "CLOSED", "MERGED", "UNKNOWN"]).optional() });
+var workItemView = external_exports.object({
+  itemId: external_exports.string(),
+  phase: workPhase,
+  phaseAt: external_exports.number(),
+  title: external_exports.string(),
+  doneMeans: external_exports.string().nullable(),
+  candidate: workCandidate.optional(),
+  report: external_exports.object({ text: external_exports.string(), at: external_exports.number() }).optional(),
+  staleReason: staleReason.optional(),
+  pull: workPull.optional()
+});
+var boardWorkItems = defineRpc({
+  name: "board.work-items",
+  input: external_exports.strictObject({}),
+  output: external_exports.object({ items: external_exports.record(external_exports.string(), workItemView) })
+});
+var workSettings = external_exports.object({ idleMinutes: external_exports.number().int().min(5).max(7 * 24 * 60), askMinutes: external_exports.number().int().min(5).max(7 * 24 * 60) });
+var boardWorkSettings = defineRpc({ name: "board.work-settings", input: external_exports.strictObject({}), output: workSettings });
+var setWorkSettings = defineRpc({ name: "board.set-work-settings", input: workSettings, output: workSettings });
 
 // src/dashboard/rpc.ts
 var request = (name, input2) => orca.plugin.request.call(orca.plugin, name, input2);
@@ -37829,7 +37898,7 @@ async function call(contract, input2) {
 }
 
 // src/dashboard/send-input.tsx
-var import_react6 = __toESM(require_react());
+var import_react7 = __toESM(require_react());
 
 // src/paseo/client/send-shortcut.ts
 function sendModifier(platform) {
@@ -37852,11 +37921,11 @@ function SendTextInput({ send, className, ...props }) {
   } });
 }
 function SendButton({ send, ...props }) {
-  const hintId = (0, import_react6.useId)();
-  const [hovered, setHovered] = (0, import_react6.useState)(false);
-  const [focused, setFocused] = (0, import_react6.useState)(false);
+  const hintId = (0, import_react7.useId)();
+  const [hovered, setHovered] = (0, import_react7.useState)(false);
+  const [focused, setFocused] = (0, import_react7.useState)(false);
   const showHint = hovered || focused;
-  (0, import_react6.useEffect)(() => {
+  (0, import_react7.useEffect)(() => {
     if (!showHint) return;
     const dismiss = (event) => {
       if (event.key === "Escape") {
@@ -37884,7 +37953,7 @@ function SendButton({ send, ...props }) {
 }
 
 // src/dashboard/ui/markdown.tsx
-var import_react7 = __toESM(require_react());
+var import_react8 = __toESM(require_react());
 var import_jsx_runtime7 = __toESM(require_jsx_runtime());
 function openLink(href) {
   void orca.shell?.openExternal(href).catch(() => void 0);
@@ -37922,7 +37991,7 @@ function inline(tokens) {
   });
 }
 function Markdown({ source, preview = false, heading = false, muted = false }) {
-  const tokens = (0, import_react7.useMemo)(() => w.lex(source, { gfm: true, breaks: true }), [source]);
+  const tokens = (0, import_react8.useMemo)(() => w.lex(source, { gfm: true, breaks: true }), [source]);
   function paragraph(token, i, className = "", style2, title = false) {
     const isHeading = title || token.type === "heading";
     return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
@@ -37974,15 +38043,15 @@ var import_jsx_runtime8 = __toESM(require_jsx_runtime());
 function Clarification({ card, title, recipientId, recipientTitle, entries, prior = [], onRefresh, onDraftChange }) {
   const { t } = useBoardLanguage();
   const photos = usePhotoDraft();
-  const [expanded, setExpanded] = (0, import_react8.useState)(false);
-  const [draftTarget, setDraftTarget] = (0, import_react8.useState)("");
-  const [text2, setText] = (0, import_react8.useState)("");
-  const [busy, setBusy] = (0, import_react8.useState)(false);
-  const [error62, setError] = (0, import_react8.useState)(false);
-  const [sent, setSent] = (0, import_react8.useState)([]);
-  const [visibleCount, setVisibleCount] = (0, import_react8.useState)(3);
-  const sending = (0, import_react8.useRef)(false);
-  const retry = (0, import_react8.useRef)(noRetry);
+  const [expanded, setExpanded] = (0, import_react9.useState)(false);
+  const [draftTarget, setDraftTarget] = (0, import_react9.useState)("");
+  const [text2, setText] = (0, import_react9.useState)("");
+  const [busy, setBusy] = (0, import_react9.useState)(false);
+  const [error62, setError] = (0, import_react9.useState)(false);
+  const [sent, setSent] = (0, import_react9.useState)([]);
+  const [visibleCount, setVisibleCount] = (0, import_react9.useState)(3);
+  const sending = (0, import_react9.useRef)(false);
+  const retry = (0, import_react9.useRef)(noRetry);
   const label = (ko, en) => title + " \xB7 " + t(ko, en);
   const key = card ? clarificationKey(card) : "";
   const saved = entries.filter((entry) => entry.cardKey === key);
@@ -37991,7 +38060,7 @@ function Clarification({ card, title, recipientId, recipientTitle, entries, prio
   const hasDraft = !!text2.trim() || photos.photos.length > 0;
   const editing = hasDraft || photos.blocked || busy;
   const focus = useDecisionInteraction(expanded || editing);
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     onDraftChange?.(editing);
   }, [editing, onDraftChange]);
   const target2 = JSON.stringify([card, recipientId]);
@@ -38094,7 +38163,7 @@ function Clarification({ card, title, recipientId, recipientTitle, entries, prio
 }
 
 // src/dashboard/decision-actions.tsx
-var import_react10 = __toESM(require_react());
+var import_react11 = __toESM(require_react());
 
 // src/paseo/client/decision-reply-state.ts
 function isLongReply(text2) {
@@ -38122,11 +38191,11 @@ var requestRecommendation = defineRpc({
 });
 
 // src/dashboard/decision-reply.tsx
-var import_react9 = __toESM(require_react());
+var import_react10 = __toESM(require_react());
 var import_jsx_runtime9 = __toESM(require_jsx_runtime());
 function DecisionReplyInput({ send, value, onChangeText, accessibilityLabel, placeholder, maxLength, disabled, onFocus, onBlur, reviewRequired = false, onReview }) {
   const { t } = useBoardLanguage();
-  const [expanded, setExpanded] = (0, import_react9.useState)(false);
+  const [expanded, setExpanded] = (0, import_react10.useState)(false);
   const long = isLongReply(value);
   const showFull = long && expanded && !reviewRequired;
   const toggleLabel = showFull ? t("\uC785\uB825\uCC3D \uC811\uAE30", "Collapse editor") : t("\uB2F5\uC7A5 \uC804\uBB38 \uBCF4\uAE30", "View full reply");
@@ -38184,21 +38253,21 @@ function DecisionActions({ card, hostLabel, coordinator, coordinatorTitle, open:
   const { t, language } = useBoardLanguage();
   const { session: session2 } = card;
   const decision = session2.decision;
-  const [showMethods, setShowMethods] = (0, import_react10.useState)(false);
-  const [reviewedReply, setReviewedReply] = (0, import_react10.useState)(null);
-  const [showEvidence, setShowEvidence] = (0, import_react10.useState)(false);
-  const [requestedFrom, setRequestedFrom] = (0, import_react10.useState)(null);
-  const recommendationKey = (0, import_react10.useRef)({ recipient: "", key: "" });
-  const [selection, setSelection] = (0, import_react10.useState)(null);
-  const [draft, setDraft] = (0, import_react10.useState)(null);
-  const [coordination, setCoordination] = (0, import_react10.useState)(null);
+  const [showMethods, setShowMethods] = (0, import_react11.useState)(false);
+  const [reviewedReply, setReviewedReply] = (0, import_react11.useState)(null);
+  const [showEvidence, setShowEvidence] = (0, import_react11.useState)(false);
+  const [requestedFrom, setRequestedFrom] = (0, import_react11.useState)(null);
+  const recommendationKey = (0, import_react11.useRef)({ recipient: "", key: "" });
+  const [selection, setSelection] = (0, import_react11.useState)(null);
+  const [draft, setDraft] = (0, import_react11.useState)(null);
+  const [coordination, setCoordination] = (0, import_react11.useState)(null);
   const replyPhotos = usePhotoDraft();
   const editorPhotos = usePhotoDraft();
-  const [busy, setBusy] = (0, import_react10.useState)(false);
-  const [error62, setError] = (0, import_react10.useState)(null);
-  const pending = (0, import_react10.useRef)(false);
-  const retry = (0, import_react10.useRef)(noRetry);
-  const delivered = (0, import_react10.useRef)("");
+  const [busy, setBusy] = (0, import_react11.useState)(false);
+  const [error62, setError] = (0, import_react11.useState)(null);
+  const pending = (0, import_react11.useRef)(false);
+  const retry = (0, import_react11.useRef)(noRetry);
+  const delivered = (0, import_react11.useRef)("");
   const chosen = selection === null ? null : decision?.options?.[selection];
   const proposed = chosen?.reply || (decision?.needsInput ? void 0 : decision?.recommendation);
   const reply = sessionReplyDraft(proposed, draft, reviewedReply, !!replyPhotos.photos.length);
@@ -38442,7 +38511,7 @@ function InlineDecisionReceipt({ receipt, onOpen, onDismiss }) {
 }
 
 // src/dashboard/operations.tsx
-var import_react15 = __toESM(require_react());
+var import_react16 = __toESM(require_react());
 
 // src/paseo/client/route-options.ts
 var koreanText = (ko) => ko;
@@ -38527,15 +38596,15 @@ function browseModels(data, grade, providerId, query, limit, t = koreanText, act
 }
 
 // src/dashboard/fact-reply-controls.tsx
-var import_react11 = __toESM(require_react());
+var import_react12 = __toESM(require_react());
 var import_jsx_runtime12 = __toESM(require_jsx_runtime());
 function FactReplyControls() {
   const { t } = useBoardLanguage();
-  const mounted = (0, import_react11.useRef)(false);
-  const pending = (0, import_react11.useRef)(false);
-  const [enabled, setEnabled] = (0, import_react11.useState)(null);
-  const [busy, setBusy] = (0, import_react11.useState)(true);
-  const [failed, setFailed] = (0, import_react11.useState)(false);
+  const mounted = (0, import_react12.useRef)(false);
+  const pending = (0, import_react12.useRef)(false);
+  const [enabled, setEnabled] = (0, import_react12.useState)(null);
+  const [busy, setBusy] = (0, import_react12.useState)(true);
+  const [failed, setFailed] = (0, import_react12.useState)(false);
   async function refresh(next) {
     if (pending.current) return;
     pending.current = true;
@@ -38554,7 +38623,7 @@ function FactReplyControls() {
       if (mounted.current) setBusy(false);
     }
   }
-  (0, import_react11.useEffect)(() => {
+  (0, import_react12.useEffect)(() => {
     mounted.current = true;
     void refresh();
     return () => {
@@ -38576,14 +38645,14 @@ function FactReplyControls() {
 }
 
 // src/dashboard/providers.tsx
-var import_react13 = __toESM(require_react());
+var import_react14 = __toESM(require_react());
 
 // src/dashboard/use-width.ts
-var import_react12 = __toESM(require_react());
+var import_react13 = __toESM(require_react());
 function useWidth() {
-  const ref = (0, import_react12.useRef)(null);
-  const [width, setWidth] = (0, import_react12.useState)(0);
-  (0, import_react12.useLayoutEffect)(() => {
+  const ref = (0, import_react13.useRef)(null);
+  const [width, setWidth] = (0, import_react13.useState)(0);
+  (0, import_react13.useLayoutEffect)(() => {
     const element = ref.current;
     if (!element) return;
     setWidth(element.getBoundingClientRect().width);
@@ -38613,7 +38682,7 @@ function roles(id4, catalog, t) {
 }
 function ProviderSettings({ providers, catalog, busy, change, overrides, setMode }) {
   const { t } = useBoardLanguage();
-  const [expanded, setExpanded] = (0, import_react13.useState)(true);
+  const [expanded, setExpanded] = (0, import_react14.useState)(true);
   const [ref, width] = useWidth();
   const columns = Math.max(1, Math.floor((width + 8) / 260));
   if (!providers.length) return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "muted", children: t("Orca\uAC00 \uC54C\uB824 \uC900 \uC2E4\uD589\uAE30\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. Orca\uC5D0\uC11C \uC5D0\uC774\uC804\uD2B8\uB97C \uC5F0\uACB0\uD55C \uB4A4 \uC0C8\uB85C \uACE0\uCCD0 \uC8FC\uC138\uC694.", "Orca reported no providers. Connect an agent in Orca, then refresh.") });
@@ -38659,7 +38728,7 @@ function ProviderSettings({ providers, catalog, busy, change, overrides, setMode
 }
 function WorkerPermissions({ provider, modes, selected, busy, save }) {
   const { t } = useBoardLanguage();
-  const [open2, setOpen] = (0, import_react13.useState)(false);
+  const [open2, setOpen] = (0, import_react14.useState)(false);
   const current = selected ?? recommendedWorkerMode(provider);
   const label = modes?.find((m) => m.id === current)?.label ?? current ?? t("\uC2E4\uD589\uAE30 \uAE30\uBCF8", "Provider default");
   return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { style: { ...column, gap: 5, alignItems: "flex-start" }, children: [
@@ -38685,7 +38754,7 @@ function WorkerPermissions({ provider, modes, selected, busy, save }) {
 }
 
 // src/dashboard/route-editor.tsx
-var import_react14 = __toESM(require_react());
+var import_react15 = __toESM(require_react());
 var import_jsx_runtime14 = __toESM(require_jsx_runtime());
 var wrap3 = { ...row, gap: 6 };
 function gradeName(grade, t) {
@@ -38697,7 +38766,7 @@ function routeName(route, t) {
 }
 function RouteEditor({ data, busy, save }) {
   const { t } = useBoardLanguage();
-  const [grade, setGrade] = (0, import_react14.useState)("C");
+  const [grade, setGrade] = (0, import_react15.useState)("C");
   return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: { ...column, gap: 8 }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { style: { fontWeight: 600 }, children: t("\uC791\uC5C5 \uB09C\uC774\uB3C4", "Task difficulty") }),
     /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: wrap3, children: workerGradeSchema.options.map((g2) => /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(Button, { size: "sm", label: gradeName(g2, t), selected: g2 === grade, onPress: () => setGrade(g2) }, g2)) }),
@@ -38711,11 +38780,11 @@ function RouteEditor({ data, busy, save }) {
 }
 function CandidateList({ data, busy, grade, save }) {
   const { t } = useBoardLanguage();
-  const [rows, setRows] = (0, import_react14.useState)(data.routing[grade] ?? []);
-  const [query, setQuery] = (0, import_react14.useState)("");
-  const [limit, setLimit] = (0, import_react14.useState)(6);
-  const [provider, setProvider] = (0, import_react14.useState)(null);
-  const [edit, setSelection] = (0, import_react14.useState)(null);
+  const [rows, setRows] = (0, import_react15.useState)(data.routing[grade] ?? []);
+  const [query, setQuery] = (0, import_react15.useState)("");
+  const [limit, setLimit] = (0, import_react15.useState)(6);
+  const [provider, setProvider] = (0, import_react15.useState)(null);
+  const [edit, setSelection] = (0, import_react15.useState)(null);
   const route = resolveRoute(grade, data.routing, data.catalog, false, data.usageRouting ? data.usage : void 0);
   const saved = data.routing[grade]?.length;
   const browser = browseModels(data, grade, provider, query, limit, t, route);
@@ -38922,20 +38991,20 @@ function Section({ title, children, aside }) {
 }
 function OperationsPanel({ settings, coordinator, configured, projects, refreshBoard, openCoordinator }) {
   const { t, language } = useBoardLanguage();
-  const [data, setData] = (0, import_react15.useState)(null);
-  const [loading, setLoading] = (0, import_react15.useState)(false);
-  const [busy, setBusy] = (0, import_react15.useState)(false);
-  const [feedback, setFeedback] = (0, import_react15.useState)(null);
-  const [text2, setText] = (0, import_react15.useState)("");
-  const [editorExpanded, setEditorExpanded] = (0, import_react15.useState)(false);
+  const [data, setData] = (0, import_react16.useState)(null);
+  const [loading, setLoading] = (0, import_react16.useState)(false);
+  const [busy, setBusy] = (0, import_react16.useState)(false);
+  const [feedback, setFeedback] = (0, import_react16.useState)(null);
+  const [text2, setText] = (0, import_react16.useState)("");
+  const [editorExpanded, setEditorExpanded] = (0, import_react16.useState)(false);
   const photoDraft = usePhotoDraft();
-  const [confirm, setConfirm] = (0, import_react15.useState)(false);
-  const [chosenWorkspace, setChosenWorkspace] = (0, import_react15.useState)(null);
-  const live = (0, import_react15.useRef)(false);
-  const pending = (0, import_react15.useRef)(false);
-  const generation = (0, import_react15.useRef)(0);
-  const delivery = (0, import_react15.useRef)({ work: noRetry, digest: noRetry });
-  const refresh = (0, import_react15.useCallback)(async (setup, clearError = true) => {
+  const [confirm, setConfirm] = (0, import_react16.useState)(false);
+  const [chosenWorkspace, setChosenWorkspace] = (0, import_react16.useState)(null);
+  const live = (0, import_react16.useRef)(false);
+  const pending = (0, import_react16.useRef)(false);
+  const generation = (0, import_react16.useRef)(0);
+  const delivery = (0, import_react16.useRef)({ work: noRetry, digest: noRetry });
+  const refresh = (0, import_react16.useCallback)(async (setup, clearError = true) => {
     const token = ++generation.current;
     setLoading(true);
     try {
@@ -38951,21 +39020,21 @@ function OperationsPanel({ settings, coordinator, configured, projects, refreshB
     }
   }, []);
   const needsModels = settings || configured && !coordinator;
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     live.current = true;
     return () => {
       live.current = false;
       generation.current++;
     };
   }, []);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     if (needsModels) void refresh(!settings);
   }, [needsModels, settings, refresh]);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     setConfirm(false);
     delivery.current = { work: noRetry, digest: noRetry };
   }, [coordinator]);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     setConfirm(false);
     setFeedback(null);
   }, [settings, language]);
@@ -39175,14 +39244,14 @@ function OperationsPanel({ settings, coordinator, configured, projects, refreshB
 }
 
 // src/dashboard/reply-history.tsx
-var import_react16 = __toESM(require_react());
+var import_react17 = __toESM(require_react());
 var import_jsx_runtime17 = __toESM(require_jsx_runtime());
 function LocalPhoto({ entryKey, index }) {
   const { t } = useBoardLanguage();
-  const [uri, setUri] = (0, import_react16.useState)(null);
-  const [failed, setFailed] = (0, import_react16.useState)(false);
-  const [attempt, setAttempt] = (0, import_react16.useState)(0);
-  (0, import_react16.useEffect)(() => {
+  const [uri, setUri] = (0, import_react17.useState)(null);
+  const [failed, setFailed] = (0, import_react17.useState)(false);
+  const [attempt, setAttempt] = (0, import_react17.useState)(0);
+  (0, import_react17.useEffect)(() => {
     let current = true;
     setFailed(false);
     setUri(null);
@@ -39225,9 +39294,9 @@ function SessionReference({ session: session2, state, open: open2 }) {
 }
 function ReplyCard({ entry, links, open: open2 }) {
   const { t, language } = useBoardLanguage();
-  const [full, setFull] = (0, import_react16.useState)(false);
-  const [showOrigin, setShowOrigin] = (0, import_react16.useState)(false);
-  const [photoIndex, setPhotoIndex] = (0, import_react16.useState)(null);
+  const [full, setFull] = (0, import_react17.useState)(false);
+  const [showOrigin, setShowOrigin] = (0, import_react17.useState)(false);
+  const [photoIndex, setPhotoIndex] = (0, import_react17.useState)(null);
   const origin = entry.origin;
   const long = [entry.answer, entry.response].some((text2) => text2 && (text2.length > 160 || text2.split("\n").length > 3));
   const merge2 = entry.pullMerge;
@@ -39283,7 +39352,7 @@ function ReplyCard({ entry, links, open: open2 }) {
 }
 function ReplyHistory({ entries, links, open: open2, expanded, onToggle }) {
   const { t } = useBoardLanguage();
-  const [limit, setLimit] = (0, import_react16.useState)(1);
+  const [limit, setLimit] = (0, import_react17.useState)(1);
   if (!entries.length) return null;
   return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(Disclosure, { expanded, onPress: onToggle, title: t(`\uCD5C\uADFC \uACB0\uC815 \uAE30\uB85D \xB7 ${entries.length}\uAC74`, `Recent decision activity \xB7 ${entries.length}`), children: [
     entries.slice(0, limit).map((entry) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(ReplyCard, { entry, links, open: open2 }, entry.key)),
@@ -39292,7 +39361,7 @@ function ReplyHistory({ entries, links, open: open2, expanded, onToggle }) {
 }
 
 // src/dashboard/project-kanban.tsx
-var import_react19 = __toESM(require_react());
+var import_react20 = __toESM(require_react());
 
 // src/paseo/client/lane-width.ts
 var MIN_WIDTH = 212;
@@ -39440,9 +39509,9 @@ function entryDisplay(entry, selected) {
 }
 
 // src/dashboard/note-editor.tsx
-var import_react17 = __toESM(require_react());
+var import_react18 = __toESM(require_react());
 var import_jsx_runtime18 = __toESM(require_jsx_runtime());
-var EditNote = (0, import_react17.createContext)(null);
+var EditNote = (0, import_react18.createContext)(null);
 function NoteEditor({ session: session2, note, onClose, onSave, onSetReporting }) {
   const { t } = useBoardLanguage();
   const notices = {
@@ -39452,15 +39521,15 @@ function NoteEditor({ session: session2, note, onClose, onSave, onSetReporting }
     save: t("\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.", "Could not save the note. Try again."),
     host: t("\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uC5F0\uACB0\uC744 \uD655\uC778\uD558\uACE0 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.", "Could not save the note. Check the connection and try again.")
   };
-  const dialog = (0, import_react17.useRef)(null);
-  const [kind, setKind] = (0, import_react17.useState)(note && note.kind !== "clear" ? note.kind : "question");
-  const [text2, setText] = (0, import_react17.useState)(note?.text ?? "");
-  const [evidenceId] = (0, import_react17.useState)(session2.evidenceId);
-  const [revision2, setRevision] = (0, import_react17.useState)(note?.revision ?? 0);
-  const [busy, setBusy] = (0, import_react17.useState)(false);
-  const [message3, setMessage] = (0, import_react17.useState)(null);
-  const submitting = (0, import_react17.useRef)(false);
-  (0, import_react17.useEffect)(() => {
+  const dialog = (0, import_react18.useRef)(null);
+  const [kind, setKind] = (0, import_react18.useState)(note && note.kind !== "clear" ? note.kind : "question");
+  const [text2, setText] = (0, import_react18.useState)(note?.text ?? "");
+  const [evidenceId] = (0, import_react18.useState)(session2.evidenceId);
+  const [revision2, setRevision] = (0, import_react18.useState)(note?.revision ?? 0);
+  const [busy, setBusy] = (0, import_react18.useState)(false);
+  const [message3, setMessage] = (0, import_react18.useState)(null);
+  const submitting = (0, import_react18.useRef)(false);
+  (0, import_react18.useEffect)(() => {
     const element = dialog.current;
     if (element && !element.open) element.showModal();
   }, []);
@@ -39564,14 +39633,14 @@ function NoteEditor({ session: session2, note, onClose, onSave, onSetReporting }
 }
 
 // src/dashboard/tracked-session-chips.tsx
-var import_react18 = __toESM(require_react());
+var import_react19 = __toESM(require_react());
 var import_jsx_runtime19 = __toESM(require_jsx_runtime());
 function VerifiedSessionChip({ verify, ...props }) {
   const { t } = useBoardLanguage();
-  const [state, setState] = (0, import_react18.useState)("ready");
-  const active = (0, import_react18.useRef)(true);
-  const pending = (0, import_react18.useRef)(false);
-  (0, import_react18.useEffect)(() => {
+  const [state, setState] = (0, import_react19.useState)("ready");
+  const active = (0, import_react19.useRef)(true);
+  const pending = (0, import_react19.useRef)(false);
+  (0, import_react19.useEffect)(() => {
     active.current = true;
     return () => {
       active.current = false;
@@ -39630,10 +39699,12 @@ function accent(lane) {
   return "var(--muted-fg)";
 }
 function CardView({ card, open: open2, sessionHostLabel }) {
-  const [expanded, setExpanded] = (0, import_react19.useState)(false);
+  const [expanded, setExpanded] = (0, import_react20.useState)(false);
   const { t } = useBoardLanguage();
-  const edit = (0, import_react19.useContext)(EditNote);
+  const edit = (0, import_react20.useContext)(EditNote);
   const { session: session2, note } = card;
+  const item = (0, import_react20.useContext)(WorkItemsContext).get(session2.id);
+  const tracked = workStatus(item, card.lane, t);
   const fact = session2.boardFact;
   const question = session2.decision?.question;
   const displayedQuestion = session2.decision?.source === "permission" && question ? sessionDetail(question, t) : session2.decision?.questionMarkdown ?? question;
@@ -39656,7 +39727,7 @@ function CardView({ card, open: open2, sessionHostLabel }) {
             /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { style: { fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: session2.title }),
             /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "muted", style: { display: "inline-flex" }, children: expanded ? /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ChevronUp, { size: 14 }) : /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ChevronDown, { size: 14 }) })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "muted sm ellipsis", style: { width: "100%" }, children: card.lane === "human" ? t("\uB0B4 \uB2F5\uC744 \uAE30\uB2E4\uB9AC\uB294 \uC911", "Waiting for my decision") : session2.detail ? sessionDetail(session2.detail, t) : laneLabel(card.lane, t) }),
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "muted sm ellipsis", style: { width: "100%" }, children: card.lane === "human" ? t("\uB0B4 \uB2F5\uC744 \uAE30\uB2E4\uB9AC\uB294 \uC911", "Waiting for my decision") : tracked ? tracked : session2.detail ? sessionDetail(session2.detail, t) : laneLabel(card.lane, t) }),
           !!sessionHostLabel && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "muted sm", children: [
             t("\uC2E4\uD589 \uD638\uC2A4\uD2B8", "Host"),
             " \xB7 ",
@@ -39682,6 +39753,20 @@ function CardView({ card, open: open2, sessionHostLabel }) {
       /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("p", { className: "muted sm", children: [session2.sourceProjectTitle && t(`\uC6D0\uB798 \uC18C\uC18D ${session2.sourceProjectTitle}`, `From ${session2.sourceProjectTitle}`), session2.workspaceTitle, runtime].filter(Boolean).join(" \xB7 ") }),
       !!session2.detail && !detailIsQuestion && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: sessionDetail(session2.detail, t), muted: true }),
       !!displayedQuestion && note?.text !== question && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: displayedQuestion }),
+      item && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...column, gap: 3 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("p", { className: "muted sm", children: [
+          t("\uC791\uC5C5", "Work"),
+          " \xB7 ",
+          item.title,
+          tracked ? " \xB7 " + tracked : ""
+        ] }),
+        item.doneMeans && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("p", { className: "muted sm", children: [
+          t("\uC644\uB8CC \uAE30\uC900", "Done means"),
+          " \xB7 ",
+          item.doneMeans
+        ] }),
+        item.report && note?.text !== item.report.text && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: item.report.text })
+      ] }),
       noteTitle && note && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...column, gap: 3 }, children: [
         /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("p", { className: "muted sm", children: noteTitle }),
         /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Markdown, { source: note.text })
@@ -39699,9 +39784,9 @@ function CardView({ card, open: open2, sessionHostLabel }) {
   ] });
 }
 function RecordPreview({ item, render, links }) {
-  const [expanded, setExpanded] = (0, import_react19.useState)(false);
+  const [expanded, setExpanded] = (0, import_react20.useState)(false);
   const { t } = useBoardLanguage();
-  const title = (0, import_react19.useMemo)(() => plainDecisionTitle(item.title), [item.title]);
+  const title = (0, import_react20.useMemo)(() => plainDecisionTitle(item.title), [item.title]);
   return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...column, gap: 4 }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       Button,
@@ -39718,7 +39803,7 @@ function RecordPreview({ item, render, links }) {
 }
 function Column({ lane, entries }) {
   const { t } = useBoardLanguage();
-  const [limit, setLimit] = (0, import_react19.useState)(4);
+  const [limit, setLimit] = (0, import_react20.useState)(4);
   return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "surface", style: { ...column, padding: 8, borderRadius: "var(--r-md)", gap: 7 }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: 6 }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { style: { width: 7, height: 7, borderRadius: 9999, flex: "none", background: accent(lane) } }),
@@ -39758,7 +39843,7 @@ function Project({ projectId: projectId4, title, decisions, cards, records, hist
 }
 
 // src/dashboard/pull-requests.tsx
-var import_react20 = __toESM(require_react());
+var import_react21 = __toESM(require_react());
 var import_jsx_runtime21 = __toESM(require_jsx_runtime());
 var labels4 = {
   ready: ["\uBCD1\uD569 \uAC80\uD1A0 \uAC00\uB2A5", "Ready for merge review"],
@@ -39811,7 +39896,7 @@ function MergeFeedback({ notice }) {
 }
 function GitHubPullLink({ repo, number: number4 }) {
   const { t } = useBoardLanguage();
-  const [failed, setFailed] = (0, import_react20.useState)(false);
+  const [failed, setFailed] = (0, import_react21.useState)(false);
   const url2 = pullUrl(repo, number4);
   const label = repo + " #" + number4;
   function open2() {
@@ -39837,8 +39922,8 @@ function GitHubPullLink({ repo, number: number4 }) {
 }
 function TrackedPullStatus({ repo, number: number4, projectId: projectId4, securityGate }) {
   const { t } = useBoardLanguage();
-  const [state, setState] = (0, import_react20.useState)(null);
-  (0, import_react20.useEffect)(() => {
+  const [state, setState] = (0, import_react21.useState)(null);
+  (0, import_react21.useEffect)(() => {
     let active = true;
     let timer;
     setState(null);
@@ -39868,12 +39953,12 @@ function TrackedPullStatus({ repo, number: number4, projectId: projectId4, secur
 }
 function PullRequestCard({ pr, projectId: projectId4, decision = false, showDivider = true, securityGate = false, openCoordinator, workSessions, onResult, clarification, priorityLabel: priorityLabel2 }) {
   const { t } = useBoardLanguage();
-  const [preview, setPreview] = (0, import_react20.useState)(null);
-  const [method, setMethod] = (0, import_react20.useState)(null);
-  const [notice, setNotice] = (0, import_react20.useState)(null);
-  const [lookupError, setLookupError] = (0, import_react20.useState)(false);
-  const [busy, setBusy] = (0, import_react20.useState)(null);
-  const locked = (0, import_react20.useRef)(false);
+  const [preview, setPreview] = (0, import_react21.useState)(null);
+  const [method, setMethod] = (0, import_react21.useState)(null);
+  const [notice, setNotice] = (0, import_react21.useState)(null);
+  const [lookupError, setLookupError] = (0, import_react21.useState)(false);
+  const [busy, setBusy] = (0, import_react21.useState)(null);
+  const locked = (0, import_react21.useRef)(false);
   const target2 = pr.repo + " #" + pr.number;
   const named = (label) => ({ label, accessibilityLabel: target2 + " \xB7 " + label });
   const ready = !securityGate && !!projectId4 && pr.lane === "review" && pr.reason === "ready" && notice?.status !== "merged" && notice?.status !== "already-merged";
@@ -39976,7 +40061,7 @@ function PullRequestCard({ pr, projectId: projectId4, decision = false, showDivi
 }
 function PullRequestSettings({ view, names, refresh }) {
   const { t } = useBoardLanguage();
-  const [expanded, setExpanded] = (0, import_react20.useState)(false);
+  const [expanded, setExpanded] = (0, import_react21.useState)(false);
   return /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(Disclosure, { title: t("\uD504\uB85C\uC81D\uD2B8\uBCC4 GitHub \uC800\uC7A5\uC18C", "GitHub repositories by project"), expanded, onPress: () => setExpanded(!expanded), children: view.projects.map((project2) => /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
     RepositorySetting,
     {
@@ -39989,9 +40074,9 @@ function PullRequestSettings({ view, names, refresh }) {
 }
 function RepositorySetting({ project: project2, title, refresh }) {
   const { t } = useBoardLanguage();
-  const [repo, setText] = (0, import_react20.useState)(project2.repo ?? "");
-  const [pending, setPending] = (0, import_react20.useState)(false);
-  const [error62, setError] = (0, import_react20.useState)(false);
+  const [repo, setText] = (0, import_react21.useState)(project2.repo ?? "");
+  const [pending, setPending] = (0, import_react21.useState)(false);
+  const [error62, setError] = (0, import_react21.useState)(false);
   async function change(mode) {
     if (pending) return;
     setPending(true);
@@ -40036,7 +40121,7 @@ function RepositorySetting({ project: project2, title, refresh }) {
 }
 
 // src/dashboard/tracked-decisions.tsx
-var import_react21 = __toESM(require_react());
+var import_react22 = __toESM(require_react());
 var import_jsx_runtime22 = __toESM(require_jsx_runtime());
 var kinds = {
   check: ["\uD655\uC778", "Check"],
@@ -40071,22 +40156,22 @@ function TrackedDecisionCard(props) {
 function DecisionRecord({ item, links, recipientId, onResolved, children, pull: pull2, renderClarification, priorityLabel: priorityLabel2 }) {
   const { t } = useBoardLanguage();
   const queue = item.queuedReply;
-  const [expanded, setExpanded] = (0, import_react21.useState)(false);
-  const [confirming, setConfirming] = (0, import_react21.useState)(false);
-  const [confirmedOwner, setConfirmedOwner] = (0, import_react21.useState)(item.sourceCoordinatorId);
-  const [skipped, setSkipped] = (0, import_react21.useState)({});
-  const [editedReply, setEditedReply] = (0, import_react21.useState)(null);
-  const [typed, setTyped] = (0, import_react21.useState)({});
-  const [selected, setSelected] = (0, import_react21.useState)({});
-  const [result, setResult] = (0, import_react21.useState)(null);
-  (0, import_react21.useEffect)(() => {
+  const [expanded, setExpanded] = (0, import_react22.useState)(false);
+  const [confirming, setConfirming] = (0, import_react22.useState)(false);
+  const [confirmedOwner, setConfirmedOwner] = (0, import_react22.useState)(item.sourceCoordinatorId);
+  const [skipped, setSkipped] = (0, import_react22.useState)({});
+  const [editedReply, setEditedReply] = (0, import_react22.useState)(null);
+  const [typed, setTyped] = (0, import_react22.useState)({});
+  const [selected, setSelected] = (0, import_react22.useState)({});
+  const [result, setResult] = (0, import_react22.useState)(null);
+  (0, import_react22.useEffect)(() => {
     if (queue && result === "queued") setResult(null);
   }, [queue, result]);
-  const [refreshFailed, setRefreshFailed] = (0, import_react21.useState)(false);
-  const [busy, setBusy] = (0, import_react21.useState)(false);
-  const [hasQuestionDraft, setHasQuestionDraft] = (0, import_react21.useState)(false);
+  const [refreshFailed, setRefreshFailed] = (0, import_react22.useState)(false);
+  const [busy, setBusy] = (0, import_react22.useState)(false);
+  const [hasQuestionDraft, setHasQuestionDraft] = (0, import_react22.useState)(false);
   const attachments = usePhotoDraft();
-  const pending = (0, import_react21.useRef)(false);
+  const pending = (0, import_react22.useRef)(false);
   const [kindKo, kindEn] = kinds[item.kind];
   const isMerge = item.kind === "merge";
   const target2 = trackedPullTarget(item);
@@ -40426,7 +40511,7 @@ function DecisionRecord({ item, links, recipientId, onResolved, children, pull: 
 }
 
 // src/dashboard/session-links.tsx
-var import_react22 = __toESM(require_react());
+var import_react23 = __toESM(require_react());
 
 // src/paseo/shared/session-links.ts
 var projectId3 = external_exports.string().min(1).max(4096);
@@ -40461,16 +40546,16 @@ function projectName(project2, projects) {
 }
 function LinkPicker({ projects, onChange }) {
   const { t } = useBoardLanguage();
-  const generation = (0, import_react22.useRef)(0);
-  const sending = (0, import_react22.useRef)(false);
-  const [rows, setRows] = (0, import_react22.useState)([]);
-  const [query, setQuery] = (0, import_react22.useState)("");
-  const [limit, setLimit] = (0, import_react22.useState)(12);
-  const [chosen, setChosen] = (0, import_react22.useState)(null);
-  const [target2, setTarget] = (0, import_react22.useState)(null);
-  const [error62, setError] = (0, import_react22.useState)(null);
-  const [saved, setSaved] = (0, import_react22.useState)(null);
-  const [busy, setBusy] = (0, import_react22.useState)(true);
+  const generation = (0, import_react23.useRef)(0);
+  const sending = (0, import_react23.useRef)(false);
+  const [rows, setRows] = (0, import_react23.useState)([]);
+  const [query, setQuery] = (0, import_react23.useState)("");
+  const [limit, setLimit] = (0, import_react23.useState)(12);
+  const [chosen, setChosen] = (0, import_react23.useState)(null);
+  const [target2, setTarget] = (0, import_react23.useState)(null);
+  const [error62, setError] = (0, import_react23.useState)(null);
+  const [saved, setSaved] = (0, import_react23.useState)(null);
+  const [busy, setBusy] = (0, import_react23.useState)(true);
   const load = async () => {
     const seq = ++generation.current;
     setBusy(true);
@@ -40487,7 +40572,7 @@ function LinkPicker({ projects, onChange }) {
       if (generation.current === seq) setBusy(false);
     }
   };
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     void load();
     return () => {
       generation.current++;
@@ -40620,7 +40705,7 @@ function LinkPicker({ projects, onChange }) {
 }
 function SessionLinks(props) {
   const { t } = useBoardLanguage();
-  const [opened, setOpened] = (0, import_react22.useState)(false);
+  const [opened, setOpened] = (0, import_react23.useState)(false);
   return /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(Disclosure, { title: t("\uB2E4\uB978 \uD504\uB85C\uC81D\uD2B8\uC758 \uC138\uC158 \uD558\uB098 \uC5F0\uACB0", "Link a session from another project"), expanded: opened, onPress: () => setOpened(!opened), children: /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(LinkPicker, { ...props }) });
 }
 
@@ -40707,7 +40792,7 @@ function BoardViewSetting({ view }) {
 }
 
 // src/dashboard/hosts.tsx
-var import_react23 = __toESM(require_react());
+var import_react24 = __toESM(require_react());
 var import_jsx_runtime26 = __toESM(require_jsx_runtime());
 var statusText = {
   online: ["\uC5F0\uACB0\uB428", "Online"],
@@ -40728,9 +40813,9 @@ var tone = {
 var unsupported = (error62) => /unknown[_ ]method|no handler|not (?:registered|found)/i.test(error62 instanceof Error ? error62.message : String(error62));
 function BoardHosts() {
   const { t } = useBoardLanguage();
-  const [hosts, setHosts] = (0, import_react23.useState)(null);
-  const [state, setState] = (0, import_react23.useState)("loading");
-  const generation = (0, import_react23.useRef)(0);
+  const [hosts, setHosts] = (0, import_react24.useState)(null);
+  const [state, setState] = (0, import_react24.useState)("loading");
+  const generation = (0, import_react24.useRef)(0);
   async function load() {
     const seq = ++generation.current;
     setState("loading");
@@ -40744,7 +40829,7 @@ function BoardHosts() {
       if (seq === generation.current) setState(unsupported(error62) ? "unsupported" : "error");
     }
   }
-  (0, import_react23.useEffect)(() => {
+  (0, import_react24.useEffect)(() => {
     void load();
     return () => {
       generation.current++;
@@ -40775,8 +40860,88 @@ function BoardHosts() {
   ] });
 }
 
+// src/dashboard/work-settings.tsx
+var import_react25 = __toESM(require_react());
+var import_jsx_runtime27 = __toESM(require_jsx_runtime());
+var unsupported2 = (error62) => /unknown[_ ]method|no handler|not (?:registered|found)/i.test(error62 instanceof Error ? error62.message : String(error62));
+var minutes = (text2) => /^\d{1,5}$/.test(text2.trim()) ? Number(text2.trim()) : NaN;
+function WorkSettingsCard() {
+  const { t } = useBoardLanguage();
+  const [saved, setSaved] = (0, import_react25.useState)(null);
+  const [idle, setIdle] = (0, import_react25.useState)("");
+  const [ask, setAsk] = (0, import_react25.useState)("");
+  const [state, setState] = (0, import_react25.useState)("loading");
+  const generation = (0, import_react25.useRef)(0);
+  function show(value) {
+    setSaved(value);
+    setIdle(String(value.idleMinutes));
+    setAsk(String(value.askMinutes));
+  }
+  (0, import_react25.useEffect)(() => {
+    const seq = ++generation.current;
+    call(boardWorkSettings, {}).then(
+      (value) => {
+        if (seq === generation.current) {
+          show(value);
+          setState("ready");
+        }
+      },
+      (error62) => {
+        if (seq === generation.current) setState(unsupported2(error62) ? "unsupported" : "error");
+      }
+    );
+    return () => {
+      generation.current++;
+    };
+  }, []);
+  if (state === "unsupported") return null;
+  const next = { idleMinutes: minutes(idle), askMinutes: minutes(ask) };
+  const valid = [next.idleMinutes, next.askMinutes].every((value) => value >= 5 && value <= 7 * 24 * 60);
+  const dirty = !!saved && (next.idleMinutes !== saved.idleMinutes || next.askMinutes !== saved.askMinutes);
+  async function save() {
+    setState("saving");
+    try {
+      show(await call(setWorkSettings, next));
+      setState("ready");
+    } catch {
+      setState("error");
+    }
+  }
+  const field = (label, value, set2) => /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("label", { style: { ...row, gap: 8 }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("span", { style: { minWidth: 0, flex: 1 }, children: t(...label) }),
+    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(
+      "input",
+      {
+        className: "input",
+        inputMode: "numeric",
+        style: { width: 90 },
+        "aria-label": t(...label),
+        value,
+        disabled: state === "saving" || state === "loading",
+        onChange: (event) => set2(event.target.value)
+      }
+    ),
+    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("span", { className: "muted", children: t("\uBD84", "min") })
+  ] });
+  return /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("section", { className: "surface", style: { ...column, gap: 8, padding: 14, borderRadius: "var(--r-xl)" }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("span", { role: "heading", "aria-level": 2, style: { fontSize: 17, lineHeight: "24px", fontWeight: 600 }, children: t("\uC791\uC5C5 \uBC29\uCE58 \uAE30\uC900", "Stale work") }),
+    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { className: "muted", children: t(
+      "\uBCF4\uB4DC\uAC00 \uBC30\uC815\uD55C \uC791\uC5C5\uC774 \uC774 \uC2DC\uAC04 \uB3D9\uC548 \uBA48\uCDB0 \uC788\uAC70\uB098 \uC644\uB8CC \uD655\uC778\uC5D0 \uB2F5\uD558\uC9C0 \uC54A\uC73C\uBA74 \uBC29\uCE58\uB85C \uD45C\uC2DC\uD558\uACE0 \uCF54\uB514\uB124\uC774\uD130\uC5D0\uAC8C \uC54C\uB9BD\uB2C8\uB2E4.",
+      "Work the board assigned is marked stale, and the coordinator told, when it sits idle this long or leaves the done check unanswered."
+    ) }),
+    state === "loading" && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { role: "status", className: "muted", children: t("\uAE30\uC900\uC744 \uC77D\uACE0 \uC788\uC2B5\uB2C8\uB2E4.", "Loading\u2026") }),
+    saved && /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)(import_jsx_runtime27.Fragment, { children: [
+      field(["\uB300\uAE30 \uC2DC\uAC04", "Idle for"], idle, setIdle),
+      field(["\uC644\uB8CC \uD655\uC778 \uBB34\uC751\uB2F5", "No answer to the done check for"], ask, setAsk),
+      !valid && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { role: "status", className: "danger", children: t("5\uBD84\uC5D0\uC11C 10080\uBD84 \uC0AC\uC774\uB85C \uC801\uC5B4 \uC8FC\uC138\uC694.", "Use 5 to 10080 minutes.") }),
+      /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(Button, { size: "sm", label: state === "saving" ? t("\uC800\uC7A5 \uC911\u2026", "Saving\u2026") : t("\uAE30\uC900 \uC800\uC7A5", "Save"), disabled: !valid || !dirty || state === "saving", onPress: () => void save() }) })
+    ] }),
+    state === "error" && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { role: "status", className: "danger", children: t("\uC791\uC5C5 \uBC29\uCE58 \uAE30\uC900\uC744 \uC77D\uAC70\uB098 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.", "Could not load or save the stale work settings.") })
+  ] });
+}
+
 // src/dashboard/view-inbox.tsx
-var import_react24 = __toESM(require_react());
+var import_react26 = __toESM(require_react());
 
 // src/paseo/client/inbox.ts
 var inboxNarrowWidth = 600;
@@ -40832,10 +40997,10 @@ function inboxKeyStep(event, target2) {
   }
   return key === "j" ? 1 : -1;
 }
-function waitAge(minutes, t) {
-  if (minutes < 1) return t("1\uBD84 \uBBF8\uB9CC", "<1m");
-  if (minutes < 60) return t(`${minutes}\uBD84`, `${minutes}m`);
-  const hours = Math.floor(minutes / 60);
+function waitAge(minutes2, t) {
+  if (minutes2 < 1) return t("1\uBD84 \uBBF8\uB9CC", "<1m");
+  if (minutes2 < 60) return t(`${minutes2}\uBD84`, `${minutes2}m`);
+  const hours = Math.floor(minutes2 / 60);
   if (hours < 24) return t(`${hours}\uC2DC\uAC04`, `${hours}h`);
   return t(`${Math.floor(hours / 24)}\uC77C`, `${Math.floor(hours / 24)}d`);
 }
@@ -40879,32 +41044,32 @@ function inboxRowAccessibilityLabel(row2) {
 }
 
 // src/dashboard/view-inbox.tsx
-var import_jsx_runtime27 = __toESM(require_jsx_runtime());
+var import_jsx_runtime28 = __toESM(require_jsx_runtime());
 var listWidth = 352;
 function InboxListRow({ row: item, projectNames: projectNames2, selected, onPress }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("button", { type: "button", className: "list-row", "aria-selected": selected, "aria-label": inboxRowAccessibilityLabel(item), onClick: onPress, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("span", { style: { marginTop: 5 }, children: /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(StatusDot, { tone: item.tone }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("span", { style: { ...column, flex: 1, minWidth: 0, gap: space[0.5] }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("span", { style: { ...row, flexWrap: "nowrap", gap: space[2] }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("span", { className: "ellipsis", style: { flex: 1 }, children: item.title }),
-        item.aside && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("span", { className: "muted sm", style: { whiteSpace: "nowrap" }, children: item.aside })
+  return /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("button", { type: "button", className: "list-row", "aria-selected": selected, "aria-label": inboxRowAccessibilityLabel(item), onClick: onPress, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { style: { marginTop: 5 }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(StatusDot, { tone: item.tone }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("span", { style: { ...column, flex: 1, minWidth: 0, gap: space[0.5] }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("span", { style: { ...row, flexWrap: "nowrap", gap: space[2] }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { className: "ellipsis", style: { flex: 1 }, children: item.title }),
+        item.aside && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { className: "muted sm", style: { whiteSpace: "nowrap" }, children: item.aside })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(ProjectText, { projects: projectNames2, lines: 1, className: "muted sm", children: item.meta })
+      /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(ProjectText, { projects: projectNames2, lines: 1, className: "muted sm", children: item.meta })
     ] })
   ] });
 }
 function InboxView({ compact, entries, renderReceipt, slots, projects }) {
   const { t } = useBoardLanguage();
-  const [tab, setTab] = (0, import_react24.useState)("decisions");
+  const [tab, setTab] = (0, import_react26.useState)("decisions");
   const [box, width] = useWidth();
-  const [requesting, setRequesting] = (0, import_react24.useState)(false);
-  const [detailOpen, setDetailOpen] = (0, import_react24.useState)(false);
-  const [chosen, setChosen] = (0, import_react24.useState)(null);
+  const [requesting, setRequesting] = (0, import_react26.useState)(false);
+  const [detailOpen, setDetailOpen] = (0, import_react26.useState)(false);
+  const [chosen, setChosen] = (0, import_react26.useState)(null);
   const sections = inboxSections(entries);
   const order2 = inboxOrder(sections);
-  const lastOrder = (0, import_react24.useRef)(order2);
+  const lastOrder = (0, import_react26.useRef)(order2);
   const selected = keepSelection(lastOrder.current, order2, chosen);
-  (0, import_react24.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     lastOrder.current = order2;
     if (selected !== chosen) setChosen(selected);
   });
@@ -40913,18 +41078,18 @@ function InboxView({ compact, entries, renderReceipt, slots, projects }) {
   const showDetail = narrow && detailOpen && !!selectedEntry;
   const pad = compact ? space[3] : space[6];
   const now = Date.now();
-  const detail = (0, import_react24.useRef)(null);
-  (0, import_react24.useEffect)(() => {
+  const detail = (0, import_react26.useRef)(null);
+  (0, import_react26.useEffect)(() => {
     detail.current?.scrollTo({ top: 0 });
   }, [selected]);
-  const step = (0, import_react24.useRef)((_delta) => {
+  const step = (0, import_react26.useRef)((_delta) => {
   });
   step.current = (delta) => {
     const next = stepSelection(order2, selected, delta);
     if (next !== null) setChosen(next);
   };
   const listening = tab === "decisions";
-  (0, import_react24.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     if (!listening) return;
     const onKey = (event) => {
       const delta = inboxKeyStep(event, event.target);
@@ -40938,15 +41103,15 @@ function InboxView({ compact, entries, renderReceipt, slots, projects }) {
   const empty = entries.length === 0;
   const permission = !!selectedEntry?.summary?.permission;
   const scrollBody = { ...column, padding: pad, gap: space[4] };
-  return /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("div", { ref: box, style: { ...column, flex: 1, minHeight: 0 }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("div", { style: { ...row, gap: space[2], padding: `${space[2]}px ${pad}px`, borderBottom: "1px solid var(--border)" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(SegmentedControl, { value: tab, onChange: setTab, accessibilityLabel: t("\uBCF4\uB4DC \uAD6C\uC5ED", "Board sections"), options: [
+  return /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { ref: box, style: { ...column, flex: 1, minHeight: 0 }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, gap: space[2], padding: `${space[2]}px ${pad}px`, borderBottom: "1px solid var(--border)" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(SegmentedControl, { value: tab, onChange: setTab, accessibilityLabel: t("\uBCF4\uB4DC \uAD6C\uC5ED", "Board sections"), options: [
         { id: "decisions", label: t(`\uACB0\uC815 ${activeDecisionCount(entries)}`, `Decisions ${activeDecisionCount(entries)}`) },
         { id: "progress", label: t("\uC9C4\uD589", "Progress") },
         { id: "history", label: t("\uAE30\uB85D", "History") }
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: { flex: 1 } }),
-      tab === "decisions" && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { flex: 1 } }),
+      tab === "decisions" && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(
         Button,
         {
           variant: "secondary",
@@ -40957,26 +41122,26 @@ function InboxView({ compact, entries, renderReceipt, slots, projects }) {
         }
       )
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { className: "scroll", style: { display: tab === "decisions" && requesting ? "flex" : "none", flexDirection: "column", maxHeight: "50%", borderBottom: "1px solid var(--border)" }, children: /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: scrollBody, children: slots.operations }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: { flex: 1, minHeight: 0, display: tab === "decisions" ? "flex" : "none", flexDirection: narrow ? "column" : "row" }, children: empty ? /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { className: "scroll", style: { flex: 1 }, children: /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("div", { style: scrollBody, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { className: "scroll", style: { display: tab === "decisions" && requesting ? "flex" : "none", flexDirection: "column", maxHeight: "50%", borderBottom: "1px solid var(--border)" }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: scrollBody, children: slots.operations }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { flex: 1, minHeight: 0, display: tab === "decisions" ? "flex" : "none", flexDirection: narrow ? "column" : "row" }, children: empty ? /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { className: "scroll", style: { flex: 1 }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: scrollBody, children: [
       slots.filters,
       slots.notices,
       slots.history
-    ] }) }) : /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)(import_jsx_runtime27.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(
+    ] }) }) : /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)(import_jsx_runtime28.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(
         "div",
         {
           className: "scroll",
           "aria-label": t("\uACB0\uC815 \uBAA9\uB85D", "Decision list"),
           style: narrow ? { flex: 1, display: showDetail ? "none" : "block" } : { width: listWidth, flex: "none", borderRight: "1px solid var(--border)" },
-          children: /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("div", { style: { ...column, padding: space[2], gap: space[2] }, children: [
-            (slots.filters || slots.notices) && /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("div", { style: { ...column, padding: space[1], gap: space[2] }, children: [
+          children: /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, padding: space[2], gap: space[2] }, children: [
+            (slots.filters || slots.notices) && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, padding: space[1], gap: space[2] }, children: [
               slots.filters,
               slots.notices
             ] }),
-            sections.map((section) => /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("div", { style: { ...column, gap: space[0.5] }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: { padding: `${space[3]}px ${space[2]}px ${space[1]}px` }, children: /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(SectionLabel, { count: section.entries.length, children: inboxSectionLabel(section.id, t) }) }),
-              section.entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(
+            sections.map((section) => /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, gap: space[0.5] }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { padding: `${space[3]}px ${space[2]}px ${space[1]}px` }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(SectionLabel, { count: section.entries.length, children: inboxSectionLabel(section.id, t) }) }),
+              section.entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(
                 InboxListRow,
                 {
                   selected: entry.key === selected,
@@ -40990,25 +41155,25 @@ function InboxView({ compact, entries, renderReceipt, slots, projects }) {
                 entry.key
               ))
             ] }, section.id)),
-            !narrow && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { className: "muted sm", style: { padding: space[2] }, children: t("J \xB7 K \uD0A4\uB85C \uC774\uC804\xB7\uB2E4\uC74C \uACB0\uC815", "J \xB7 K for next and previous") })
+            !narrow && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("p", { className: "muted sm", style: { padding: space[2] }, children: t("J \xB7 K \uD0A4\uB85C \uC774\uC804\xB7\uB2E4\uC74C \uACB0\uC815", "J \xB7 K for next and previous") })
           ] })
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(
         "div",
         {
           ref: detail,
           className: "scroll",
           "aria-label": t("\uACB0\uC815 \uC0C1\uC138", "Decision detail"),
           style: narrow ? { flex: 1, display: showDetail ? "block" : "none" } : { flex: 1, minWidth: 0 },
-          children: /* @__PURE__ */ (0, import_jsx_runtime27.jsxs)("div", { style: scrollBody, children: [
-            narrow && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: { alignSelf: "flex-start" }, children: /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(Button, { variant: "ghost", size: "sm", label: t("\uBAA9\uB85D\uC73C\uB85C", "Back to list"), onPress: () => setDetailOpen(false) }) }),
-            permission && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { className: "muted sm", children: t(
+          children: /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: scrollBody, children: [
+            narrow && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { alignSelf: "flex-start" }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(Button, { variant: "ghost", size: "sm", label: t("\uBAA9\uB85D\uC73C\uB85C", "Back to list"), onPress: () => setDetailOpen(false) }) }),
+            permission && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("p", { className: "muted sm", children: t(
               "\uC138\uC158\uC5D0\uC11C \uC2B9\uC778: \uC774 \uC138\uC158\uC740 \uAD8C\uD55C \uC2B9\uC778\uC744 \uAE30\uB2E4\uB9BD\uB2C8\uB2E4. \uBCF4\uB4DC\uB294 \uAD8C\uD55C\uC744 \uAE30\uB2E4\uB9AC\uB294 \uC138\uC158\uC5D0 \uB2F5\uC7A5\uC744 \uBCF4\uB0B4\uC9C0 \uC54A\uC73C\uB2C8 \uC138\uC158\uC744 \uC5F4\uC5B4 \uC2B9\uC778\uD558\uC138\uC694.",
               "Approve in session: this session is waiting for permission. The board does not send to a session that waits for permission, so open the session to approve."
             ) }),
-            selectedEntry && selectedEntry.receipts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: { ...column, gap: space[2] }, children: selectedEntry.receipts.map(renderReceipt) }),
-            entries.map((entry) => entry.card === null ? null : /* @__PURE__ */ (0, import_jsx_runtime27.jsx)(
+            selectedEntry && selectedEntry.receipts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { ...column, gap: space[2] }, children: selectedEntry.receipts.map(renderReceipt) }),
+            entries.map((entry) => entry.card === null ? null : /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(
               "article",
               {
                 className: "surface",
@@ -41017,18 +41182,18 @@ function InboxView({ compact, entries, renderReceipt, slots, projects }) {
               },
               entry.key
             )),
-            !selectedEntry && /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { className: "muted sm", children: t("\uBAA9\uB85D\uC5D0\uC11C \uACB0\uC815\uC744 \uACE0\uB974\uC138\uC694.", "Pick a decision from the list.") })
+            !selectedEntry && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("p", { className: "muted sm", children: t("\uBAA9\uB85D\uC5D0\uC11C \uACB0\uC815\uC744 \uACE0\uB974\uC138\uC694.", "Pick a decision from the list.") })
           ] })
         }
       )
     ] }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { className: "scroll", style: { flex: 1, display: tab === "progress" ? "block" : "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: scrollBody, children: slots.progress ?? /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { className: "muted sm", children: t("\uD45C\uC2DC\uD560 \uC138\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No sessions to show.") }) }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { className: "scroll", style: { flex: 1, display: tab === "history" ? "block" : "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("div", { style: scrollBody, children: slots.history ?? /* @__PURE__ */ (0, import_jsx_runtime27.jsx)("p", { className: "muted sm", children: t("\uC544\uC9C1 \uACB0\uC815 \uAE30\uB85D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decision activity yet.") }) }) })
+    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { className: "scroll", style: { flex: 1, display: tab === "progress" ? "block" : "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: scrollBody, children: slots.progress ?? /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("p", { className: "muted sm", children: t("\uD45C\uC2DC\uD560 \uC138\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No sessions to show.") }) }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { className: "scroll", style: { flex: 1, display: tab === "history" ? "block" : "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: scrollBody, children: slots.history ?? /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("p", { className: "muted sm", children: t("\uC544\uC9C1 \uACB0\uC815 \uAE30\uB85D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decision activity yet.") }) }) })
   ] });
 }
 
 // src/dashboard/view-focus.tsx
-var import_react25 = __toESM(require_react());
+var import_react27 = __toESM(require_react());
 
 // src/paseo/client/focus-queue.ts
 var isActive = (entry) => entry.row !== null;
@@ -41110,25 +41275,25 @@ function runningMarks(count2, max = 5) {
 }
 
 // src/dashboard/view-focus.tsx
-var import_jsx_runtime28 = __toESM(require_jsx_runtime());
+var import_jsx_runtime29 = __toESM(require_jsx_runtime());
 function FocusView(props) {
   const { compact, entries, renderReceipt, slots, projects } = props;
   const { t } = useBoardLanguage();
   const [box, width] = useWidth();
   const narrow = compact || width > 0 && width < 600;
   const pad = narrow ? space[3] : space[6];
-  const [deferred, setDeferred] = (0, import_react25.useState)([]);
-  const [chosen, setChosen] = (0, import_react25.useState)(null);
-  const lastQueue = (0, import_react25.useRef)([]);
+  const [deferred, setDeferred] = (0, import_react27.useState)([]);
+  const [chosen, setChosen] = (0, import_react27.useState)(null);
+  const lastQueue = (0, import_react27.useRef)([]);
   const rail = focusRail(entries, deferred);
   const queue = rail.filter((entry) => entry.row !== null).map((entry) => entry.key);
   const current = resolveFocus(chosen, lastQueue.current, queue);
-  (0, import_react25.useEffect)(() => {
+  (0, import_react27.useEffect)(() => {
     lastQueue.current = queue;
     if (current !== chosen) setChosen(current);
   });
-  const [operationsOpen, setOperationsOpen] = (0, import_react25.useState)(false);
-  const [progressOpen, setProgressOpen] = (0, import_react25.useState)(false);
+  const [operationsOpen, setOperationsOpen] = (0, import_react27.useState)(false);
+  const [progressOpen, setProgressOpen] = (0, import_react27.useState)(false);
   const index = current === null ? -1 : queue.indexOf(current);
   const act = (action) => {
     if (action === "next") setChosen(stepFocus(queue, current, 1));
@@ -41139,9 +41304,9 @@ function FocusView(props) {
       setChosen(result.current);
     }
   };
-  const latest = (0, import_react25.useRef)(act);
+  const latest = (0, import_react27.useRef)(act);
   latest.current = act;
-  (0, import_react25.useEffect)(() => {
+  (0, import_react27.useEffect)(() => {
     const onKey = (event) => {
       const target2 = event.target instanceof HTMLElement ? event.target : null;
       const action = focusKeyAction({
@@ -41168,12 +41333,12 @@ function FocusView(props) {
   const projectIcons = (entry) => entry.summary?.projectIds.filter((id4) => id4 !== null).map(projects.name) ?? [];
   const approve = t("\uC138\uC158\uC5D0\uC11C \uC2B9\uC778", "Approve in session");
   const emptyNotice = focusNeedsEmptyNotice({ queue, total: props.total, filtered: props.filtered, filteredTotal: props.filteredTotal, incomplete: props.incomplete });
-  return /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { ref: box, style: { ...column, flex: 1, minHeight: 0 }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { className: "scroll", style: { flex: 1 }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { ...column, alignItems: "center", padding: pad }, children: /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, width: "100%", maxWidth: 720, gap: space[4] }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, alignItems: "flex-start", gap: space[2] }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { flex: "1 1 200px", minWidth: 0 }, children: slots.filters }),
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { ref: box, style: { ...column, flex: 1, minHeight: 0 }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { className: "scroll", style: { flex: 1 }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { ...column, alignItems: "center", padding: pad }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, width: "100%", maxWidth: 720, gap: space[4] }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...row, alignItems: "flex-start", gap: space[2] }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { flex: "1 1 200px", minWidth: 0 }, children: slots.filters }),
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(
             Button,
             {
               variant: "secondary",
@@ -41185,61 +41350,61 @@ function FocusView(props) {
           )
         ] }),
         operationsOpen && slots.operations,
-        rail.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: space[3] }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { "aria-hidden": "true", style: { ...row, flexWrap: "nowrap", flex: 1, gap: space[1] }, children: rail.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(RailMark, { cell: railCell(entry, current), tone: entry.summary?.tone ?? "muted" }, entry.key)) }),
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { "aria-live": "polite", className: "muted sm", style: { whiteSpace: "nowrap" }, children: progress.position === null ? t(`\uCC98\uB9AC ${progress.processed}\uAC74`, `${progress.processed} done`) : t(`${progress.position} / ${progress.total} \xB7 \uCC98\uB9AC ${progress.processed}\uAC74`, `${progress.position} of ${progress.total} \xB7 ${progress.processed} done`) })
+        rail.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: space[3] }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { "aria-hidden": "true", style: { ...row, flexWrap: "nowrap", flex: 1, gap: space[1] }, children: rail.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(RailMark, { cell: railCell(entry, current), tone: entry.summary?.tone ?? "muted" }, entry.key)) }),
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { "aria-live": "polite", className: "muted sm", style: { whiteSpace: "nowrap" }, children: progress.position === null ? t(`\uCC98\uB9AC ${progress.processed}\uAC74`, `${progress.processed} done`) : t(`${progress.position} / ${progress.total} \xB7 \uCC98\uB9AC ${progress.processed}\uAC74`, `${progress.position} of ${progress.total} \xB7 ${progress.processed} done`) })
         ] })
       ] }),
       slots.notices,
-      emptyNotice && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("p", { className: "muted", children: t("\uC9C0\uAE08 \uACB0\uC815\uD560 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decisions are waiting for you.") }),
-      /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)(
+      emptyNotice && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("p", { className: "muted", children: t("\uC9C0\uAE08 \uACB0\uC815\uD560 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decisions are waiting for you.") }),
+      /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)(
         "div",
         {
           className: currentEntry ? "surface" : void 0,
           style: currentEntry ? { ...column, gap: space[4], padding: narrow ? space[3] : space[6], borderRadius: "var(--r-xl)" } : void 0,
           children: [
-            currentEntry?.summary && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, gap: space[2] }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(StatusBadge, { tone: currentEntry.summary.tone, label: currentEntry.label ?? decisionGroupLabel(currentEntry.summary.group, t) }),
-              !!projectLine(currentEntry) && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(ProjectText, { projects: projectIcons(currentEntry), lines: 1, className: "muted sm", children: projectLine(currentEntry) }),
-              currentEntry.summary.permission && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { className: "sm", style: { color: "var(--warning-text)" }, children: approve })
+            currentEntry?.summary && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...row, gap: space[2] }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(StatusBadge, { tone: currentEntry.summary.tone, label: currentEntry.label ?? decisionGroupLabel(currentEntry.summary.group, t) }),
+              !!projectLine(currentEntry) && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ProjectText, { projects: projectIcons(currentEntry), lines: 1, className: "muted sm", children: projectLine(currentEntry) }),
+              currentEntry.summary.permission && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: "sm", style: { color: "var(--warning-text)" }, children: approve })
             ] }),
             currentEntry?.receipts.map(renderReceipt),
-            entries.map((entry) => entry.card && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: entry.key === current ? void 0 : { display: "none" }, children: entry.card }, entry.key))
+            entries.map((entry) => entry.card && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: entry.key === current ? void 0 : { display: "none" }, children: entry.card }, entry.key))
           ]
         }
       ),
-      currentEntry && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, gap: space[2] }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(Button, { variant: "ghost", size: "sm", label: t("\uC774\uC804", "Previous"), disabled: index <= 0, onPress: () => act("previous") }),
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(Button, { variant: "ghost", size: "sm", label: t("\uB098\uC911\uC5D0", "Later"), disabled: queue.length < 2, onPress: () => act("defer") }),
-          !narrow && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { className: "muted sm", children: t("J \uB2E4\uC74C \xB7 K \uC774\uC804 \xB7 S \uB098\uC911\uC5D0", "J next \xB7 K previous \xB7 S later") }),
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("div", { style: { flex: 1 } }),
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(Button, { variant: "ghost", label: t("\uB2E4\uC74C", "Next"), disabled: index < 0 || index >= queue.length - 1, onPress: () => act("next") })
+      currentEntry && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...row, gap: space[2] }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Button, { variant: "ghost", size: "sm", label: t("\uC774\uC804", "Previous"), disabled: index <= 0, onPress: () => act("previous") }),
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Button, { variant: "ghost", size: "sm", label: t("\uB098\uC911\uC5D0", "Later"), disabled: queue.length < 2, onPress: () => act("defer") }),
+          !narrow && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: "muted sm", children: t("J \uB2E4\uC74C \xB7 K \uC774\uC804 \xB7 S \uB098\uC911\uC5D0", "J next \xB7 K previous \xB7 S later") }),
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { flex: 1 } }),
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Button, { variant: "ghost", label: t("\uB2E4\uC74C", "Next"), disabled: index < 0 || index >= queue.length - 1, onPress: () => act("next") })
         ] }),
-        nextEntry?.summary && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, gap: space[1] }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(SectionLabel, { children: t("\uB2E4\uC74C \uCC28\uB840", "Up next") }),
-          /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: space[2] }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(StatusDot, { tone: nextEntry.summary.tone }),
-            /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { className: "muted sm ellipsis", children: [nextEntry.summary.title, projectLine(nextEntry), nextEntry.summary.permission ? approve : ""].filter(Boolean).join(" \xB7 ") })
+        nextEntry?.summary && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[1] }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(SectionLabel, { children: t("\uB2E4\uC74C \uCC28\uB840", "Up next") }),
+          /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: space[2] }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(StatusDot, { tone: nextEntry.summary.tone }),
+            /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: "muted sm ellipsis", children: [nextEntry.summary.title, projectLine(nextEntry), nextEntry.summary.permission ? approve : ""].filter(Boolean).join(" \xB7 ") })
           ] })
         ] })
       ] }),
-      processed.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, gap: space[1] }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(SectionLabel, { count: processed.length, children: t("\uCC98\uB9AC\uD55C \uACB0\uC815", "Handled decisions") }),
+      processed.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[1] }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(SectionLabel, { count: processed.length, children: t("\uCC98\uB9AC\uD55C \uACB0\uC815", "Handled decisions") }),
         processed.flatMap((entry) => entry.receipts.map(renderReceipt))
       ] }),
-      progressOpen && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...column, gap: space[4] }, children: [
+      progressOpen && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[4] }, children: [
         slots.progress,
         slots.history
       ] })
     ] }) }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(ActivityStrip, { props, pad, open: progressOpen, onToggle: () => setProgressOpen((open2) => !open2), t })
+    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ActivityStrip, { props, pad, open: progressOpen, onToggle: () => setProgressOpen((open2) => !open2), t })
   ] });
 }
 function RailMark({ cell, tone: tone2 }) {
   const status = tone2 === "danger" ? "var(--destructive)" : tone2 === "warning" ? "var(--warning)" : "var(--border)";
   const fill = cell === "done" ? "var(--success)" : cell === "current" ? "var(--fg)" : cell === "waiting" ? `color-mix(in oklab, ${status} 16%, transparent)` : "var(--muted)";
-  return /* @__PURE__ */ (0, import_jsx_runtime28.jsx)("span", { style: {
+  return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { style: {
     flex: 1,
     height: 4,
     borderRadius: 2,
@@ -41251,12 +41416,12 @@ function RailMark({ cell, tone: tone2 }) {
 function ActivityStrip({ props, pad, open: open2, onToggle, t }) {
   const { projects } = props;
   const activity = focusActivity(projects.list, [], projects.name);
-  return /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: space[3], padding: `${space[2]}px ${pad}px`, borderTop: "1px solid var(--border)", background: "var(--bg)" }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("div", { style: { ...row, flex: 1, minWidth: 0, columnGap: space[4], rowGap: space[1] }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(SectionLabel, { count: activity.running, children: t("\uC9C4\uD589 \uC911", "Running") }),
+  return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...row, flexWrap: "nowrap", gap: space[3], padding: `${space[2]}px ${pad}px`, borderTop: "1px solid var(--border)", background: "var(--bg)" }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...row, flex: 1, minWidth: 0, columnGap: space[4], rowGap: space[1] }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(SectionLabel, { count: activity.running, children: t("\uC9C4\uD589 \uC911", "Running") }),
       activity.projects.map((project2) => {
         const { marks, extra } = runningMarks(project2.running);
-        return /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)(
+        return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)(
           "span",
           {
             role: "group",
@@ -41267,34 +41432,34 @@ function ActivityStrip({ props, pad, open: open2, onToggle, t }) {
             ].filter(Boolean).join(" \xB7 "),
             style: { ...row, flexWrap: "nowrap", gap: space[1] },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(ProjectText, { projectId: project2.id, projects: [project2.name], lines: 1, style: { fontSize: fontSize.sm, maxWidth: 160 }, children: project2.name }),
-              Array.from({ length: marks }, (_2, i) => /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(RunningMark, {}, i)),
-              extra > 0 && /* @__PURE__ */ (0, import_jsx_runtime28.jsxs)("span", { className: "muted sm", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ProjectText, { projectId: project2.id, projects: [project2.name], lines: 1, style: { fontSize: fontSize.sm, maxWidth: 160 }, children: project2.name }),
+              Array.from({ length: marks }, (_2, i) => /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(RunningMark, {}, i)),
+              extra > 0 && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("span", { className: "muted sm", children: [
                 "+",
                 extra
               ] }),
-              project2.attention && /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(StatusDot, { tone: "danger" })
+              project2.attention && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(StatusDot, { tone: "danger" })
             ]
           },
           project2.id
         );
       })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime28.jsx)(Button, { variant: "ghost", size: "sm", label: open2 ? t("\uC9C4\uD589 \uB2EB\uAE30", "Hide progress") : t("\uC9C4\uD589 \uBCF4\uAE30", "Show progress"), expanded: open2, onPress: onToggle })
+    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Button, { variant: "ghost", size: "sm", label: open2 ? t("\uC9C4\uD589 \uB2EB\uAE30", "Hide progress") : t("\uC9C4\uD589 \uBCF4\uAE30", "Show progress"), expanded: open2, onPress: onToggle })
   ] });
 }
 
 // src/dashboard/view-matrix.tsx
-var import_react26 = __toESM(require_react());
-var import_jsx_runtime29 = __toESM(require_jsx_runtime());
+var import_react28 = __toESM(require_react());
+var import_jsx_runtime30 = __toESM(require_jsx_runtime());
 function MatrixView(props) {
   const { compact, entries, renderReceipt, slots, projects } = props;
   const { t } = useBoardLanguage();
   const [box, width] = useWidth();
-  const [operations2, setOperations] = (0, import_react26.useState)({ open: false, mounted: false });
-  const [progress, setProgress] = (0, import_react26.useState)({ open: false, mounted: false });
-  const [cell, setCell] = (0, import_react26.useState)(null);
-  const [opened, setOpened] = (0, import_react26.useState)([]);
+  const [operations2, setOperations] = (0, import_react28.useState)({ open: false, mounted: false });
+  const [progress, setProgress] = (0, import_react28.useState)({ open: false, mounted: false });
+  const [cell, setCell] = (0, import_react28.useState)(null);
+  const [opened, setOpened] = (0, import_react28.useState)([]);
   const narrow = isNarrow(compact, width);
   const rows = matrixRows({ ...projects, peers: [] }, t("\uACF5\uD1B5", "Host-wide"));
   const mounted = liveCells(opened, rows);
@@ -41302,10 +41467,10 @@ function MatrixView(props) {
     setCell((current) => toggleCell(current, next));
     setOpened((current) => rememberCell(current, next, rows));
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { ref: box, className: "scroll", style: { flex: 1 }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[4], padding: narrow ? space[3] : space[6] }, children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { ref: box, className: "scroll", style: { flex: 1 }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[4], padding: narrow ? space[3] : space[6] }, children: [
     slots.filters,
     slots.notices,
-    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { ...row, gap: space[2] }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { ...row, gap: space[2] }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
       Button,
       {
         variant: "secondary",
@@ -41315,12 +41480,12 @@ function MatrixView(props) {
         onPress: () => setOperations((state) => ({ open: !state.open, mounted: true }))
       }
     ) }),
-    operations2.mounted && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Hideable, { hidden: !operations2.open, children: slots.operations }),
-    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(DecisionRibbon, { entries, renderReceipt, name: projects.name }),
-    narrow ? /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(NarrowMatrix, { rows, projects, cell, mounted, onCell }) : /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(WideMatrix, { rows, projects, cell, mounted, wide: width >= 900, onCell }),
+    operations2.mounted && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Hideable, { hidden: !operations2.open, children: slots.operations }),
+    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(DecisionRibbon, { entries, renderReceipt, name: projects.name }),
+    narrow ? /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(NarrowMatrix, { rows, projects, cell, mounted, onCell }) : /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(WideMatrix, { rows, projects, cell, mounted, wide: width >= 900, onCell }),
     slots.history,
-    /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[3] }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: row, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[3] }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: row, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
         Button,
         {
           variant: "ghost",
@@ -41330,25 +41495,25 @@ function MatrixView(props) {
           onPress: () => setProgress((state) => ({ open: !state.open, mounted: true }))
         }
       ) }),
-      progress.mounted && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Hideable, { hidden: !progress.open, children: slots.progress })
+      progress.mounted && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Hideable, { hidden: !progress.open, children: slots.progress })
     ] })
   ] }) });
 }
 function Hideable({ hidden, style: style2, children }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { "aria-hidden": hidden || void 0, style: { ...column, ...style2, ...hidden ? { display: "none" } : null }, children });
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { "aria-hidden": hidden || void 0, style: { ...column, ...style2, ...hidden ? { display: "none" } : null }, children });
 }
 function DecisionRibbon({ entries, renderReceipt, name }) {
   const { t } = useBoardLanguage();
-  const [selected, setSelected] = (0, import_react26.useState)(null);
+  const [selected, setSelected] = (0, import_react28.useState)(null);
   const active = ribbonEntries(entries);
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(SectionLabel, { count: active.length, children: t("\uB0B4 \uACB0\uC815", "My decisions") }),
-    active.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { className: "scroll", style: { ...row, flexWrap: "nowrap", alignItems: "stretch", gap: space[2], paddingBottom: space[1] }, children: active.map((entry) => {
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(SectionLabel, { count: active.length, children: t("\uB0B4 \uACB0\uC815", "My decisions") }),
+    active.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { className: "scroll", style: { ...row, flexWrap: "nowrap", alignItems: "stretch", gap: space[2], paddingBottom: space[1] }, children: active.map((entry) => {
       const summary = entry.summary;
       const chosen = entry.key === selected;
       const label = entry.label ?? decisionGroupLabel(summary.group, t);
       const project2 = summary.projectIds.map(name).join(", ");
-      return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)(
+      return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(
         "button",
         {
           type: "button",
@@ -41357,26 +41522,26 @@ function DecisionRibbon({ entries, renderReceipt, name }) {
           "aria-label": [label, summary.title, project2].join(" \xB7 "),
           onClick: () => setSelected(chosen ? null : entry.key),
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(StatusBadge, { tone: summary.tone, label }),
-            /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: "clamp2", style: { fontSize: fontSize.base }, children: summary.title }),
-            /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ProjectText, { projects: summary.projectIds.filter((id4) => id4 !== null).map(name), lines: 1, className: "muted sm", children: summary.permission ? `${project2} \xB7 ${t("\uC138\uC158\uC5D0\uC11C \uC2B9\uC778", "Approve in session")}` : project2 })
+            /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(StatusBadge, { tone: summary.tone, label }),
+            /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: "clamp2", style: { fontSize: fontSize.base }, children: summary.title }),
+            /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(ProjectText, { projects: summary.projectIds.filter((id4) => id4 !== null).map(name), lines: 1, className: "muted sm", children: summary.permission ? `${project2} \xB7 ${t("\uC138\uC158\uC5D0\uC11C \uC2B9\uC778", "Approve in session")}` : project2 })
           ]
         },
         entry.key
       );
-    }) }) : /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("p", { className: "muted sm", children: t("\uC5C6\uC74C", "None") }),
+    }) }) : /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted sm", children: t("\uC5C6\uC74C", "None") }),
     entries.map((entry) => {
       const shown = entryDisplay(entry, selected);
-      return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)(Hideable, { hidden: !shown.card && !shown.receipts, style: { gap: space[2] }, children: [
+      return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(Hideable, { hidden: !shown.card && !shown.receipts, style: { gap: space[2] }, children: [
         shown.receipts && entry.receipts.map(renderReceipt),
-        shown.card && entry.summary?.permission && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("p", { className: "muted sm", children: t("\uAD8C\uD55C \uC694\uCCAD\uC740 \uC138\uC158\uC5D0\uC11C \uC2B9\uC778\uD569\uB2C8\uB2E4. \uBCF4\uB4DC\uB294 \uC774 \uC138\uC158\uC5D0 \uBA54\uC2DC\uC9C0\uB97C \uBCF4\uB0B4\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", "Approve permission requests in the session. The board does not message this session.") }),
-        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Hideable, { hidden: !shown.card, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("article", { className: "surface", style: { ...column, gap: space[2], padding: space[4], borderRadius: "var(--r-xl)" }, children: entry.card }) })
+        shown.card && entry.summary?.permission && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted sm", children: t("\uAD8C\uD55C \uC694\uCCAD\uC740 \uC138\uC158\uC5D0\uC11C \uC2B9\uC778\uD569\uB2C8\uB2E4. \uBCF4\uB4DC\uB294 \uC774 \uC138\uC158\uC5D0 \uBA54\uC2DC\uC9C0\uB97C \uBCF4\uB0B4\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", "Approve permission requests in the session. The board does not message this session.") }),
+        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Hideable, { hidden: !shown.card, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("article", { className: "surface", style: { ...column, gap: space[2], padding: space[4], borderRadius: "var(--r-xl)" }, children: entry.card }) })
       ] }, entry.key);
     })
   ] });
 }
 function Mark({ mark }) {
-  return mark === "running" ? /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(RunningMark, {}) : /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(StatusDot, { tone: mark });
+  return mark === "running" ? /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(RunningMark, {}) : /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(StatusDot, { tone: mark });
 }
 function itemLabel(item, t) {
   const title = matrixTitle(item);
@@ -41384,17 +41549,17 @@ function itemLabel(item, t) {
 }
 function CellItems({ items, limit }) {
   const { t } = useBoardLanguage();
-  if (!items.length) return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: "muted sm", children: t("\uC5C6\uC74C", "None") });
+  if (!items.length) return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: "muted sm", children: t("\uC5C6\uC74C", "None") });
   const { shown, more } = cellPreview(items, limit);
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)(import_jsx_runtime29.Fragment, { children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(import_jsx_runtime30.Fragment, { children: [
     shown.map((item) => {
       const mark = matrixMark(item);
-      return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("span", { style: { ...row, flexWrap: "nowrap", gap: space[1.5], width: "100%" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Mark, { mark }),
-        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: mark === "idle" ? "muted sm ellipsis" : "sm ellipsis", style: { flex: 1 }, children: itemLabel(item, t) })
+      return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("span", { style: { ...row, flexWrap: "nowrap", gap: space[1.5], width: "100%" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Mark, { mark }),
+        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: mark === "idle" ? "muted sm ellipsis" : "sm ellipsis", style: { flex: 1 }, children: itemLabel(item, t) })
       ] }, item.key);
     }),
-    more > 0 && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("span", { className: "muted sm", children: [
+    more > 0 && /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("span", { className: "muted sm", children: [
       "+",
       more
     ] })
@@ -41404,7 +41569,7 @@ function CellButton({ row: line, column: lane, cell, onCell, limit, style: style
   const { t } = useBoardLanguage();
   const items = line.cells[lane];
   const selected = isSelectedCell(cell, line.key, lane);
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
     "button",
     {
       type: "button",
@@ -41414,68 +41579,68 @@ function CellButton({ row: line, column: lane, cell, onCell, limit, style: style
       disabled: !items.length,
       onClick: () => onCell({ row: line.key, column: lane }),
       style: style2,
-      children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(CellItems, { items, limit })
+      children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(CellItems, { items, limit })
     }
   );
 }
 function ItemCard({ item, projectId: projectId4, projects }) {
-  if (item.kind === "record") return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(import_jsx_runtime29.Fragment, { children: projects.renderRecord(item.item) });
-  if (item.kind === "pull") return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(import_jsx_runtime29.Fragment, { children: projects.renderPull(item.pr, projectId4 ?? "") });
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(CardView, { card: item.card, open: projects.open, sessionHostLabel: projects.hostLabel });
+  if (item.kind === "record") return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(import_jsx_runtime30.Fragment, { children: projects.renderRecord(item.item) });
+  if (item.kind === "pull") return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(import_jsx_runtime30.Fragment, { children: projects.renderPull(item.pr, projectId4 ?? "") });
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(CardView, { card: item.card, open: projects.open, sessionHostLabel: projects.hostLabel });
 }
 function CellDrawer({ row: line, column: lane, projects, wide }) {
   const { t } = useBoardLanguage();
   const items = line.cells[lane];
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { className: "table-head", style: { ...column, gap: space[3], padding: space[4] }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(SectionLabel, { count: items.length, children: `${line.title} \xB7 ${matrixColumnLabel(lane, t)}` }),
-    /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { display: "flex", flexDirection: wide ? "row" : "column", flexWrap: "wrap", gap: space[3] }, children: items.map((item) => /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: wide ? { flex: "1 1 320px", minWidth: 0 } : void 0, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ItemCard, { item, projectId: line.id, projects }) }, item.key)) })
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { className: "table-head", style: { ...column, gap: space[3], padding: space[4] }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(SectionLabel, { count: items.length, children: `${line.title} \xB7 ${matrixColumnLabel(lane, t)}` }),
+    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { display: "flex", flexDirection: wide ? "row" : "column", flexWrap: "wrap", gap: space[3] }, children: items.map((item) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: wide ? { flex: "1 1 320px", minWidth: 0 } : void 0, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(ItemCard, { item, projectId: line.id, projects }) }, item.key)) })
   ] });
 }
 var projectColumn = 180;
 var hostColumn = 96;
 function HeaderMark({ column: lane }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(StatusDot, { tone: lane === "human" ? "warning" : lane === "done" ? "success" : lane === "idle" ? "idle" : "muted" });
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(StatusDot, { tone: lane === "human" ? "warning" : lane === "done" ? "success" : lane === "idle" ? "idle" : "muted" });
 }
 function WideMatrix({ rows, projects, cell, mounted, onCell, wide }) {
   const { t } = useBoardLanguage();
   const headCell = { ...row, flexWrap: "nowrap", gap: space[1.5], padding: `${space[2]}px ${space[3]}px` };
   const head = "sm ellipsis muted";
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { role: "row", className: "table-head", style: { display: "flex" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { ...headCell, width: projectColumn, flex: "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: head, style: { fontWeight: 500 }, children: t("\uD504\uB85C\uC81D\uD2B8", "Project") }) }),
-      matrixColumns.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...headCell, flex: 1, minWidth: 0 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(HeaderMark, { column: lane }),
-        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: head, style: { fontWeight: 500 }, children: matrixColumnLabel(lane, t) })
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { role: "row", className: "table-head", style: { display: "flex" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { ...headCell, width: projectColumn, flex: "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: head, style: { fontWeight: 500 }, children: t("\uD504\uB85C\uC81D\uD2B8", "Project") }) }),
+      matrixColumns.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...headCell, flex: 1, minWidth: 0 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(HeaderMark, { column: lane }),
+        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: head, style: { fontWeight: 500 }, children: matrixColumnLabel(lane, t) })
       ] }, lane)),
-      /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { ...headCell, width: hostColumn, flex: "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: head, style: { fontWeight: 500 }, children: t("\uD638\uC2A4\uD2B8", "Host") }) })
+      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { ...headCell, width: hostColumn, flex: "none" }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: head, style: { fontWeight: 500 }, children: t("\uD638\uC2A4\uD2B8", "Host") }) })
     ] }),
-    !rows.length && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { padding: space[3], borderTop: "1px solid var(--border)" }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("p", { className: "muted sm", children: t("\uD45C\uC2DC\uD560 \uD504\uB85C\uC81D\uD2B8\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.", "No projects to show.") }) }),
-    rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { borderTop: "1px solid var(--border)" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { display: "flex" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { width: projectColumn, flex: "none", padding: space[3], minWidth: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ProjectText, { projectId: line.id ?? void 0, projects: line.id === null ? [] : [line.title], className: line.id === null ? "muted clamp2" : "clamp2", children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { role: "heading", "aria-level": 3, children: line.title }) }) }),
-        matrixColumns.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(CellButton, { row: line, column: lane, cell, onCell, limit: 3, style: { flex: 1 } }, lane)),
-        /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { width: hostColumn, flex: "none", padding: space[3] }, children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: "muted sm", children: hostSummary(line.hosts) }) })
+    !rows.length && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { padding: space[3], borderTop: "1px solid var(--border)" }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted sm", children: t("\uD45C\uC2DC\uD560 \uD504\uB85C\uC81D\uD2B8\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.", "No projects to show.") }) }),
+    rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { borderTop: "1px solid var(--border)" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { display: "flex" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { width: projectColumn, flex: "none", padding: space[3], minWidth: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(ProjectText, { projectId: line.id ?? void 0, projects: line.id === null ? [] : [line.title], className: line.id === null ? "muted clamp2" : "clamp2", children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { role: "heading", "aria-level": 3, children: line.title }) }) }),
+        matrixColumns.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(CellButton, { row: line, column: lane, cell, onCell, limit: 3, style: { flex: 1 } }, lane)),
+        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { width: hostColumn, flex: "none", padding: space[3] }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: "muted sm", children: hostSummary(line.hosts) }) })
       ] }),
-      mountedColumns(mounted, line.key).map((lane) => /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Hideable, { hidden: !isSelectedCell(cell, line.key, lane), children: /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(CellDrawer, { row: line, column: lane, projects, wide }) }, lane))
+      mountedColumns(mounted, line.key).map((lane) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Hideable, { hidden: !isSelectedCell(cell, line.key, lane), children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(CellDrawer, { row: line, column: lane, projects, wide }) }, lane))
     ] }, line.key))
   ] });
 }
 function NarrowMatrix({ rows, projects, cell, mounted, onCell }) {
   const { t } = useBoardLanguage();
-  const [open2, setOpen] = (0, import_react26.useState)(/* @__PURE__ */ new Set());
+  const [open2, setOpen] = (0, import_react28.useState)(/* @__PURE__ */ new Set());
   const toggle = (key) => setOpen((current) => {
     const next = new Set(current);
     if (!next.delete(key)) next.add(key);
     return next;
   });
-  if (!rows.length) return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("p", { className: "muted sm", children: t("\uD45C\uC2DC\uD560 \uD504\uB85C\uC81D\uD2B8\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.", "No projects to show.") });
-  return /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("div", { style: { border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }, children: rows.map((line, index) => {
+  if (!rows.length) return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted sm", children: t("\uD45C\uC2DC\uD560 \uD504\uB85C\uC81D\uD2B8\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.", "No projects to show.") });
+  return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }, children: rows.map((line, index) => {
     const expanded = open2.has(line.key);
     const summary = matrixSummary(line.cells, t);
     const filled = matrixColumns.filter((lane) => line.cells[lane].length);
     const kept = mountedColumns(mounted, line.key);
-    return /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: index ? { borderTop: "1px solid var(--border)" } : void 0, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: index ? { borderTop: "1px solid var(--border)" } : void 0, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(
         "button",
         {
           type: "button",
@@ -41485,25 +41650,25 @@ function NarrowMatrix({ rows, projects, cell, mounted, onCell }) {
           onClick: () => toggle(line.key),
           style: { ...row, flexWrap: "nowrap", width: "100%", gap: space[2], background: "transparent" },
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("span", { style: { ...column, flex: 1, minWidth: 0, gap: space[0.5] }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ProjectText, { projectId: line.id ?? void 0, projects: line.id === null ? [] : [line.title], lines: 1, className: line.id === null ? "muted" : void 0, children: line.title }),
-              /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { className: "muted sm ellipsis", children: summary })
+            /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("span", { style: { ...column, flex: 1, minWidth: 0, gap: space[0.5] }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(ProjectText, { projectId: line.id ?? void 0, projects: line.id === null ? [] : [line.title], lines: 1, className: line.id === null ? "muted" : void 0, children: line.title }),
+              /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { className: "muted sm ellipsis", children: summary })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("span", { "aria-hidden": "true", className: "muted", children: expanded ? "\u25B4" : "\u25BE" })
+            /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("span", { "aria-hidden": "true", className: "muted", children: expanded ? "\u25B4" : "\u25BE" })
           ]
         }
       ),
-      (expanded || kept.length > 0) && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)(Hideable, { hidden: !expanded, style: { gap: space[3], padding: `0 ${space[3]}px ${space[3]}px` }, children: [
-        line.hosts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("p", { className: "muted sm", children: [
+      (expanded || kept.length > 0) && /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(Hideable, { hidden: !expanded, style: { gap: space[3], padding: `0 ${space[3]}px ${space[3]}px` }, children: [
+        line.hosts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("p", { className: "muted sm", children: [
           t("\uD638\uC2A4\uD2B8", "Host"),
           " \xB7 ",
           hostSummary(line.hosts)
         ] }),
-        !filled.length && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)("p", { className: "muted sm", children: t("\uC5C6\uC74C", "None") }),
-        filled.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime29.jsxs)("div", { style: { ...column, gap: space[1] }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(SectionLabel, { count: line.cells[lane].length, children: matrixColumnLabel(lane, t) }),
-          /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(CellButton, { row: line, column: lane, cell, onCell, limit: Infinity, style: { borderRadius: "var(--r-lg)" } }),
-          kept.includes(lane) && /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(Hideable, { hidden: !isSelectedCell(cell, line.key, lane), style: { gap: space[3] }, children: line.cells[lane].map((item) => /* @__PURE__ */ (0, import_jsx_runtime29.jsx)(ItemCard, { item, projectId: line.id, projects }, item.key)) })
+        !filled.length && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted sm", children: t("\uC5C6\uC74C", "None") }),
+        filled.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[1] }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(SectionLabel, { count: line.cells[lane].length, children: matrixColumnLabel(lane, t) }),
+          /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(CellButton, { row: line, column: lane, cell, onCell, limit: Infinity, style: { borderRadius: "var(--r-lg)" } }),
+          kept.includes(lane) && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Hideable, { hidden: !isSelectedCell(cell, line.key, lane), style: { gap: space[3] }, children: line.cells[lane].map((item) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(ItemCard, { item, projectId: line.id, projects }, item.key)) })
         ] }, lane))
       ] })
     ] }, line.key);
@@ -41511,21 +41676,22 @@ function NarrowMatrix({ rows, projects, cell, mounted, onCell }) {
 }
 
 // src/dashboard/board.tsx
-var import_jsx_runtime30 = __toESM(require_jsx_runtime());
+var import_jsx_runtime31 = __toESM(require_jsx_runtime());
 function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, loading, updatedAt, changing, onRefresh, onProject, onCoordinator, onOpen }) {
   const { t, language } = useBoardLanguage();
   const view = useBoardViewMode();
-  const [chosenProjects, setChosenProjects] = (0, import_react27.useState)([]);
-  const [settings, setSettings] = (0, import_react27.useState)(false);
-  const [showError, setShowError] = (0, import_react27.useState)(false);
-  const [manage, setManage] = (0, import_react27.useState)(false);
-  const [pickSession, setPickSession] = (0, import_react27.useState)(false);
-  const [inlineReceipts, setInlineReceipts] = (0, import_react27.useState)([]);
-  const [receipts, setReceipts] = (0, import_react27.useState)([]);
-  const [historyOpen, setHistoryOpen] = (0, import_react27.useState)(null);
+  const [chosenProjects, setChosenProjects] = (0, import_react29.useState)([]);
+  const [settings, setSettings] = (0, import_react29.useState)(false);
+  const [showError, setShowError] = (0, import_react29.useState)(false);
+  const [manage, setManage] = (0, import_react29.useState)(false);
+  const [pickSession, setPickSession] = (0, import_react29.useState)(false);
+  const [inlineReceipts, setInlineReceipts] = (0, import_react29.useState)([]);
+  const [receipts, setReceipts] = (0, import_react29.useState)([]);
+  const [historyOpen, setHistoryOpen] = (0, import_react29.useState)(null);
   const now = Date.now();
   const completed = new Set(inlineReceipts.map((receipt) => receipt.actionKey));
-  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed) : null;
+  const work = (0, import_react29.useContext)(WorkItemsContext);
+  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed, work) : null;
   const configured = model ? model.configured : readiness?.configured;
   const pickingProjects = !configured || !settings && !snapshot?.coordinator;
   const coordinatorId = snapshot ? snapshot.coordinator : readiness?.coordinator ?? null;
@@ -41540,10 +41706,10 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
     setInlineReceipts((previous) => previous.some((entry) => entry.actionKey === action.actionKey && entry.rowKey === action.rowKey) ? previous : [...previous, { ...action, order: orderedKeys }]);
   }
   const matches = (receipt, card) => receipt.projectId === card.session.projectId && receipt.sessionId === card.session.id && receipt.version === card.session.decision?.version;
-  const historyRepos = (0, import_react27.useMemo)(() => new Map(snapshot?.pullRequests?.projects.flatMap((project2) => project2.repo && project2.mode !== "off" ? [[project2.projectId, project2.repo]] : []) ?? []), [snapshot?.pullRequests?.projects]);
+  const historyRepos = (0, import_react29.useMemo)(() => new Map(snapshot?.pullRequests?.projects.flatMap((project2) => project2.repo && project2.mode !== "off" ? [[project2.projectId, project2.repo]] : []) ?? []), [snapshot?.pullRequests?.projects]);
   const historyLinks = (entry) => historySessionLinks(entry, { sessions: snapshot?.sessions ?? [], peers: [], repos: historyRepos });
-  const [mergeNotice, setMergeNotice] = (0, import_react27.useState)(null);
-  (0, import_react27.useEffect)(() => {
+  const [mergeNotice, setMergeNotice] = (0, import_react29.useState)(null);
+  (0, import_react29.useEffect)(() => {
     const stored = new Map(snapshot?.replyHistory?.flatMap((entry) => entry.pullMerge?.status === "merged" && entry.pullMerge.notification ? [[JSON.stringify([entry.projectId, pullRowKey(entry.pullMerge)]), entry.pullMerge.notification]] : []));
     if (!stored.size) return;
     setInlineReceipts((previous) => {
@@ -41559,7 +41725,7 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
     if (!snapshot) return null;
     const recipientId = card ? clarificationRecipient(card, snapshot) : null;
     const recipientTitle = ownerId && ownerId === recipientId ? t("\uC6B4\uC601 \uCF54\uB514\uB124\uC774\uD130", "Ledger owner") + " \xB7 " + ownerId : snapshot.sessions.find((session2) => session2.id === recipientId)?.title;
-    return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
       Clarification,
       {
         title,
@@ -41574,7 +41740,7 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       card ? clarificationKey(card) : title
     );
   }
-  const renderDecision = (card, embedded = false, rowKey, priority) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+  const renderDecision = (card, embedded = false, rowKey, priority) => /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
     DecisionActions,
     {
       clarification: !embedded && questionFor(sessionClarificationCard(card.session, card.note), card.session.title),
@@ -41628,7 +41794,7 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       const state = session2.status === "closed" ? t("\uB300\uD654 \uC885\uB8CC", "Closed") : session2.lane === "running" ? t("\uC9C4\uD589 \uC911", "Running") : session2.status === "idle" ? t("\uB300\uAE30", "Idle") : t("\uC0C1\uD0DC \uD655\uC778 \uD544\uC694", "Check status");
       workSessions.push({ key: session2.id, label: [session2.title, hostLabel, state].join(" \xB7 "), open: () => onOpen(session2.id) });
     }
-    return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
       PullRequestCard,
       {
         pr,
@@ -41669,14 +41835,14 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
     const recipient = trackedRecipient(item, snapshot.coordinator, snapshot.sessions);
     const replyRecipient = native && !item.questions.length ? void 0 : recipient;
     const mergeHandled = !!rowKey && !!item.mergeTarget && scopedReceipts.some((receipt) => receipt.rowKey === rowKey && receipt.actionKey === pullRowKey(item.mergeTarget));
-    return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
       TrackedDecisionCard,
       {
         links: recordLinks(item, !native),
         item,
         priorityLabel: priority,
         renderClarification: (onDraftChange) => questionFor(trackedClarificationCard(item, snapshot.sessions), item.title, item.qa, onDraftChange, usesSourceCoordinator(item) ? item.sourceCoordinatorId : void 0),
-        pull: mergeHandled ? /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(import_jsx_runtime30.Fragment, {}) : pr && renderPull(pr, pr.projectIds.includes(item.projectId ?? "") ? item.projectId : pr.projectIds[0], true, mentionsSecurityGate(item), true, rowKey, [item.projectId]),
+        pull: mergeHandled ? /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(import_jsx_runtime31.Fragment, {}) : pr && renderPull(pr, pr.projectIds.includes(item.projectId ?? "") ? item.projectId : pr.projectIds[0], true, mentionsSecurityGate(item), true, rowKey, [item.projectId]),
         recipientId: replyRecipient,
         onResolved: (status, mode, answer) => {
           if (rowKey && mode && (status === "sent" || status === "closed" || status === "already-closed")) {
@@ -41703,9 +41869,9 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
     const row2 = rowsByKey.get(key);
     const label = priorityLabel(row2, t, now);
     const content = row2.kind === "pull" ? renderPull(row2.pr, row2.pr.projectIds.find((id4) => model.inFilter(id4)) ?? row2.pr.projectIds[0], true, false, false, key, row2.pr.projectIds, label) : row2.kind === "record" ? renderRecord(row2.item, key, label) : renderDecision(row2.card, false, key, label);
-    activeRows.set(key, /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(DecisionEditingRow, { rowKey: key, position, onEditing, children: content }));
+    activeRows.set(key, /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(DecisionEditingRow, { rowKey: key, position, onEditing, children: content }));
   });
-  const renderReceipt = (receipt) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+  const renderReceipt = (receipt) => /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
     InlineDecisionReceipt,
     {
       receipt,
@@ -41717,10 +41883,10 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
   const receiptsFor = (key) => scopedReceipts.filter((receipt) => receipt.rowKey === key && !receipt.hidden);
   const pad = compact ? space[3] : space[6];
   const time3 = updatedAt && (language === "ko" ? `${updatedAt.toLocaleTimeString("ko-KR")} \uAC31\uC2E0` : `Updated ${updatedAt.toLocaleTimeString("en-US")}`);
-  const header = /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...row, gap: space[2] }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, flex: 1, minWidth: 160, gap: space[0.5] }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("h1", { style: { margin: 0, fontSize: fontSize.base, lineHeight: "20px", fontWeight: 300 }, children: settings ? t("\uCF54\uB514\uB124\uC774\uD130 \uBCF4\uB4DC \uC124\uC815", "Coordinator board settings") : t("\uC138\uC158\uBCC4 \uCF54\uB514\uB124\uC774\uD130 \uBCF4\uB4DC", "Session coordinator board") }),
-      error62 ? /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+  const header = /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...row, gap: space[2] }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...column, flex: 1, minWidth: 160, gap: space[0.5] }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("h1", { style: { margin: 0, fontSize: fontSize.base, lineHeight: "20px", fontWeight: 300 }, children: settings ? t("\uCF54\uB514\uB124\uC774\uD130 \uBCF4\uB4DC \uC124\uC815", "Coordinator board settings") : t("\uC138\uC158\uBCC4 \uCF54\uB514\uB124\uC774\uD130 \uBCF4\uB4DC", "Session coordinator board") }),
+      error62 ? /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
         "button",
         {
           type: "button",
@@ -41730,29 +41896,29 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
           onClick: () => setShowError((open2) => !open2),
           children: snapshot ? t("\uAC31\uC2E0 \uC2E4\uD328 \xB7 \uC774\uC804 \uACB0\uACFC \uD45C\uC2DC \xB7 \uC624\uB958 \uC0C1\uC138", "Refresh failed \xB7 Showing last result \xB7 Details") : t("\uC870\uD68C \uC2E4\uD328 \xB7 \uC624\uB958 \uC0C1\uC138", "Could not load sessions \xB7 Details")
         }
-      ) : /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted sm", children: [hostLabel, time3 || t("\uC138\uC158 \uC870\uD68C \uC911\u2026", "Loading sessions\u2026")].filter(Boolean).join(" \xB7 ") })
+      ) : /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted sm", children: [hostLabel, time3 || t("\uC138\uC158 \uC870\uD68C \uC911\u2026", "Loading sessions\u2026")].filter(Boolean).join(" \xB7 ") })
     ] }),
-    !settings && !!snapshot && !!configured && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(BoardViewSwitch, { view }),
-    !settings && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Button, { variant: "ghost", size: "sm", label: loading ? t("\uC870\uD68C \uC911\u2026", "Refreshing\u2026") : t("\uC0C8\uB85C \uACE0\uCE68", "Refresh"), onPress: onRefresh, disabled: loading }),
-    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Button, { variant: "ghost", size: "sm", label: settings ? t("\uBCF4\uB4DC\uB85C \uB3CC\uC544\uAC00\uAE30", "Back to board") : t("\uC124\uC815", "Settings"), onPress: () => {
+    !settings && !!snapshot && !!configured && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(BoardViewSwitch, { view }),
+    !settings && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(Button, { variant: "ghost", size: "sm", label: loading ? t("\uC870\uD68C \uC911\u2026", "Refreshing\u2026") : t("\uC0C8\uB85C \uACE0\uCE68", "Refresh"), onPress: onRefresh, disabled: loading }),
+    /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(Button, { variant: "ghost", size: "sm", label: settings ? t("\uBCF4\uB4DC\uB85C \uB3CC\uC544\uAC00\uAE30", "Back to board") : t("\uC124\uC815", "Settings"), onPress: () => {
       setSettings(!settings);
       setManage(false);
       setPickSession(false);
     } })
   ] });
-  const errorDetail = !!error62 && showError && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "danger", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }, children: error62 });
+  const errorDetail = !!error62 && showError && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "danger", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }, children: error62 });
   const filters = model?.filters ?? [];
   const filteredHistory = model ? (snapshot?.replyHistory ?? []).filter((entry) => model.inFilter(entry.projectId)) : [];
   const showHistory = historyOpen ?? (model?.filteredTotal === 0 && !scopedReceipts.some((receipt) => !receipt.hidden));
-  const filtersNode = model && !settings && configured && model.byProject.size > 0 ? /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(
+  const filtersNode = model && !settings && configured && model.byProject.size > 0 ? /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(
     "div",
     {
       role: "group",
       "aria-label": t("\uD504\uB85C\uC81D\uD2B8 \uD544\uD130", "Project filters"),
       style: { ...row, gap: space[2] },
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Button, { size: "sm", label: t(`\uC804\uCCB4 ${model.total}`, `All ${model.total}`), selected: !filters.length, onPress: () => setChosenProjects([]) }),
-        [...model.byProject].map(([id4, count2]) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(Button, { size: "sm", label: t(`\uC804\uCCB4 ${model.total}`, `All ${model.total}`), selected: !filters.length, onPress: () => setChosenProjects([]) }),
+        [...model.byProject].map(([id4, count2]) => /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
           Button,
           {
             size: "sm",
@@ -41768,13 +41934,13 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       ]
     }
   ) : null;
-  const noticesNode = model ? /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(import_jsx_runtime30.Fragment, { children: [
-    model.incomplete && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { role: "status", className: "warn", children: t("\uC77C\uBD80 \uACB0\uC815 \uAE30\uB85D\uC744 \uC77D\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uD604\uC7AC \uAC74\uC218\uC5D0\uB294 \uD655\uC778\uD55C \uD56D\uBAA9\uB9CC \uD3EC\uD568\uB429\uB2C8\uB2E4.", "Some decision records could not be loaded. The count includes the available items.") }),
-    filters.length > 0 && !model.filteredTotal && model.total > 0 && !model.incomplete && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted", children: t("\uC120\uD0DD\uD55C \uD504\uB85C\uC81D\uD2B8\uC5D0 \uACB0\uC815\uD560 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decisions in the selected projects.") }),
-    model.total === 0 && !model.incomplete && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted", children: t("\uC9C0\uAE08 \uACB0\uC815\uD560 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decisions are waiting for you.") }),
-    mergeNotice && model.inFilter(mergeNotice.projectId) && snapshot?.projects.some((project2) => project2.selected && project2.id === mergeNotice.projectId) && (mergeNotice.status === "merged" || mergeNotice.status === "already-merged" || !snapshot.pullRequests?.items.some((pr) => pr.lane === "review" && pr.repo + " #" + pr.number === mergeNotice.target)) && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(MergeFeedback, { notice: mergeNotice })
+  const noticesNode = model ? /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(import_jsx_runtime31.Fragment, { children: [
+    model.incomplete && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { role: "status", className: "warn", children: t("\uC77C\uBD80 \uACB0\uC815 \uAE30\uB85D\uC744 \uC77D\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uD604\uC7AC \uAC74\uC218\uC5D0\uB294 \uD655\uC778\uD55C \uD56D\uBAA9\uB9CC \uD3EC\uD568\uB429\uB2C8\uB2E4.", "Some decision records could not be loaded. The count includes the available items.") }),
+    filters.length > 0 && !model.filteredTotal && model.total > 0 && !model.incomplete && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted", children: t("\uC120\uD0DD\uD55C \uD504\uB85C\uC81D\uD2B8\uC5D0 \uACB0\uC815\uD560 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decisions in the selected projects.") }),
+    model.total === 0 && !model.incomplete && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted", children: t("\uC9C0\uAE08 \uACB0\uC815\uD560 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No decisions are waiting for you.") }),
+    mergeNotice && model.inFilter(mergeNotice.projectId) && snapshot?.projects.some((project2) => project2.selected && project2.id === mergeNotice.projectId) && (mergeNotice.status === "merged" || mergeNotice.status === "already-merged" || !snapshot.pullRequests?.items.some((pr) => pr.lane === "review" && pr.repo + " #" + pr.number === mergeNotice.target)) && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(MergeFeedback, { notice: mergeNotice })
   ] }) : null;
-  const operationsNode = /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+  const operationsNode = /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
     OperationsPanel,
     {
       settings: operationsReady && settings,
@@ -41785,7 +41951,7 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       openCoordinator: onOpen
     }
   );
-  const progressNode = model && snapshot && !settings && configured ? /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(
+  const progressNode = model && snapshot && !settings && configured ? /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(
     SessionProgress,
     {
       cards: model.visibleProjects.flatMap((project2) => project2.cards),
@@ -41793,8 +41959,8 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       projectName: model.projectName,
       open: onOpen,
       children: [
-        !model.visibleProjects.length && !model.showHostWide && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted", children: t("\uD45C\uC2DC\uD560 \uC138\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No sessions to show.") }),
-        model.showHostWide && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+        !model.visibleProjects.length && !model.showHostWide && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted", children: t("\uD45C\uC2DC\uD560 \uC138\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", "No sessions to show.") }),
+        model.showHostWide && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
           Project,
           {
             projectId: "",
@@ -41813,7 +41979,7 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
             sessionHostLabel: hostLabel
           }
         ),
-        model.visibleProjects.map((project2) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+        model.visibleProjects.map((project2) => /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
           Project,
           {
             projectId: project2.id,
@@ -41836,7 +42002,7 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       ]
     }
   ) : null;
-  const historyNode = model && snapshot && !settings && configured && filteredHistory.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(ReplyHistory, { entries: filteredHistory, links: historyLinks, open: onOpen, expanded: showHistory, onToggle: () => setHistoryOpen(!showHistory) }) : null;
+  const historyNode = model && snapshot && !settings && configured && filteredHistory.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(ReplyHistory, { entries: filteredHistory, links: historyLinks, open: onOpen, expanded: showHistory, onToggle: () => setHistoryOpen(!showHistory) }) : null;
   if (layoutMode && model) {
     const entries = orderedKeys.map((key) => {
       const row2 = rowsByKey.get(key) ?? null;
@@ -41864,21 +42030,21 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       }
     };
     const Layout = layoutMode === "focus" ? FocusView : layoutMode === "matrix" ? MatrixView : InboxView;
-    return /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, height: "100%", background: "var(--bg)" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[2], padding: `${space[3]}px ${pad}px`, borderBottom: "1px solid var(--border)" }, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...column, height: "100%", background: "var(--bg)" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...column, gap: space[2], padding: `${space[3]}px ${pad}px`, borderBottom: "1px solid var(--border)" }, children: [
         header,
         errorDetail,
-        view.saveFailed && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { role: "status", className: "warn sm", children: t("\uBCF4\uAE30 \uC124\uC815\uC744 \uC774 \uAE30\uAE30\uC5D0 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.", "Could not save the view on this device.") })
+        view.saveFailed && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { role: "status", className: "warn sm", children: t("\uBCF4\uAE30 \uC124\uC815\uC744 \uC774 \uAE30\uAE30\uC5D0 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.", "Could not save the view on this device.") })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { ...column, flex: 1, minHeight: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Layout, { ...props }) })
+      /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("div", { style: { ...column, flex: 1, minHeight: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(Layout, { ...props }) })
     ] });
   }
-  const projectPicker = snapshot && (pickingProjects || settings) ? /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(import_jsx_runtime30.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted", children: t("\uC120\uD0DD\uD55C \uD504\uB85C\uC81D\uD2B8\uC758 \uCD5C\uADFC \uB300\uD654\uB97C \uC77D\uC5B4 \uB0B4 \uACB0\uC815\uC744 \uCC3E\uC2B5\uB2C8\uB2E4. \uCF54\uB514\uB124\uC774\uD130\uB97C \uC9C0\uC815\uD558\uBA74 \uADF8 \uC138\uC158\uB3C4 \uC120\uD0DD\uD55C \uD504\uB85C\uC81D\uD2B8\uC758 \uBC1C\uCDCC\uB97C \uBCFC \uC218 \uC788\uC2B5\uB2C8\uB2E4.", "The board reads recent conversations in selected projects to find decisions. The assigned coordinator can also read excerpts from those projects.") }),
-    /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { style: { ...row, gap: space[2] }, children: snapshot.projects.map((project2) => {
+  const projectPicker = snapshot && (pickingProjects || settings) ? /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(import_jsx_runtime31.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted", children: t("\uC120\uD0DD\uD55C \uD504\uB85C\uC81D\uD2B8\uC758 \uCD5C\uADFC \uB300\uD654\uB97C \uC77D\uC5B4 \uB0B4 \uACB0\uC815\uC744 \uCC3E\uC2B5\uB2C8\uB2E4. \uCF54\uB514\uB124\uC774\uD130\uB97C \uC9C0\uC815\uD558\uBA74 \uADF8 \uC138\uC158\uB3C4 \uC120\uD0DD\uD55C \uD504\uB85C\uC81D\uD2B8\uC758 \uBC1C\uCDCC\uB97C \uBCFC \uC218 \uC788\uC2B5\uB2C8\uB2E4.", "The board reads recent conversations in selected projects to find decisions. The assigned coordinator can also read excerpts from those projects.") }),
+    /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("div", { style: { ...row, gap: space[2] }, children: snapshot.projects.map((project2) => {
       const duplicateName = snapshot.projects.some((other) => other.id !== project2.id && other.title === project2.title);
       const label = duplicateName ? `${project2.title} \xB7 ${project2.path || project2.id}` : project2.title;
-      return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
         Button,
         {
           size: "sm",
@@ -41895,18 +42061,18 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
       );
     }) })
   ] }) : null;
-  return /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { className: "scroll", style: { height: "100%", background: "var(--bg)" }, children: /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[6], padding: pad }, children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("div", { className: "scroll", style: { height: "100%", background: "var(--bg)" }, children: /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...column, gap: space[6], padding: pad }, children: [
     header,
     errorDetail,
-    settings && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(BoardViewSetting, { view }),
-    settings && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(BoardLanguageSetting, {}),
-    !!error62 && settings && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Button, { label: t("\uC138\uC158 \uB2E4\uC2DC \uC870\uD68C", "Retry session lookup"), disabled: loading, onPress: onRefresh }) }),
-    projectPicker && (pickingProjects ? /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("h2", { style: { margin: 0, fontSize: fontSize.base, fontWeight: 500 }, children: t("\uB2E4\uC774\uC81C\uC2A4\uD2B8\uC5D0\uC11C \uAD00\uB9AC\uD560 \uD504\uB85C\uC81D\uD2B8 \uC120\uD0DD", "Select projects for your digest") }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(BoardViewSetting, { view }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(BoardLanguageSetting, {}),
+    !!error62 && settings && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(Button, { label: t("\uC138\uC158 \uB2E4\uC2DC \uC870\uD68C", "Retry session lookup"), disabled: loading, onPress: onRefresh }) }),
+    projectPicker && (pickingProjects ? /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...column, gap: space[2] }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("h2", { style: { margin: 0, fontSize: fontSize.base, fontWeight: 500 }, children: t("\uB2E4\uC774\uC81C\uC2A4\uD2B8\uC5D0\uC11C \uAD00\uB9AC\uD560 \uD504\uB85C\uC81D\uD2B8 \uC120\uD0DD", "Select projects for your digest") }),
       projectPicker
-    ] }) : /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Disclosure, { title: t("\uBCF4\uB4DC\uC5D0\uC11C \uAD00\uB9AC\uD560 \uD504\uB85C\uC81D\uD2B8 \uC120\uD0DD", "Choose projects to manage"), expanded: manage, onPress: () => setManage(!manage), children: projectPicker })),
-    settings && snapshot && !!configured && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(SessionLinks, { projects: snapshot.projects, onChange: onRefresh }),
-    settings && snapshot?.pullRequests && !!configured && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+    ] }) : /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(Disclosure, { title: t("\uBCF4\uB4DC\uC5D0\uC11C \uAD00\uB9AC\uD560 \uD504\uB85C\uC81D\uD2B8 \uC120\uD0DD", "Choose projects to manage"), expanded: manage, onPress: () => setManage(!manage), children: projectPicker })),
+    settings && snapshot && !!configured && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(SessionLinks, { projects: snapshot.projects, onChange: onRefresh }),
+    settings && snapshot?.pullRequests && !!configured && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
       PullRequestSettings,
       {
         view: snapshot.pullRequests,
@@ -41914,10 +42080,11 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
         refresh: onRefresh
       }
     ),
-    settings && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(BoardHosts, {}),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(BoardHosts, {}),
+    settings && !!configured && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(WorkSettingsCard, {}),
     operationsNode,
-    settings && snapshot && /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[2], alignItems: "flex-start" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+    settings && snapshot && /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...column, gap: space[2], alignItems: "flex-start" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
         Button,
         {
           label: pickSession ? t("\uAE30\uC874 \uC138\uC158 \uBAA9\uB85D \uB2EB\uAE30", "Close session list") : t("\uAE30\uC874 \uC138\uC158\uC5D0\uC11C \uCF54\uB514\uB124\uC774\uD130 \uC9C0\uC815", "Choose an existing coordinator session"),
@@ -41925,9 +42092,9 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
           onPress: () => setPickSession(!pickSession)
         }
       ),
-      pickSession && /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)(import_jsx_runtime30.Fragment, { children: [
-        snapshot.coordinator && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(Button, { disabled: changing, label: t("\uD604\uC7AC \uCF54\uB514\uB124\uC774\uD130 \uC9C0\uC815 \uD574\uC81C", "Clear current coordinator"), onPress: () => onCoordinator(null) }),
-        snapshot.sessions.filter((session2) => session2.id !== snapshot.coordinator).map((session2) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)(
+      pickSession && /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(import_jsx_runtime31.Fragment, { children: [
+        snapshot.coordinator && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(Button, { disabled: changing, label: t("\uD604\uC7AC \uCF54\uB514\uB124\uC774\uD130 \uC9C0\uC815 \uD574\uC81C", "Clear current coordinator"), onPress: () => onCoordinator(null) }),
+        snapshot.sessions.filter((session2) => session2.id !== snapshot.coordinator).map((session2) => /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
           Button,
           {
             disabled: changing,
@@ -41938,26 +42105,26 @@ function BoardView({ snapshot, readiness, hostLabel, compact, error: error62, lo
           },
           session2.id
         )),
-        !snapshot.sessions.length && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted", children: t("\uAD00\uB9AC\uD560 \uD504\uB85C\uC81D\uD2B8\uB97C \uC120\uD0DD\uD558\uBA74 \uC9C0\uC815\uD560 \uC218 \uC788\uB294 \uC138\uC158\uC774 \uD45C\uC2DC\uB429\uB2C8\uB2E4.", "Select a project to see its available sessions.") })
+        !snapshot.sessions.length && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted", children: t("\uAD00\uB9AC\uD560 \uD504\uB85C\uC81D\uD2B8\uB97C \uC120\uD0DD\uD558\uBA74 \uC9C0\uC815\uD560 \uC218 \uC788\uB294 \uC138\uC158\uC774 \uD45C\uC2DC\uB429\uB2C8\uB2E4.", "Select a project to see its available sessions.") })
       ] })
     ] }),
-    !settings && !snapshot && !error62 && !!readiness?.decisionTitles?.length && /* @__PURE__ */ (0, import_jsx_runtime30.jsxs)("div", { style: { ...column, gap: space[1.5] }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("h2", { style: { margin: 0, fontSize: fontSize.base, fontWeight: 500 }, children: t("\uB0B4 \uACB0\uC815", "My decisions") }),
-      readiness.decisionTitles.map((title, index) => /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "clamp2", children: title }, index)),
-      /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted", children: t("\uC138\uC158\uACFC PR \uC0C1\uD0DC\uB97C \uD655\uC778\uD558\uACE0 \uC788\uC5B4\uC694.", "Checking session and PR status\u2026") })
+    !settings && !snapshot && !error62 && !!readiness?.decisionTitles?.length && /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)("div", { style: { ...column, gap: space[1.5] }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("h2", { style: { margin: 0, fontSize: fontSize.base, fontWeight: 500 }, children: t("\uB0B4 \uACB0\uC815", "My decisions") }),
+      readiness.decisionTitles.map((title, index) => /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "clamp2", children: title }, index)),
+      /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted", children: t("\uC138\uC158\uACFC PR \uC0C1\uD0DC\uB97C \uD655\uC778\uD558\uACE0 \uC788\uC5B4\uC694.", "Checking session and PR status\u2026") })
     ] }),
-    !settings && snapshot && !configured && !snapshot.projects.length && /* @__PURE__ */ (0, import_jsx_runtime30.jsx)("p", { className: "muted", children: t("\uD45C\uC2DC\uD560 \uC138\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uC6CC\uD06C\uC2A4\uD398\uC774\uC2A4\uC5D0\uC11C \uC138\uC158\uC744 \uC2DC\uC791\uD558\uBA74 \uC5EC\uAE30\uC5D0 \uB098\uD0C0\uB0A9\uB2C8\uB2E4.", "Start a session in a workspace to see it here.") })
+    !settings && snapshot && !configured && !snapshot.projects.length && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)("p", { className: "muted", children: t("\uD45C\uC2DC\uD560 \uC138\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uC6CC\uD06C\uC2A4\uD398\uC774\uC2A4\uC5D0\uC11C \uC138\uC158\uC744 \uC2DC\uC791\uD558\uBA74 \uC5EC\uAE30\uC5D0 \uB098\uD0C0\uB0A9\uB2C8\uB2E4.", "Start a session in a workspace to see it here.") })
   ] }) });
 }
 
 // src/dashboard/app.tsx
-var import_jsx_runtime31 = __toESM(require_jsx_runtime());
+var import_jsx_runtime32 = __toESM(require_jsx_runtime());
 var POLL_MS = 3e4;
 var message2 = (error62) => error62 instanceof Error ? error62.message : String(error62);
 function useCompact() {
   const narrow = () => window.innerWidth < 600;
-  const [compact, setCompact] = (0, import_react28.useState)(narrow);
-  (0, import_react28.useEffect)(() => {
+  const [compact, setCompact] = (0, import_react30.useState)(narrow);
+  (0, import_react30.useEffect)(() => {
     const onResize = () => setCompact(narrow());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -41967,26 +42134,31 @@ function useCompact() {
 function HostBoard() {
   const { t } = useBoardLanguage();
   const compact = useCompact();
-  const latest = (0, import_react28.useRef)(0);
-  const pending = (0, import_react28.useRef)(false);
-  const active = (0, import_react28.useRef)(false);
-  const [snapshot, setSnapshot] = (0, import_react28.useState)(null);
-  const [readiness, setReadiness] = (0, import_react28.useState)(null);
-  const [error62, setError] = (0, import_react28.useState)(null);
-  const [actionError, setActionError] = (0, import_react28.useState)(null);
-  const [loading, setLoading] = (0, import_react28.useState)(true);
-  const [updatedAt, setUpdatedAt] = (0, import_react28.useState)(null);
-  const [changing, setChanging] = (0, import_react28.useState)(false);
-  const [editing, setEditing] = (0, import_react28.useState)(null);
-  const refresh = (0, import_react28.useCallback)(async (reason) => {
+  const latest = (0, import_react30.useRef)(0);
+  const pending = (0, import_react30.useRef)(false);
+  const active = (0, import_react30.useRef)(false);
+  const [snapshot, setSnapshot] = (0, import_react30.useState)(null);
+  const [work, setWork] = (0, import_react30.useState)(/* @__PURE__ */ new Map());
+  const [readiness, setReadiness] = (0, import_react30.useState)(null);
+  const [error62, setError] = (0, import_react30.useState)(null);
+  const [actionError, setActionError] = (0, import_react30.useState)(null);
+  const [loading, setLoading] = (0, import_react30.useState)(true);
+  const [updatedAt, setUpdatedAt] = (0, import_react30.useState)(null);
+  const [changing, setChanging] = (0, import_react30.useState)(false);
+  const [editing, setEditing] = (0, import_react30.useState)(null);
+  const refresh = (0, import_react30.useCallback)(async (reason) => {
     if (!active.current || pending.current && reason === "poll") return;
     const request2 = ++latest.current;
     pending.current = true;
     if (reason === "manual") setLoading(true);
     try {
-      const next = await call(boardSnapshot, reason === "manual" ? { fresh: true } : {});
+      const [next, tracked] = await Promise.all([
+        call(boardSnapshot, reason === "manual" ? { fresh: true } : {}),
+        call(boardWorkItems, {}).catch(() => null)
+      ]);
       if (active.current && request2 === latest.current) {
         setSnapshot(next);
+        setWork(new Map(Object.entries(tracked?.items ?? {})));
         setError(null);
         setUpdatedAt(/* @__PURE__ */ new Date());
       }
@@ -41999,7 +42171,7 @@ function HostBoard() {
       }
     }
   }, []);
-  (0, import_react28.useEffect)(() => {
+  (0, import_react30.useEffect)(() => {
     active.current = true;
     void refresh("changed");
     const initial = latest.current;
@@ -42037,10 +42209,10 @@ function HostBoard() {
       if (!result.opened) setActionError(t("\uC138\uC158\uC744 \uC5F4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uC138\uC158\uC774 \uC544\uC9C1 \uC788\uB294\uC9C0 \uD655\uC778\uD574 \uC8FC\uC138\uC694.", "Could not open the session. Check that it still exists."));
     }).catch((e) => setActionError(message2(e)));
   }
-  const icons = (0, import_react28.useMemo)(() => projectIconSources(snapshot?.projects ?? []), [snapshot?.projects]);
+  const icons = (0, import_react30.useMemo)(() => projectIconSources(snapshot?.projects ?? []), [snapshot?.projects]);
   const session2 = editing ? snapshot?.sessions.find((row2) => row2.id === editing) : void 0;
-  return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(ProjectIconSources.Provider, { value: icons, children: /* @__PURE__ */ (0, import_jsx_runtime31.jsxs)(EditNote.Provider, { value: setEditing, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime32.jsx)(WorkItemsContext.Provider, { value: work, children: /* @__PURE__ */ (0, import_jsx_runtime32.jsx)(ProjectIconSources.Provider, { value: icons, children: /* @__PURE__ */ (0, import_jsx_runtime32.jsxs)(EditNote.Provider, { value: setEditing, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime32.jsx)(
       BoardView,
       {
         snapshot,
@@ -42057,7 +42229,7 @@ function HostBoard() {
         onOpen: open2
       }
     ),
-    session2 && /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(
+    session2 && /* @__PURE__ */ (0, import_jsx_runtime32.jsx)(
       NoteEditor,
       {
         session: session2,
@@ -42076,10 +42248,10 @@ function HostBoard() {
       },
       session2.id
     )
-  ] }) });
+  ] }) }) });
 }
 function App() {
-  return /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(BoardLanguageProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime31.jsx)(HostBoard, {}) });
+  return /* @__PURE__ */ (0, import_jsx_runtime32.jsx)(BoardLanguageProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime32.jsx)(HostBoard, {}) });
 }
 
 // src/dashboard/ui/style.ts
@@ -42263,7 +42435,7 @@ html.dark .badge-danger{background:color-mix(in oklab,var(--destructive) 60%,tra
 `;
 
 // src/dashboard/main.tsx
-var import_jsx_runtime32 = __toESM(require_jsx_runtime());
+var import_jsx_runtime33 = __toESM(require_jsx_runtime());
 var style = document.createElement("style");
 style.textContent = STYLE;
 document.head.append(style);
@@ -42271,4 +42443,4 @@ var root = document.createElement("div");
 root.id = "board-root";
 document.body.append(root);
 void orca.document?.get().catch(() => void 0);
-(0, import_client.createRoot)(root).render(/* @__PURE__ */ (0, import_jsx_runtime32.jsx)(App, {}));
+(0, import_client.createRoot)(root).render(/* @__PURE__ */ (0, import_jsx_runtime33.jsx)(App, {}));

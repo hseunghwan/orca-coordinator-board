@@ -12,6 +12,7 @@ import { isManagedCoordinator, judgment, type PreferenceStore } from "../paseo/s
 import { ConversationReader } from "./conversation";
 import { discoverSessions } from "./discovery";
 import { isCurrentMembership, managedSessions } from "./session-links";
+import type { WorkItemView } from "../contract";
 
 type Sdk = PluginHandlerContext["paseo"];
 /** caller: orca run in the calling agent's own shell (channel protocol 2), so Orca sees that agent acting. */
@@ -30,7 +31,7 @@ export async function managedRowsForCoordinator(paseo: Sdk, prefs: PreferenceSto
 }
 
 const reportInput = z.object({
-  kind: z.enum(["question", "review"]),
+  kind: z.enum(["question", "review", "done"]),
   text: z.string().trim().min(1).max(2000),
 });
 
@@ -50,8 +51,14 @@ export function tool<I extends z.ZodType>(audience: Tool["audience"], input: I, 
   return { audience, input, execute: execute as Tool["execute"] };
 }
 
-export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Record<"plan" | "assign" | "fact" | "review", Tool>,
-  canReport: (sessionId: string) => boolean = () => false): Record<Command, Tool> {
+/** The board's work items (./work-items.ts) as the commands see them: read lists the phase, report moves it. */
+export type WorkTracking = {
+  view(sessionId: string): WorkItemView | undefined;
+  reported(sessionId: string, report: z.infer<typeof reportInput>): void;
+};
+
+export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Record<"plan" | "assign" | "fact" | "review" | "verify", Tool>,
+  canReport: (sessionId: string) => boolean = () => false, work?: WorkTracking): Record<Command, Tool> {
   const read = tool("coordinator", z.object({ sessionId: z.string().optional() }), async ({ sessionId }, { paseo, agent }) => {
     const rows = await managedRowsForCoordinator(paseo, prefs, agent.id);
     if (!sessionId) {
@@ -62,12 +69,14 @@ export function coordinatorCommands(prefs: PreferenceStore, reader: Conversation
         const j = current.judgments[r.id];
         const incomplete = j?.projectId === r.projectId && j.kind === "question" && !j.content?.recommendation && !j.content?.needsInput;
         let needsRecommendation = false;
+        const item = work?.view(r.id);
         if (incomplete && r.status === "idle" && !r.nativePending) {
           const evidence = await reader.read(paseo,r).catch(() => null);
           needsRecommendation = j.evidenceId === evidence?.id;
         }
         listing.push({ id:r.id, projectId:r.projectId, sourceProjectId:r.sourceProjectId, project:r.projectTitle, title:r.title,
           status:r.status, activityAt:r.activityAt, ...(r.id === agent.id ? {self:true}:{}), ...(needsRecommendation ? {needsRecommendation:true}:{}),
+          ...(item ? { work: { itemId:item.itemId, phase:item.phase, ...(item.doneMeans ? {doneMeans:item.doneMeans}:{}), ...(item.candidate ? {candidate:item.candidate.reason}:{}) } } : {}),
           ...(current.factCycle?.coordinator === agent.id && current.factCycle.expires > Date.now() && current.factCycle.candidates[r.id] ? {factCandidate:true} : {}) });
       }
       const final = prefs.read();
@@ -80,7 +89,9 @@ export function coordinatorCommands(prefs: PreferenceStore, reader: Conversation
     const data = await reader.read(paseo, target, true);
     const scope = prefs.read();
     if (scope.coordinator !== agent.id || !isCurrentMembership(target, scope)) throw new Error("관리 범위가 바뀌었습니다.");
-    return { text: JSON.stringify(data ? { sessionId, evidenceId: data.id, turns: data.turns } : { sessionId, status: target.status, turns: [] }) };
+    const item = work?.view(sessionId);
+    const tracked = item ? { work: { itemId: item.itemId, phase: item.phase, doneMeans: item.doneMeans, ...(item.candidate ? { candidate: item.candidate.reason } : {}), ...(item.report ? { report: item.report.text } : {}) } } : {};
+    return { text: JSON.stringify(data ? { sessionId, evidenceId: data.id, turns: data.turns, ...tracked } : { sessionId, status: target.status, turns: [], ...tracked }) };
   });
   const classify = tool("coordinator", judgment.extend({ sessionId: z.string() }), async (input, { paseo, agent }) => {
     const rows = await managedRowsForCoordinator(paseo, prefs, agent.id);
@@ -104,7 +115,9 @@ export function coordinatorCommands(prefs: PreferenceStore, reader: Conversation
     if (scope.coordinator !== agent.id && (!canReport(agent.id) || !managedSessions(rows, scope).some(r => r.id === agent.id))) {
       return { isError: true, text: "Board reporting is disabled for this session." };
     }
-    return recordReport(notes, agent.id, input);
+    const result = recordReport(notes, agent.id, input);
+    if (!result.isError && scope.coordinator !== agent.id) work?.reported(agent.id, input);
+    return result;
   });
   return { read, classify, report, ...served };
 }

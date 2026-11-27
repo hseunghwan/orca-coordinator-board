@@ -205,6 +205,14 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   function observe(observation: Observation): void {
     const { state, signals } = reduceSignals(signalState, observation)
     signalState = state
+    // The same observation moves the work items: Orca state mirrors running and awaiting-input, turn-ended leaves a done candidate.
+    const states = observation.kind === 'status' ? [[observation.session, observation.state] as const]
+      : observation.kind === 'world' ? [...observation.world.sessions].map(([id, session]) => [id, session.state] as const) : []
+    try {
+      if (board.track(states, signals)) changed()
+    } catch (error) {
+      orca.log(`work item update failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
     for (const signal of signals) {
       void board.signal(signal).then(changed, (error: unknown) => orca.log(`queued reply check failed: ${error instanceof Error ? error.message : String(error)}`))
     }
@@ -232,6 +240,7 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       if (seen !== null && now !== seen) changed()
       seen = now
       observe({ kind: 'world', world })
+      void board.watchWork(world).then((moved) => { if (moved) changed() }, (error: unknown) => orca.log(`work item check failed: ${error instanceof Error ? error.message : String(error)}`))
       void board.resumeWaiting().then((checked) => { if (checked) changed() }, (error: unknown) => orca.log(`queued reply check failed: ${error instanceof Error ? error.message : String(error)}`))
     } catch {
       // updateStatus reports the failure.
@@ -248,6 +257,7 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
       const world = await fleet.view({ maxAgeMs: 0 })
       const session = world.sessions.get(sessionId as SessionId)
       if (!session) return { opened: false }
+      if (board.reopened(session.id)) changed()
       if (session.handle) return { opened: (await orca.host.call('terminal.focus', { terminalId: session.handle })).focused }
       const ws = world.workspaces.get(session.worktree)
       if (!ws) return { opened: false }

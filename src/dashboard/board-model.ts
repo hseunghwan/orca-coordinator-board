@@ -7,6 +7,7 @@ import type { PullRequestItem } from "../paseo/shared/prs";
 import { pullKey, trackedCoverage, type TrackedDecision } from "../paseo/shared/tracked-decisions";
 import type { Translate } from "../paseo/view-types";
 import { boardViewModes, type BoardViewMode } from "../paseo/client/view-mode";
+import type { WorkItemView, WorkPhase } from "../contract";
 
 export type ProjectId = string | null;
 export type ProjectGroup = { id: string; title: string; cards: Card[] };
@@ -24,8 +25,58 @@ const count = (list: PendingDecisions) => list.records.length + list.sessions.le
 
 // completed holds the row keys of decisions handled on this screen, so a sent reply leaves the counts
 // and the list at once instead of waiting for the next snapshot.
-export function boardModel(snapshot: Snapshot, chosen: readonly ProjectId[], t: Translate, now = Date.now(), completed: ReadonlySet<string> = new Set()) {
+/** Tracked work by session id (board.work-items). */
+export type WorkItems = ReadonlyMap<string, WorkItemView>;
+
+/**
+ * Where a tracked session's card goes: its work phase speaks before the lane, except that a decision waiting on
+ * a person stays a decision, and a person's own done stays done. A report, a done candidate or stale work is
+ * something to check, not a done; only a confirmed item shows as done.
+ */
+export function workLane(lane: Card["lane"], item: WorkItemView | undefined): Card["lane"] {
+  if (!item || lane === "human" || lane === "done") return lane;
+  if (item.phase === "done") return "done";
+  if (item.phase === "reported" || item.phase === "verifying" || item.phase === "stale") return "review";
+  if (item.phase === "running" && item.candidate && lane !== "running") return "review";
+  return lane;
+}
+
+const phaseText: Record<WorkPhase, readonly [string, string]> = {
+  running: ["진행 중", "In progress"],
+  "awaiting-input": ["입력 대기", "Waiting for input"],
+  reported: ["완료 보고됨 · 확인 필요", "Reported done · Check it"],
+  verifying: ["검증 중", "Verifying"],
+  done: ["완료", "Done"],
+  stale: ["방치됨", "Stale"],
+};
+
+const candidateText: Record<NonNullable<WorkItemView["candidate"]>["reason"], readonly [string, string]> = {
+  "turn-ended": ["완료 후보 · 턴이 끝났지만 완료 보고가 없습니다", "Done candidate · The turn ended without a done report"],
+  "pr-merged": ["완료 후보 · PR이 병합됐지만 완료 보고가 없습니다", "Done candidate · The pull request merged without a done report"],
+  "pr-closed": ["완료 후보 · PR이 병합되지 않고 닫혔습니다", "Done candidate · The pull request closed without merging"],
+};
+const staleText: Record<NonNullable<WorkItemView["staleReason"]>, readonly [string, string]> = {
+  idle: ["방치됨 · 오래 멈춰 있습니다", "Stale · Idle too long"],
+  "no-answer": ["방치됨 · 완료 확인에 답이 없습니다", "Stale · No answer to the done check"],
+  gone: ["방치됨 · 세션이 사라졌습니다", "Stale · The session is gone"],
+};
+
+/** The card's status line for tracked work, or null when the lane's own line should show. */
+export function workStatus(item: WorkItemView | undefined, lane: Card["lane"], t: Translate): string | null {
+  if (!item || lane === "human") return null;
+  if (item.phase === "running" && item.candidate && lane !== "running") {
+    const [ko, en] = candidateText[item.candidate.reason];
+    const asked = item.candidate.ask?.status === "sent" || item.candidate.ask?.status === "unconfirmed";
+    return asked ? t(ko + " · 세션에 물었습니다", en + " · Asked the session") : t(ko, en);
+  }
+  if (item.phase === "stale" && item.staleReason) return t(...staleText[item.staleReason]);
+  const [ko, en] = phaseText[item.phase];
+  return t(ko, en);
+}
+
+export function boardModel(snapshot: Snapshot, chosen: readonly ProjectId[], t: Translate, now = Date.now(), completed: ReadonlySet<string> = new Set(), work: WorkItems = new Map()) {
   const { human, projects } = projectCards(snapshot);
+  for (const project of projects) for (const card of project.cards) card.lane = workLane(card.lane, work.get(card.session.id));
   const pullRequests = snapshot.pullRequests;
   const readyPrs = pullRequests?.items.filter(pr => pr.lane === "review") ?? [];
   const records = sortRecords(snapshot.trackedDecisions?.items ?? []);

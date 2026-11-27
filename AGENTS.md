@@ -15,6 +15,7 @@ Tech Stack: TypeScript, Orca 플러그인 API(`orca-plugin.json`, `pluginApi` 1)
 - 채널 실기 확인: `node scripts/probe-channel.mjs [--terminal <term_…>]`(빌드 뒤. 실제 워커 코드의 실행 훅과 `bin/coordinator-board`를 실제 orca CLI로 돌린다. 보드 데이터는 임시 폴더).
 - 장부, 사실, PR 실기 확인: `node scripts/probe-ledger.mjs prs|mail|review`(보드 데이터는 임시 폴더). `prs`는 읽기 전용이다. `mail`과 `review --send`는 실제 메시지를 하나 보내므로 사람이 시험용으로 정한 세션에만 `--yes`로 쓴다. `mail`은 터미널 밖 프로세스로 띄운다.
 - 배정 실기 확인: `node scripts/probe-dispatch.mjs check|send|verify|close`(로드된 개발 플러그인이 이 코드일 때만. `check`와 `verify`는 읽기 전용이다. `send --yes`는 등급 D를 Haiku로 바꾸고 코디네이터에게 작업 요청 하나를 보내며, `close --yes`는 작업자 터미널을 닫고 등급 D를 되돌린다. 사람이 정한 코디네이터에만 쓴다).
+- 작업 단계 실기 확인: `node scripts/probe-work.mjs send|items|report|read|answer|verify|worker|close`(로드된 개발 플러그인이 이 코드일 때만. `items`, `answer`, `worker`는 읽기 전용이다. `send --yes`는 등급 D를 Haiku로 바꾸고 코디네이터에게 doneMeans를 준 작업 요청 하나를 보낸다. 작업자가 한 번 답하면 보드의 완료 확인이 보고를 부른다. `--hold`는 코디네이터에게 verify를 스스로 하지 말라고 덧붙이고, `--key <접미사>`는 두 번째 시험 작업을 따로 둔다. `report --yes`는 작업자에게 완료 보고 요청 하나를, `read --yes`는 코디네이터에게 read 요청 하나를, `verify --result pass|fail --yes`는 코디네이터에게 verify 요청 하나를 보내고, `close --yes`는 작업자 터미널을 닫고 등급 D를 되돌린다. 보드 데이터 폴더의 `work-items.json`, `notes.json`, `workers.json`에 시험 기록이 남으니 끝나면 지운다. 사람이 정한 코디네이터에만 쓴다).
 - PATH 실기 확인: `node scripts/probe-path.mjs --match <명령 줄의 글>`(Windows. 실행 중인 에이전트 프로세스의 환경 블록을 읽기만 하고 PATH 키 이름과 `CB_*` 이름만 출력한다).
 - 테스트: `orca plugin test .`. `node_modules`에 vitest가 있으면 Orca가 vitest로 돌린다. 그래서 테스트의 `test`는 `vitest`에서 불러온다.
 - 렌더 검사: `orca plugin check .`, manifest 검사: `orca plugin validate .`

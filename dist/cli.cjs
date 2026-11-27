@@ -59,7 +59,7 @@ function runOrcaHere(env) {
 var import_node_net = require("node:net");
 
 // src/channel/names.ts
-var COMMANDS = ["read", "classify", "plan", "assign", "fact", "review", "report"];
+var COMMANDS = ["read", "classify", "plan", "assign", "fact", "review", "report", "verify"];
 var EXIT = { ok: 0, error: 1, absent: 2, dropped: 3, denied: 4 };
 var MAX_LINE = 1 << 20;
 
@@ -72,7 +72,7 @@ var USAGE = [
   "                                            session's recent turns and evidenceId",
   "  classify --session <id> --evidence <id> --kind question|review|idle --text-file <path|->",
   "                                            record a judgment on the session's card (content via --input-file)",
-  "  report --kind question|review --text-file <path|->",
+  "  report --kind question|review|done --text-file <path|->",
   "                                            post a question or a result on your own card",
   "  fact --cycle <cycleId> --session <id> --evidence <id>",
   "                                            during a digest that names a cycle, answer a board fact for that session",
@@ -81,7 +81,9 @@ var USAGE = [
   "  plan [--input-file <path|->]               list managed projects, workspaces, sessions and the route for each grade",
   '                                            ({"needsHooks":true} when the work needs Claude Code or Codex hooks)',
   '  assign --input-file <path|->              start one worker for a job: {"job":{projectId,workspaceId,grade,title,prompt,',
-  "                                            requestKey,expectedRoute,expectedModeId?}}; the same requestKey never starts twice",
+  "                                            requestKey,expectedRoute,expectedModeId?,doneMeans?}}; the same requestKey never starts twice",
+  "  verify --item <itemId> --result pass|fail --text-file <path|->",
+  "                                            confirm a reported work item (done), or send it back with the reason",
   "",
   "Options:",
   "  --input-file <path|->   the full input as a JSON object; flags override its fields",
@@ -90,7 +92,7 @@ var USAGE = [
   "",
   "Exit codes: 0 done, 1 command error, 2 board not running, 3 connection lost after sending, 4 not allowed."
 ].join("\n");
-var FLAGS = { "--session": "sessionId", "--evidence": "evidenceId", "--kind": "kind", "--cycle": "cycleId" };
+var FLAGS = { "--session": "sessionId", "--evidence": "evidenceId", "--kind": "kind", "--cycle": "cycleId", "--item": "itemId", "--result": "result" };
 async function parseArgs(argv, io) {
   const [command, ...rest] = argv;
   if (!command || command === "--help" || command === "help") return { help: true };

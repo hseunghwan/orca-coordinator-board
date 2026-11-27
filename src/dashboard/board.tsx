@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 // Paseo's BoardView (client/board.tsx): header, project filters, notices, the settings and setup page,
 // and the decision entries every view places. Orca's board has no classic view; the page below the views is settings. A sent reply leaves an inline receipt in its row's place.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { priorityLabel } from "../paseo/client/decision-priority";
 import { pullRowKey, recordRowKey, sessionRowKey, withReceiptPositions, type CompletedAction, type InlineReceipt } from "../paseo/client/decision-receipts";
 import { decisionRowSummary } from "../paseo/client/decision-row";
@@ -17,6 +17,7 @@ import { trackedSessionTargets } from "../paseo/client/tracked-session-targets";
 import { matchesWorkspace } from "../paseo/shared/workspace-pull";
 import type { BoardLayoutProps, DecisionEntry, OpenSession } from "./board-layout";
 import { boardModel, toggleFilter, type ProjectId } from "./board-model";
+import { WorkItemsContext } from "./work-items";
 import { Clarification } from "./clarification";
 import { DecisionActions, type DecisionReceipt } from "./decision-actions";
 import { DecisionEditingRow, keepEditingPositions, useDecisionEditing } from "./decision-editing";
@@ -34,6 +35,7 @@ import { Button, column, Disclosure, fontSize, row, space } from "./ui/controls"
 import { BoardLanguageSetting, useBoardLanguage } from "./ui/language";
 import { BoardViewSetting, BoardViewSwitch, useBoardViewMode } from "./ui/view-mode-setting";
 import { BoardHosts } from "./hosts";
+import { WorkSettingsCard } from "./work-settings";
 import { InboxView } from "./view-inbox";
 import { FocusView } from "./view-focus";
 import { MatrixView } from "./view-matrix";
@@ -57,7 +59,8 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
   const [historyOpen, setHistoryOpen] = useState<boolean | null>(null);
   const now = Date.now();
   const completed = new Set(inlineReceipts.map(receipt => receipt.actionKey));
-  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed) : null;
+  const work = useContext(WorkItemsContext);
+  const model = snapshot ? boardModel(snapshot, chosenProjects, t, now, completed, work) : null;
   const configured = model ? model.configured : readiness?.configured;
   const pickingProjects = !configured || (!settings && !snapshot?.coordinator);
   const coordinatorId = snapshot ? snapshot.coordinator : readiness?.coordinator ?? null;
@@ -307,6 +310,7 @@ export function BoardView({ snapshot, readiness, hostLabel, compact, error, load
       {settings && snapshot?.pullRequests && !!configured && <PullRequestSettings view={snapshot.pullRequests}
         names={new Map(snapshot.projects.map(project => [project.id, project.title]))} refresh={onRefresh} />}
       {settings && <BoardHosts />}
+      {settings && !!configured && <WorkSettingsCard />}
       {operationsNode}
       {settings && snapshot && <div style={{ ...column, gap: space[2], alignItems: "flex-start" }}>
         <Button label={pickSession ? t("기존 세션 목록 닫기", "Close session list") : t("기존 세션에서 코디네이터 지정", "Choose an existing coordinator session")}
