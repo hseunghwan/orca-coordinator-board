@@ -36840,7 +36840,7 @@ var count = (list) => list.records.length + list.sessions.length + list.prs.leng
 function workLane(lane, item) {
   if (!item || lane === "human" || lane === "done") return lane;
   if (item.phase === "done") return "done";
-  if (item.phase === "reported" || item.phase === "verifying" || item.phase === "stale") return "review";
+  if (item.phase === "reported" || item.phase === "verifying" || item.phase === "stale" || item.phase === "escalated") return "review";
   if (item.phase === "running" && item.candidate && lane !== "running") return "review";
   return lane;
 }
@@ -36850,7 +36850,8 @@ var phaseText = {
   reported: ["\uC644\uB8CC \uBCF4\uACE0\uB428 \xB7 \uD655\uC778 \uD544\uC694", "Reported done \xB7 Check it"],
   verifying: ["\uAC80\uC99D \uC911", "Verifying"],
   done: ["\uC644\uB8CC", "Done"],
-  stale: ["\uBC29\uCE58\uB428", "Stale"]
+  stale: ["\uBC29\uCE58\uB428", "Stale"],
+  escalated: ["\uC0AC\uB78C \uACB0\uC815 \uD544\uC694 \xB7 \uAC80\uC99D\uC774 \uBC18\uBCF5\uD574\uC11C \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4", "Needs your decision \xB7 Verify failed repeatedly"]
 };
 var candidateText = {
   "turn-ended": ["\uC644\uB8CC \uD6C4\uBCF4 \xB7 \uD134\uC774 \uB05D\uB0AC\uC9C0\uB9CC \uC644\uB8CC \uBCF4\uACE0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4", "Done candidate \xB7 The turn ended without a done report"],
@@ -37862,7 +37863,7 @@ var startCoordinator = defineRpc({
   input: setupCoordinator.input.extend({ workspaceId: external_exports.string().min(1).max(256).optional() }),
   output: setupCoordinator.output
 });
-var workPhase = external_exports.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale"]);
+var workPhase = external_exports.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale", "escalated"]);
 var noticeStatus = external_exports.enum(["queued", "sent", "unconfirmed", "unavailable"]);
 var workCandidate = external_exports.object({
   reason: external_exports.enum(["turn-ended", "pr-merged", "pr-closed"]),
@@ -37880,7 +37881,9 @@ var workItemView = external_exports.object({
   candidate: workCandidate.optional(),
   report: external_exports.object({ text: external_exports.string(), at: external_exports.number() }).optional(),
   staleReason: staleReason.optional(),
-  pull: workPull.optional()
+  pull: workPull.optional(),
+  /** How many times the coordinator's verify sent the work back. */
+  attempts: external_exports.number().int().nonnegative().optional()
 });
 var boardWorkItems = defineRpc({
   name: "board.work-items",

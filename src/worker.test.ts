@@ -237,7 +237,7 @@ test('the coordinator reads and classifies over the channel with the env its lau
   assert.equal(plan.code, 0)
   const { workspaces, routes } = JSON.parse(plan.text) as { workspaces: { id: string; projectId: string }[]; routes: { grade: string; route: unknown; expectedModeId?: string }[] }
   const d = routes.find((r) => r.grade === 'D')!
-  const job = { projectId: 'studio', workspaceId: workspaces[0].id, grade: 'D', title: 'Ready check', prompt: 'Reply ready.', requestKey: 'worker-test-0001', expectedRoute: d.route, expectedModeId: d.expectedModeId }
+  const job = { projectId: 'studio', workspaceId: workspaces[0].id, grade: 'D', title: 'Ready check', prompt: 'Reply ready.', doneMeans: 'It replied ready.', requestKey: 'worker-test-0001', expectedRoute: d.route, expectedModeId: d.expectedModeId }
   const assigned = await cli(coordinatorEnv, ['assign', '--input-file', 'job.json'], { 'job.json': JSON.stringify({ job }) })
   assert.equal(assigned.code, 0, assigned.text)
   assert.equal((JSON.parse(assigned.text) as { sessionId: string }).sessionId, 'launched-1')

@@ -22,7 +22,7 @@ export const USAGE = [
   '  plan [--input-file <path|->]               list managed projects, workspaces, sessions and the route for each grade',
   '                                            ({"needsHooks":true} when the work needs Claude Code or Codex hooks)',
   '  assign --input-file <path|->              start one worker for a job: {"job":{projectId,workspaceId,grade,title,prompt,',
-  '                                            requestKey,expectedRoute,expectedModeId?,doneMeans?}}; the same requestKey never starts twice',
+  '                                            requestKey,expectedRoute,expectedModeId?,doneMeans}}; the same requestKey never starts twice',
   '  verify --item <itemId> --result pass|fail --text-file <path|->',
   '                                            confirm a reported work item (done), or send it back with the reason',
   '',

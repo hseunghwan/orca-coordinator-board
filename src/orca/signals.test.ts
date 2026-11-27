@@ -36,6 +36,9 @@ test('a session is gone after two World reads without it, or when its workspace 
   expect(run([world({ a: 'done', b: 'done' }), world({ b: 'done' }), world({ b: 'done' }), world({ b: 'done' })]))
     .toEqual([[], [], [{ kind: 'gone', session: A }], []])
   expect(run([world({ a: 'done' }), world({}), world({ a: 'done' }), world({})])).toEqual([[], [], [], []])
+  // Orca restarting lists no session at all: that says nothing, however many times it happens.
+  expect(run([world({ a: 'done', b: 'done' }), world({}), world({}), world({}), world({ b: 'done' }), world({ b: 'done' })]))
+    .toEqual([[], [], [], [], [], [{ kind: 'gone', session: A }]])
   expect(run([world({ a: 'done', b: 'working' }), { kind: 'workspace-removed', sessions: [A, A, 'c' as SessionId] }]))
     .toEqual([[], [{ kind: 'gone', session: A }]])
   expect(run([status(B, 'working'), { kind: 'workspace-removed', sessions: [B] }, status(B, 'done')]))

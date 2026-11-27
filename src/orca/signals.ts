@@ -7,7 +7,10 @@ export type Signal =
   | { kind: 'turn-ended'; session: SessionId }
   /** blocked became anything else: Paseo's agent.permission.after. */
   | { kind: 'permission-cleared'; session: SessionId }
-  /** Missing from two World reads in a row, or its workspace was removed: Paseo's close and archive hooks. */
+  /**
+   * Missing from two non-empty World reads in a row, or its workspace was removed: Paseo's close and archive hooks.
+   * A consumer that drops records still confirms it against a fresh read (src/server/board.ts forget).
+   */
   | { kind: 'gone'; session: SessionId }
 
 export type Observation =
@@ -36,6 +39,9 @@ export function reduceSignals(state: SignalState, observation: Observation): { s
     signals.push(...transition(observation.session, state.get(observation.session)?.state, observation.state))
     next.set(observation.session, { state: observation.state, missing: 0 })
   } else if (observation.kind === 'world') {
+    // A read that lists no session at all is Orca starting or restarting, not every session closing: it says
+    // nothing, so no consumer of 'gone' (queued replies, the board's records, tracked work) acts on it.
+    if (!observation.world.sessions.size) return { state, signals }
     for (const [id, session] of observation.world.sessions) {
       signals.push(...transition(id, state.get(id)?.state, session.state))
       next.set(id, { state: session.state, missing: 0 })

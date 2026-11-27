@@ -202,12 +202,22 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
   }
   // Paseo drains its queues from turn, permission, close and archive hooks; Orca reports state changes.
   let signalState = noSignals
+  /**
+   * When a reported state began. A World read says so. An event that changes the state begins it now; Orca also
+   * repeats an unchanged state mid-turn, and that one began when the last read saw it begin.
+   */
+  function stateSince(session: SessionId, next: Extract<Observation, { kind: 'status' }>['state']): number {
+    const read = fleet.peek()?.sessions.get(session)
+    if (read && read.state === next) return read.stateStartedAt
+    return signalState.get(session)?.state === next ? 0 : Date.now()
+  }
   function observe(observation: Observation): void {
+    const since = observation.kind === 'status' ? stateSince(observation.session, observation.state) : 0
     const { state, signals } = reduceSignals(signalState, observation)
     signalState = state
     // The same observation moves the work items: Orca state mirrors running and awaiting-input, turn-ended leaves a done candidate.
-    const states = observation.kind === 'status' ? [[observation.session, observation.state] as const]
-      : observation.kind === 'world' ? [...observation.world.sessions].map(([id, session]) => [id, session.state] as const) : []
+    const states = observation.kind === 'status' ? [[observation.session, observation.state, since] as const]
+      : observation.kind === 'world' ? [...observation.world.sessions].map(([id, session]) => [id, session.state, session.stateStartedAt] as const) : []
     try {
       if (board.track(states, signals)) changed()
     } catch (error) {

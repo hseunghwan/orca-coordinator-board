@@ -80,10 +80,12 @@ export const startCoordinator = defineRpc({
  * linked to the session once it reports, moved by explicit reports and Orca state (src/server/work-items.ts).
  * running: working or idle without a report. awaiting-input: blocked, waiting or asked a question.
  * reported: the session said it is done (its own word, not yet checked). verifying: its pull request merged, or
- * the coordinator is checking. done: confirmed by the coordinator's verify or a person. stale: left idle too long,
- * no answer to the board's done check, or the session is gone.
+ * the coordinator is checking. done: confirmed by the coordinator's verify or a person. stale: left running idle
+ * too long, no answer to the board's done check, or the session is gone. Waiting for input is never stale by time,
+ * as a person's answer wakes it. escalated: the coordinator's verify failed after the fix attempts ran out, so the
+ * work waits for a person's decision card, as Orca's orchestration hands a worker to Needs you.
  */
-export const workPhase = z.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale"]);
+export const workPhase = z.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale", "escalated"]);
 export type WorkPhase = z.output<typeof workPhase>;
 /** How a board message about a work item went: queued waits for the recipient to be idle. */
 export const noticeStatus = z.enum(["queued", "sent", "unconfirmed", "unavailable"]);
@@ -103,6 +105,8 @@ export const workItemView = z.object({
   report: z.object({ text: z.string(), at: z.number() }).optional(),
   staleReason: staleReason.optional(),
   pull: workPull.optional(),
+  /** How many times the coordinator's verify sent the work back. */
+  attempts: z.number().int().nonnegative().optional(),
 });
 export type WorkItemView = z.output<typeof workItemView>;
 /** The tracked work by session id, read beside board.snapshot (whose session rows are Paseo's). */

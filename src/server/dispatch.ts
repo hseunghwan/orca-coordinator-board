@@ -134,10 +134,11 @@ export type DispatchDeps = { fleet: Pick<Fleet, "view" | "cli" | "invalidate">; 
 export const workerNote = (bin: string, doneMeans?: string | null) =>
   (doneMeans ? "완료 기준: " + doneMeans + "\n" : "") +
   "보드에 결정할 일이나 확인할 결과를 보고할 때는 절대 경로로 `" + cliCommand(bin) + " report --kind question --text-file -`(확인할 결과는 `--kind review`)를 실행하고 글은 표준 입력으로 넘기세요. " +
-  "맡은 일을 완료 기준까지 끝냈으면 마지막에 `--kind done`으로 한 번 보고하세요. 글에는 한 일, 산출물(PR, 파일), 검증 근거를 적습니다. " + CLI_PATH_NOTE;
+  "맡은 일을 완료 기준까지 끝냈으면 마지막에 `--kind done`으로 한 번 보고하세요. 글에는 한 일, 산출물(PR, 파일), 검증 근거를 적습니다. " +
+  "PR 병합, 기본 브랜치에 push, 배포·게시, 비용이 드는 일, 권한 승인은 사람이 정합니다. 직접 하지 말고 `--kind question`으로 보고한 뒤 답을 기다리세요. " + CLI_PATH_NOTE;
 
-/** assign's job: Paseo's dispatch input and what done means for the work, kept on the board's work item. */
-export const assignJobSchema = dispatchInputSchema.extend({ doneMeans: z.string().trim().min(1).max(2000).optional() });
+/** assign's job: Paseo's dispatch input and what done means for the work, kept on the board's work item. Required, as Orca's orchestration requires it of every dispatch. */
+export const assignJobSchema = dispatchInputSchema.extend({ doneMeans: z.string().trim().min(1).max(2000) });
 
 export async function dispatchWorker(deps: DispatchDeps, caller: OrcaCli | null | undefined, request: DispatchInput, getScope: () => DispatchScope, doneMeans: string | null = null) {
   const input = dispatchInputSchema.parse(request);
@@ -195,8 +196,12 @@ async function dispatchOnce(deps: DispatchDeps, caller: OrcaCli | null | undefin
     throw new Error("작업 권한이 배정 미리보기와 다릅니다. 호스트 설정을 다시 확인해 주세요.");
   const result = (sessionId: string | null, handle: string | null) => ({ sessionId, route, ...(modeId && { modeId }), ...(handle && { terminal: handle }) });
 
+  // The work item exists whenever its launch might: create keeps the first, so a stop between the journal and the
+  // item, even one that leaves the launch uncertain, is repaired by the next attempt with the same requestKey.
+  const ensureItem = () => deps.items?.create({ itemId: input.requestKey, projectId: input.projectId, workspaceId: target.id, title: input.title, doneMeans });
   let launch = receipt;
   if (launch?.sessionId) return result(launch.sessionId, launch.handle);
+  if (launch) ensureItem();
   if (launch?.state === "launching" && !launch.operationId) throw new Error(uncertain);
   if (launch?.state !== "started") {
     if (!caller) throw new Error("작업자 배정은 코디네이터 터미널의 coordinator-board 명령으로만 할 수 있습니다.");
@@ -208,14 +213,16 @@ async function dispatchOnce(deps: DispatchDeps, caller: OrcaCli | null | undefin
         if (j.launches[input.requestKey]) throw new Error("같은 요청을 이미 실행하고 있습니다. 결과를 확인한 뒤 다시 실행하세요.");
         j.launches[input.requestKey] = fresh;
       });
-      deps.items?.create({ itemId: input.requestKey, projectId: input.projectId, workspaceId: target.id, title: input.title, doneMeans });
     }
+    ensureItem();
     const outcome = await launchAgent(caller, {
       agent: route.provider, worktree: target.id, model: route.model, effort: route.effort,
       prompt: launchMarker(launch.launchId) + "\n" + input.prompt + (deps.bin ? "\n\n" + workerNote(deps.bin, deps.items?.read().items[input.requestKey]?.doneMeans ?? doneMeans) : ""), retryLaunch: launch.operationId,
     });
     if (outcome.kind === "refused") {
       deps.journal.change(j => { delete j.launches[input.requestKey]; });
+      // Nothing started, so nothing is tracked: the requestKey may start fresh, and no orphan item stays running.
+      deps.items?.discard(input.requestKey);
       throw new Error("Orca가 작업자 실행을 거절했습니다: " + outcome.message);
     }
     if (outcome.kind === "unknown") {
