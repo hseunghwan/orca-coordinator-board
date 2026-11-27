@@ -80,6 +80,10 @@ export class WorkerJournal {
   worker(sessionId: string): WorkerMetadata | undefined {
     return this.read().workers[sessionId];
   }
+  /** Drops a gone session's worker metadata; its launch record stays so the requestKey is never reused. */
+  forget(sessionId: string) {
+    if (this.read().workers[sessionId]) this.change(j => { delete j.workers[sessionId]; });
+  }
   /** Launches still waiting for their terminal, for the launch hook. */
   pending(now = Date.now()): PendingLaunch[] {
     return Object.values(this.read().launches).filter(l => l.state === "launching" && now - l.at < PENDING_MS)

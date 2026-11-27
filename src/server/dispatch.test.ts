@@ -193,3 +193,40 @@ test('a session with no work item is left alone, and a coordinator report moves 
   await f.board.command('report', { kind: 'done', text: 'Done.' }, 'coord')
   expect(await f.handlers.get('board.work-items')!({})).toEqual({ items: {} })
 })
+
+test('verify belongs to the coordinator and only settles reported work: pass is done, fail goes back to running', async () => {
+  const f = setup()
+  const phase = async () => ((await f.handlers.get('board.work-items')!({}) as { items: Record<string, { phase: string; itemId: string }> }).items['launched-1'])
+  await f.board.command('assign', { job: { ...f.task, doneMeans: '테스트 통과' } }, 'coord', f.caller)
+  const verify = (result: 'pass' | 'fail', who = 'coord') => f.board.command('verify', { itemId: f.task.requestKey, result, text: '확인했습니다.' }, who)
+  expect(f.board.audience('verify')).toBe('coordinator')
+  await expect(verify('pass')).rejects.toThrow('완료 보고된 작업만')
+  await f.board.command('report', { kind: 'done', text: '끝났습니다.' }, 'launched-1')
+  await expect(verify('pass', 'other')).rejects.toThrow('코디네이터')
+  expect(JSON.parse((await verify('fail')).text)).toMatchObject({ itemId: f.task.requestKey, phase: 'running' })
+  expect((await phase()).phase).toBe('running')
+  await f.board.command('report', { kind: 'done', text: '다시 끝났습니다.' }, 'launched-1')
+  expect(JSON.parse((await verify('pass')).text)).toEqual({ itemId: f.task.requestKey, phase: 'done' })
+  expect((await phase()).phase).toBe('done')
+})
+
+test('a gone session takes its judgment and worker metadata with it, unless a fresh read still lists it', async () => {
+  const f = setup()
+  await f.board.command('assign', { job: f.task }, 'coord', f.caller)
+  f.prefs.change(s => {
+    s.judgments['ghost'] = { evidenceId: 'e', kind: 'idle', text: '남은 일 없음', projectId: 'acme' }
+    s.judgments['coord'] = { evidenceId: 'e', kind: 'idle', text: '남은 일 없음', projectId: 'acme' }
+  })
+  await f.board.signal({ kind: 'gone', session: 'ghost' as never })
+  await f.board.signal({ kind: 'gone', session: 'coord' as never })
+  expect(Object.keys(f.prefs.read().judgments)).toEqual(['coord'])
+  expect(f.journal.worker('launched-1')).toBeDefined()
+})
+
+test('the stale settings are kept with the work items and checked', async () => {
+  const f = setup()
+  expect(await f.handlers.get('board.work-settings')!({})).toEqual({ idleMinutes: 60, askMinutes: 30 })
+  expect(await f.handlers.get('board.set-work-settings')!({ idleMinutes: 120, askMinutes: 15 })).toEqual({ idleMinutes: 120, askMinutes: 15 })
+  expect(await f.handlers.get('board.work-settings')!({})).toEqual({ idleMinutes: 120, askMinutes: 15 })
+  await expect(f.handlers.get('board.set-work-settings')!({ idleMinutes: 1, askMinutes: 15 })).rejects.toThrow()
+})

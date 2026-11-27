@@ -57,7 +57,7 @@ export type WorkTracking = {
   reported(sessionId: string, report: z.infer<typeof reportInput>): void;
 };
 
-export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Record<"plan" | "assign" | "fact" | "review", Tool>,
+export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Record<"plan" | "assign" | "fact" | "review" | "verify", Tool>,
   canReport: (sessionId: string) => boolean = () => false, work?: WorkTracking): Record<Command, Tool> {
   const read = tool("coordinator", z.object({ sessionId: z.string().optional() }), async ({ sessionId }, { paseo, agent }) => {
     const rows = await managedRowsForCoordinator(paseo, prefs, agent.id);

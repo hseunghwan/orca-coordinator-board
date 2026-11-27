@@ -116,3 +116,14 @@ test('a tracked session work phase places its card before the lane, but never hi
   expect(cards.find(card => card.session.id === 'busy')?.lane).toBe('review')
   expect(cards.find(card => card.session.id === 'needs-permission')?.lane).toBe('human')
 })
+
+test('stale work and the done check read as something to check, with the reason', () => {
+  const base = { itemId: 'r', phaseAt: 1, title: 'w', doneMeans: null }
+  expect(workLane('idle', { ...base, phase: 'stale', staleReason: 'no-answer' })).toBe('review')
+  expect(workStatus({ ...base, phase: 'stale', staleReason: 'no-answer' }, 'review', t)).toBe('방치됨 · 완료 확인에 답이 없습니다')
+  expect(workStatus({ ...base, phase: 'stale', staleReason: 'gone' }, 'review', t)).toBe('방치됨 · 세션이 사라졌습니다')
+  expect(workStatus({ ...base, phase: 'verifying' }, 'review', t)).toBe('검증 중')
+  const asked = { ...base, phase: 'running' as const, candidate: { reason: 'pr-merged' as const, at: 2, ask: { messageId: 'm', status: 'sent' as const, at: 3 } } }
+  expect(workStatus(asked, 'review', t)).toBe('완료 후보 · PR이 병합됐지만 완료 보고가 없습니다 · 세션에 물었습니다')
+  expect(workStatus({ ...asked, candidate: { reason: 'pr-closed' as const, at: 2 } }, 'review', t)).toBe('완료 후보 · PR이 병합되지 않고 닫혔습니다')
+})

@@ -30,13 +30,13 @@ export type WorkItems = ReadonlyMap<string, WorkItemView>;
 
 /**
  * Where a tracked session's card goes: its work phase speaks before the lane, except that a decision waiting on
- * a person stays a decision, and a person's own done stays done. A report or a done candidate is a result to
- * check, not a done; only a confirmed item shows as done.
+ * a person stays a decision, and a person's own done stays done. A report, a done candidate or stale work is
+ * something to check, not a done; only a confirmed item shows as done.
  */
 export function workLane(lane: Card["lane"], item: WorkItemView | undefined): Card["lane"] {
   if (!item || lane === "human" || lane === "done") return lane;
   if (item.phase === "done") return "done";
-  if (item.phase === "reported" || item.phase === "verifying") return "review";
+  if (item.phase === "reported" || item.phase === "verifying" || item.phase === "stale") return "review";
   if (item.phase === "running" && item.candidate && lane !== "running") return "review";
   return lane;
 }
@@ -50,12 +50,26 @@ const phaseText: Record<WorkPhase, readonly [string, string]> = {
   stale: ["방치됨", "Stale"],
 };
 
+const candidateText: Record<NonNullable<WorkItemView["candidate"]>["reason"], readonly [string, string]> = {
+  "turn-ended": ["완료 후보 · 턴이 끝났지만 완료 보고가 없습니다", "Done candidate · The turn ended without a done report"],
+  "pr-merged": ["완료 후보 · PR이 병합됐지만 완료 보고가 없습니다", "Done candidate · The pull request merged without a done report"],
+  "pr-closed": ["완료 후보 · PR이 병합되지 않고 닫혔습니다", "Done candidate · The pull request closed without merging"],
+};
+const staleText: Record<NonNullable<WorkItemView["staleReason"]>, readonly [string, string]> = {
+  idle: ["방치됨 · 오래 멈춰 있습니다", "Stale · Idle too long"],
+  "no-answer": ["방치됨 · 완료 확인에 답이 없습니다", "Stale · No answer to the done check"],
+  gone: ["방치됨 · 세션이 사라졌습니다", "Stale · The session is gone"],
+};
+
 /** The card's status line for tracked work, or null when the lane's own line should show. */
 export function workStatus(item: WorkItemView | undefined, lane: Card["lane"], t: Translate): string | null {
   if (!item || lane === "human") return null;
   if (item.phase === "running" && item.candidate && lane !== "running") {
-    return t("완료 후보 · 턴이 끝났지만 완료 보고가 없습니다", "Done candidate · The turn ended without a done report");
+    const [ko, en] = candidateText[item.candidate.reason];
+    const asked = item.candidate.ask?.status === "sent" || item.candidate.ask?.status === "unconfirmed";
+    return asked ? t(ko + " · 세션에 물었습니다", en + " · Asked the session") : t(ko, en);
   }
+  if (item.phase === "stale" && item.staleReason) return t(...staleText[item.staleReason]);
   const [ko, en] = phaseText[item.phase];
   return t(ko, en);
 }

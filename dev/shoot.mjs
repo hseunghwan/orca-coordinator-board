@@ -160,6 +160,7 @@ const shots = [
   ["links-conflict-dark-wide", "theme=dark&links=conflict" + press("설정", "다른 프로젝트의 세션", "#오프라인 동기화", "#billing-api", "이 프로젝트에 연결"), 1280, 1500],
   ["work-light-wide", "theme=light&work=1" + press("진행"), 1280, 1000],
   ["work-dark-narrow", "theme=dark&work=1" + press("진행", "#환불 API 문서 · 상세"), 520, 1600],
+  ["work-settings-light-wide", "theme=light&work=1" + press("설정"), 1280, 1500],
   ["hosts-light-wide", "theme=light&hosts=1" + press("설정"), 1280, 1100],
   ["hosts-dark-narrow", "theme=dark&hosts=1" + press("설정"), 520, 1400],
   ["hosts-fail-light-narrow", "theme=light&hosts=fail" + press("설정"), 520, 1400],

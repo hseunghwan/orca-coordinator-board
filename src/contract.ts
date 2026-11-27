@@ -79,17 +79,30 @@ export const startCoordinator = defineRpc({
  * A unit of work the board tracks for one session, as Orca's orchestration tracks a worker: started by assign,
  * linked to the session once it reports, moved by explicit reports and Orca state (src/server/work-items.ts).
  * running: working or idle without a report. awaiting-input: blocked, waiting or asked a question.
- * reported: the session said it is done (its own word, not yet checked). verifying, done: checked and
- * confirmed (done only by a person or, later, the coordinator). stale: left without progress (later).
+ * reported: the session said it is done (its own word, not yet checked). verifying: its pull request merged, or
+ * the coordinator is checking. done: confirmed by the coordinator's verify or a person. stale: left idle too long,
+ * no answer to the board's done check, or the session is gone.
  */
 export const workPhase = z.enum(["running", "awaiting-input", "reported", "verifying", "done", "stale"]);
 export type WorkPhase = z.output<typeof workPhase>;
-/** A turn ended without a report: a hint that the work may be done, never the done itself. */
-export const workCandidate = z.object({ reason: z.literal("turn-ended"), at: z.number() });
+/** How a board message about a work item went: queued waits for the recipient to be idle. */
+export const noticeStatus = z.enum(["queued", "sent", "unconfirmed", "unavailable"]);
+/**
+ * A hint that the work may be done, never the done itself: a turn ended without a report, or its pull request
+ * merged or closed. The board asks the session once (ask) and waits for its report.
+ */
+export const workCandidate = z.object({
+  reason: z.enum(["turn-ended", "pr-merged", "pr-closed"]), at: z.number(),
+  ask: z.object({ messageId: z.string(), status: noticeStatus, at: z.number() }).optional(),
+});
+export const staleReason = z.enum(["idle", "no-answer", "gone"]);
+export const workPull = z.object({ repo: z.string(), number: z.number().int().positive(), state: z.enum(["OPEN", "CLOSED", "MERGED", "UNKNOWN"]).optional() });
 export const workItemView = z.object({
   itemId: z.string(), phase: workPhase, phaseAt: z.number(), title: z.string(), doneMeans: z.string().nullable(),
   candidate: workCandidate.optional(),
   report: z.object({ text: z.string(), at: z.number() }).optional(),
+  staleReason: staleReason.optional(),
+  pull: workPull.optional(),
 });
 export type WorkItemView = z.output<typeof workItemView>;
 /** The tracked work by session id, read beside board.snapshot (whose session rows are Paseo's). */
@@ -98,3 +111,8 @@ export const boardWorkItems = defineRpc({
   input: z.strictObject({}),
   output: z.object({ items: z.record(z.string(), workItemView) }),
 });
+/** When tracked work counts as stale: idle that long since its phase began, or that long without an answer to the done check. */
+export const workSettings = z.object({ idleMinutes: z.number().int().min(5).max(7 * 24 * 60), askMinutes: z.number().int().min(5).max(7 * 24 * 60) });
+export type WorkSettings = z.output<typeof workSettings>;
+export const boardWorkSettings = defineRpc({ name: "board.work-settings", input: z.strictObject({}), output: workSettings });
+export const setWorkSettings = defineRpc({ name: "board.set-work-settings", input: workSettings, output: workSettings });
