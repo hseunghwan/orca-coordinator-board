@@ -120,6 +120,24 @@ test('waiting for input is never stale by time; running work is, and so is unans
   expect(reduceWorkItem(waiting, { kind: 'gone', at: 5 })).toMatchObject({ phase: 'stale', staleReason: 'gone' })
 })
 
+test('a question reported inside a working turn stays waiting until working begins after it', () => {
+  const asked = reduceWorkItem(item(), { kind: 'report', report: 'question', text: '어느 쪽?', at: 100 })
+  expect(asked).toMatchObject({ phase: 'awaiting-input', phaseAt: 100 })
+  // The turn that made the report is still working, and every poll says so with the time it began.
+  expect(reduceWorkItem(asked, { kind: 'state', state: 'working', at: 130, since: 50 })).toBe(asked)
+  // A person answered and a new turn began.
+  expect(reduceWorkItem(asked, { kind: 'state', state: 'working', at: 300, since: 250 })).toMatchObject({ phase: 'running', phaseAt: 300 })
+  const stale = item({ phase: 'stale', phaseAt: 100, staleReason: 'idle' })
+  expect(reduceWorkItem(stale, { kind: 'state', state: 'working', at: 130, since: 50 })).toBe(stale)
+  expect(reduceWorkItem(stale, { kind: 'state', state: 'working', at: 130, since: 120 }).phase).toBe('running')
+})
+
+test('an unanswered done check marks work stale only while the session is not working', () => {
+  const askedAt = { candidate: { reason: 'turn-ended' as const, at: 1, ask: { messageId: 'm', status: 'sent' as const, at: 1 } } }
+  const asked = item(askedAt)
+  expect(reduceWorkItem(asked, { kind: 'tick', at: 3 * HOUR, state: 'working', idleSince: null, settings })).toBe(asked)
+})
+
 test('a repeated done report keeps its phase and phaseAt, so the coordinator notice key does not change', () => {
   const reported = reduceWorkItem(item(), { kind: 'report', report: 'done', text: 'PR https://github.com/acme/app/pull/7', at: 5 })
   expect(reported).toMatchObject({ phase: 'reported', phaseAt: 5, pull: { repo: 'acme/app', number: 7 } })

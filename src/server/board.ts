@@ -405,9 +405,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
      * as a done candidate (./work-items.ts). A gone session is left to signal(), which confirms it first. True
      * when an item changed.
      */
-    track(states: readonly (readonly [string, OrcaState])[], signals: readonly Signal[]): boolean {
+    track(states: readonly (readonly [string, OrcaState, number?])[], signals: readonly Signal[]): boolean {
       const at = Date.now();
-      const events: [string, WorkEvent][] = states.map(([id, state]) => [id, { kind: "state", state, at }]);
+      const events: [string, WorkEvent][] = states.map(([id, state, since]) => [id, { kind: "state", state, at, ...(since !== undefined && { since }) }]);
       for (const signal of signals) {
         if (signal.kind === "turn-ended") events.push([signal.session, { kind: signal.kind, at }]);
       }

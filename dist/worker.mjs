@@ -25496,7 +25496,9 @@ function reduceWorkItem(item, event) {
         return item.phase === "running" ? move(item, "awaiting-input", event.at, "board") : item;
       }
       if (event.state === "working") {
-        if (item.phase === "awaiting-input" || item.phase === "stale") return move(item, "running", event.at, "board");
+        if (item.phase === "awaiting-input" || item.phase === "stale") {
+          return event.since === void 0 || event.since > item.phaseAt ? move(item, "running", event.at, "board") : item;
+        }
         if (item.phase === "running" && item.candidate) {
           const { candidate: _resumed, ...rest } = item;
           return rest;
@@ -25538,7 +25540,7 @@ function reduceWorkItem(item, event) {
       if (!open3(item)) return item;
       const seen = item.phase === "running" && !item.candidate && event.state === "done" && event.idleSince !== null ? withCandidate(item, "turn-ended", event.idleSince) : item;
       const ask = seen.candidate?.ask;
-      if (ask?.status === "sent" && event.at - ask.at > event.settings.askMinutes * MINUTE) {
+      if (ask?.status === "sent" && event.idleSince !== null && event.at - ask.at > event.settings.askMinutes * MINUTE) {
         return move(seen, "stale", event.at, "board", { staleReason: "no-answer" });
       }
       if (seen.phase === "running" && event.idleSince !== null && event.at - Math.max(seen.phaseAt, event.idleSince) > event.settings.idleMinutes * MINUTE) {
@@ -28692,7 +28694,7 @@ function contribute(server, fleet, dataDir, pulls, host = NO_HOST) {
      */
     track(states, signals) {
       const at2 = Date.now();
-      const events = states.map(([id5, state2]) => [id5, { kind: "state", state: state2, at: at2 }]);
+      const events = states.map(([id5, state2, since]) => [id5, { kind: "state", state: state2, at: at2, ...since !== void 0 && { since } }]);
       for (const signal of signals) {
         if (signal.kind === "turn-ended") events.push([signal.session, { kind: signal.kind, at: at2 }]);
       }
@@ -28974,7 +28976,7 @@ function activateWith(orca, deps) {
   function observe(observation) {
     const { state: state2, signals } = reduceSignals(signalState, observation);
     signalState = state2;
-    const states = observation.kind === "status" ? [[observation.session, observation.state]] : observation.kind === "world" ? [...observation.world.sessions].map(([id5, session2]) => [id5, session2.state]) : [];
+    const states = observation.kind === "status" ? [[observation.session, observation.state, Date.now()]] : observation.kind === "world" ? [...observation.world.sessions].map(([id5, session2]) => [id5, session2.state, session2.stateStartedAt]) : [];
     try {
       if (board.track(states, signals)) changed3();
     } catch (error62) {

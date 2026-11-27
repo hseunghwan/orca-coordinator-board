@@ -206,8 +206,9 @@ export function activateWith(orca: OrcaWorkerApi, deps: WorkerDeps): () => void 
     const { state, signals } = reduceSignals(signalState, observation)
     signalState = state
     // The same observation moves the work items: Orca state mirrors running and awaiting-input, turn-ended leaves a done candidate.
-    const states = observation.kind === 'status' ? [[observation.session, observation.state] as const]
-      : observation.kind === 'world' ? [...observation.world.sessions].map(([id, session]) => [id, session.state] as const) : []
+    // An event is a state beginning now; a World read says when its state began.
+    const states = observation.kind === 'status' ? [[observation.session, observation.state, Date.now()] as const]
+      : observation.kind === 'world' ? [...observation.world.sessions].map(([id, session]) => [id, session.state, session.stateStartedAt] as const) : []
     try {
       if (board.track(states, signals)) changed()
     } catch (error) {
