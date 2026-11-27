@@ -13,6 +13,7 @@
 //   worker --coordinator <id>                                 read only: the kinds of the worker's last transcript entries
 //                                                             and the head of each board message it got
 //   close  --terminal <term_…> --yes                          closes the worker's terminal and restores grade D
+// --key <suffix> runs a second probe item beside the first; --hold on send asks the coordinator to leave verify to the probe.
 // Prints ids, phases and states; the only session text is the coordinator's answer to the read step.
 import { build } from 'esbuild'
 import { execFileSync } from 'node:child_process'
@@ -28,7 +29,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const state = join(tmpdir(), 'board-work-probe')
 mkdirSync(state, { recursive: true })
 const PLUGIN = 'local.coordinator-board'
-const requestKey = 'probe-work-' + createHash('sha256').update(flag('--coordinator') ?? '').digest('hex').slice(0, 16)
+const requestKey = 'probe-work-' + createHash('sha256').update(flag('--coordinator') ?? '').digest('hex').slice(0, 16) + (flag('--key') ? '-' + flag('--key').replace(/[^a-z0-9]/gi, '').slice(0, 12) : '')
 const doneMeans = '작업자가 준비됨이라고 답하고, 요청을 받으면 report --kind done으로 한 번 보고한다.'
 
 const bundle = join(state, 'probe.mjs')
@@ -69,7 +70,8 @@ if (step === 'send') {
     '2. 결과의 workspaces에서 id가 "::' + workspace.path.replace(/\\/g, '/') + '"로 끝나는 항목과 routes의 grade D 항목으로 아래 JSON을 만들어 coordinator-board assign --input-file - 에 표준 입력으로 넘기세요.',
     JSON.stringify({ job: { projectId: '<그 워크스페이스의 projectId>', workspaceId: '<그 워크스페이스의 id>', grade: 'D', title: '작업 단계 실기 확인', prompt, doneMeans,
       requestKey, expectedRoute: '<grade D의 route>', expectedModeId: '<grade D의 expectedModeId>' } }),
-    '3. assign이 출력한 JSON을 그대로 답하세요. 실패하면 오류 글을 그대로 답하고 다시 시도하지 마세요.'
+    '3. assign이 출력한 JSON을 그대로 답하세요. 실패하면 오류 글을 그대로 답하고 다시 시도하지 마세요.',
+    ...(args.includes('--hold') ? ['이 작업(requestKey ' + requestKey + ')은 보드가 완료 보고를 알려도 verify를 스스로 하지 말고, 다음 실기 확인 요청을 기다리세요.'] : [])
   ].join('\n')
   console.log('send:', await fleet.deliver({ messageId: messageId('send/' + requestKey), to: session.id, text, subject: 'Coordinator Board', from: { kind: 'person' }, whenWorking: 'refuse' }))
 } else if (step === 'items') {
@@ -103,7 +105,7 @@ if (step === 'send') {
   if (result !== 'pass' && result !== 'fail') throw new Error('verify needs --result pass|fail')
   const reason = result === 'pass' ? '완료 기준과 보고를 대조했고 맞습니다.' : '실기 확인용 반려입니다. 같은 보고를 한 번 더 해 주세요.'
   const text = '[보드 작업 단계 실기 확인] coordinator-board verify --item ' + requestKey + ' --result ' + result + ' --text-file - 를 한 번 실행하고, 표준 입력으로 "' + reason + '"를 넘기세요. 출력된 JSON만 답하세요. 다른 일은 하지 마세요.'
-  console.log('verify:', await fleet.deliver({ messageId: messageId('verify/' + requestKey + '/' + result), to: flag('--coordinator'), text, subject: 'Coordinator Board', from: { kind: 'person' }, whenWorking: 'refuse' }))
+  console.log('verify:', await fleet.deliver({ messageId: messageId('verify/' + requestKey + '/' + result + '/' + Date.now()), to: flag('--coordinator'), text, subject: 'Coordinator Board', from: { kind: 'person' }, whenWorking: 'refuse' }))
 } else if (step === 'worker') {
   const l = launch()
   if (!l?.sessionId) throw new Error('no worker session yet')
