@@ -28973,10 +28973,16 @@ function activateWith(orca, deps) {
     }, CHANGE_DEBOUNCE_MS);
   }
   let signalState = noSignals;
+  function stateSince(session2, next) {
+    const read = fleet.peek()?.sessions.get(session2);
+    if (read && read.state === next) return read.stateStartedAt;
+    return signalState.get(session2)?.state === next ? 0 : Date.now();
+  }
   function observe(observation) {
+    const since = observation.kind === "status" ? stateSince(observation.session, observation.state) : 0;
     const { state: state2, signals } = reduceSignals(signalState, observation);
     signalState = state2;
-    const states = observation.kind === "status" ? [[observation.session, observation.state, Date.now()]] : observation.kind === "world" ? [...observation.world.sessions].map(([id5, session2]) => [id5, session2.state, session2.stateStartedAt]) : [];
+    const states = observation.kind === "status" ? [[observation.session, observation.state, since]] : observation.kind === "world" ? [...observation.world.sessions].map(([id5, session2]) => [id5, session2.state, session2.stateStartedAt]) : [];
     try {
       if (board.track(states, signals)) changed3();
     } catch (error62) {
