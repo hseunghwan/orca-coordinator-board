@@ -30,13 +30,14 @@ export type WorkItems = ReadonlyMap<string, WorkItemView>;
 
 /**
  * Where a tracked session's card goes: its work phase speaks before the lane, except that a decision waiting on
- * a person stays a decision, and a person's own done stays done. A report, a done candidate or stale work is
- * something to check, not a done; only a confirmed item shows as done.
+ * a person stays a decision (escalated work becomes one on the worker's card), and a person's own done stays done.
+ * A report, a done candidate, stale or escalated work is something to check, not a done; only a confirmed item
+ * shows as done.
  */
 export function workLane(lane: Card["lane"], item: WorkItemView | undefined): Card["lane"] {
   if (!item || lane === "human" || lane === "done") return lane;
   if (item.phase === "done") return "done";
-  if (item.phase === "reported" || item.phase === "verifying" || item.phase === "stale") return "review";
+  if (item.phase === "reported" || item.phase === "verifying" || item.phase === "stale" || item.phase === "escalated") return "review";
   if (item.phase === "running" && item.candidate && lane !== "running") return "review";
   return lane;
 }
@@ -48,6 +49,7 @@ const phaseText: Record<WorkPhase, readonly [string, string]> = {
   verifying: ["검증 중", "Verifying"],
   done: ["완료", "Done"],
   stale: ["방치됨", "Stale"],
+  escalated: ["사람 결정 필요 · 검증이 반복해서 실패했습니다", "Needs your decision · Verify failed repeatedly"],
 };
 
 const candidateText: Record<NonNullable<WorkItemView["candidate"]>["reason"], readonly [string, string]> = {

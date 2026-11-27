@@ -54,7 +54,8 @@ export function tool<I extends z.ZodType>(audience: Tool["audience"], input: I, 
 /** The board's work items (./work-items.ts) as the commands see them: read lists the phase, report moves it. */
 export type WorkTracking = {
   view(sessionId: string): WorkItemView | undefined;
-  reported(sessionId: string, report: z.infer<typeof reportInput>): void;
+  /** True when the session has a work item, which took the report. */
+  reported(sessionId: string, report: z.infer<typeof reportInput>): boolean;
 };
 
 export function coordinatorCommands(prefs: PreferenceStore, reader: ConversationReader, notes: NoteStore, served: Record<"plan" | "assign" | "fact" | "review" | "verify", Tool>,
@@ -115,8 +116,11 @@ export function coordinatorCommands(prefs: PreferenceStore, reader: Conversation
     if (scope.coordinator !== agent.id && (!canReport(agent.id) || !managedSessions(rows, scope).some(r => r.id === agent.id))) {
       return { isError: true, text: "Board reporting is disabled for this session." };
     }
+    // The work item hears the report first and on its own: the card note is a display a person may hold, the
+    // work item's phase is the record, and a person's note must not swallow a worker's done.
+    const tracked = scope.coordinator !== agent.id && !!work?.reported(agent.id, input);
     const result = recordReport(notes, agent.id, input);
-    if (!result.isError && scope.coordinator !== agent.id) work?.reported(agent.id, input);
+    if (result.isError && tracked) return { text: "Recorded the report on your board work item. A person has a record on this card, so the card note was left as is." };
     return result;
   });
   return { read, classify, report, ...served };

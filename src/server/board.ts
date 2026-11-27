@@ -35,7 +35,7 @@ import { photoFiles } from "./photo-files";
 import { ProjectIcons } from "./project-icons";
 import { HostWatch } from "./hosts";
 import { boardHosts, boardWorkItems, boardWorkSettings, focusCards as boardFocusCards, setWorkSettings } from "../contract";
-import { WorkItemStore, workItemView, type WorkEvent } from "./work-items";
+import { escalationQuestion, WorkItemStore, workItemView, type WorkEvent } from "./work-items";
 import { verifyTool, WorkNotices } from "./work-notices";
 import { focusCards } from "../focus-cards";
 import { readProjectDecisionSources } from "../paseo/server/project-decision-sources";
@@ -62,7 +62,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const reader = new ConversationReader();
   const projectIcons = new ProjectIcons();
   const prs = new ProjectPullRequests(prefs, pulls);
-  const decisions = new DecisionSender(prefs, notes, reader, fleet);
+  const items = new WorkItemStore(join(dataDir, "work-items.json"));
+  /** The decision a person owes on work whose fix attempts ran out, by session. */
+  const escalation = (sessionId: string) => { const item = items.bySession().get(sessionId); return item ? escalationQuestion(item) : null; };
+  const decisions = new DecisionSender(prefs, notes, reader, fleet, escalation);
   const tracked = new TrackedDecisionStore(join(dataDir, "tracked-decisions.json"),
     selected => {
       let partial = false;
@@ -75,7 +78,6 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const hosts = new HostWatch(fleet.cli, () => fleet.view());
   server.handle(boardHosts, () => hosts.read(host.t()));
   const workers = new WorkerJournal(join(dataDir, "workers.json"));
-  const items = new WorkItemStore(join(dataDir, "work-items.json"));
   const notices = new WorkNotices(items, fleet, () => prefs.read().coordinator);
   /** Done checks and coordinator notices go out after any change, and again on each poll and turn end. */
   const runNotices = () => void notices.run().then(changed => { if (changed) invalidateCount(); },
@@ -83,7 +85,9 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const work = {
     view: (sessionId: string) => { const item = items.bySession().get(sessionId); return item && workItemView(item); },
     reported: (sessionId: string, report: { kind: "question" | "review" | "done"; text: string }) => {
-      if (items.apply([[sessionId, { kind: "report", report: report.kind, text: report.text, at: Date.now() }]]).changed) runNotices();
+      const applied = items.apply([[sessionId, { kind: "report", report: report.kind, text: report.text, at: Date.now() }]]);
+      if (applied.changed) runNotices();
+      return items.bySession().has(sessionId);
     },
   };
   /** When each linked pull request was last asked about: GitHub is read at most every PULL_CHECK_MS per item. */
@@ -146,8 +150,10 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     }
     const visibleNotes = notes.visible(new Set(visible.map(s => s.id)));
     facts.decorate(visible, evidence, visibleNotes);
+    const work = items.bySession();
     for (const row of visible) {
-      decorateDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
+      const item = work.get(row.id);
+      decorateDecision(row, visibleNotes[row.id], latest, evidence.get(row.id), item ? escalationQuestion(item) : null);
       restoreClarifiedDecision(row, visibleNotes[row.id], latest, evidence.get(row.id));
     }
     // A deleted project stays in the saved selection so it returns if restored, but shows nothing meanwhile.
@@ -239,12 +245,14 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   const invalidateCount = () => reads.invalidate();
   /**
    * A session that left Orca takes its board records with it: the coordinator's judgment, the card's note and the
-   * worker metadata (its work item stays, as stale, for the record). Checked against a fresh read first, so an
-   * Orca restart that briefly lists nothing clears nothing.
+   * worker metadata, and its work item turns stale (kept for the record). This is the one place a gone signal
+   * changes board state, and it is checked against a fresh read first, so an Orca restart that briefly lists
+   * nothing clears nothing and marks no work stale.
    */
   async function forget(sessionId: SessionId) {
     const world = await fleet.view({ maxAgeMs: 0 });
     if (!world.sessions.size || world.sessions.has(sessionId)) return;
+    if (items.apply([[sessionId, { kind: "gone", at: Date.now() }]]).changed) runNotices();
     prefs.change(scope => { delete scope.judgments[sessionId]; });
     const note = notes.visible(new Set([sessionId]))[sessionId];
     if (note && note.kind !== "clear") notes.update({ sessionId, kind: "clear", text: "", expectedRevision: note.revision }, note.origin ?? "person");
@@ -271,6 +279,8 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
   });
   server.handle(sendDecision, async (input, { paseo }) => {
     const result = await decisions.send(paseo, input);
+    // A person's reply to escalated work hands it back to the session: its fix attempts start over.
+    if (input.action === "reply" && input.recipientId === input.sessionId) items.apply([[input.sessionId, { kind: "person-reply", at: Date.now() }]]);
     invalidateCount();
     return result;
   });
@@ -392,13 +402,14 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
     },
     /**
      * Moves the work items by what Orca reported: each session's state, and a turn that ended without a report
-     * as a done candidate (./work-items.ts). True when an item changed.
+     * as a done candidate (./work-items.ts). A gone session is left to signal(), which confirms it first. True
+     * when an item changed.
      */
     track(states: readonly (readonly [string, OrcaState])[], signals: readonly Signal[]): boolean {
       const at = Date.now();
       const events: [string, WorkEvent][] = states.map(([id, state]) => [id, { kind: "state", state, at }]);
       for (const signal of signals) {
-        if (signal.kind === "turn-ended" || signal.kind === "gone") events.push([signal.session, { kind: signal.kind, at }]);
+        if (signal.kind === "turn-ended") events.push([signal.session, { kind: signal.kind, at }]);
       }
       const applied = items.apply(events);
       if (applied.changed) runNotices();

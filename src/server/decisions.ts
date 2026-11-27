@@ -27,7 +27,11 @@ const blocked = "이 세션의 현재 상태에서는 보낼 수 없습니다. �
 const uncertain = "전송 결과를 확인하지 못했습니다. 같은 요청을 다시 확인하거나 수신 세션을 열어 주세요.";
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-export function decorateDecision(row: SessionRow, note: Note | undefined, prefs: Preferences, evidence?: Evidence) {
+/**
+ * escalation: the board's question for work whose fix attempts ran out (src/server/work-items.ts escalationQuestion).
+ * It is the board's own state, not a guess from the transcript, so it comes right after a permission request.
+ */
+export function decorateDecision(row: SessionRow, note: Note | undefined, prefs: Preferences, evidence?: Evidence, escalation?: string | null) {
   const answer = prefs.answers[row.id];
   const noteQuestion = note?.kind === "question";
   const answeredNote = noteQuestion && answer?.noteRevision === note.revision;
@@ -35,6 +39,8 @@ export function decorateDecision(row: SessionRow, note: Note | undefined, prefs:
   let content: Omit<Decision, "version">;
   if (row.nativePending) {
     content = { source: "permission", question: row.detail };
+  } else if (escalation && row.status === "idle" && row.evidenceId) {
+    content = { source: "coordinator", question: escalation };
   } else if (row.status === "idle" && row.evidenceId && !dismissed && row.lane === "human") {
     const judgment = prefs.judgments[row.id];
     const structured = judgment?.kind === "question" && judgment.evidenceId === row.evidenceId && judgment.projectId === row.projectId;
@@ -78,7 +84,8 @@ export class DecisionSender {
   private sendingCards = new Set<string>();
   private photoDirectory: string;
   private sessionPhotos: SessionPhotoStore;
-  constructor(private store: PreferenceStore, private notes: NoteStore, private reader: ConversationReader, private fleet: Sending) {
+  constructor(private store: PreferenceStore, private notes: NoteStore, private reader: ConversationReader, private fleet: Sending,
+    private escalation: (sessionId: string) => string | null = () => null) {
     this.photoDirectory = join(store.directory, "session-photos");
     this.sessionPhotos = new SessionPhotoStore(this.photoDirectory);
   }
@@ -169,7 +176,7 @@ export class DecisionSender {
       if (!isCurrentMembership(row, current) || (!isCurrentMembership(destination, current) && !isManagedCoordinator(current, destination.id))) throw Error(changed);
       const judgment = current.judgments[row.id];
       Object.assign(row, classify(evidence, row, judgment?.projectId === row.projectId ? judgment : undefined, row.id === current.coordinator), { evidenceId: evidence.id });
-      decorateDecision(row, note, current, evidence);
+      decorateDecision(row, note, current, evidence, this.escalation(row.id));
       restoreClarifiedDecision(row, note, current, evidence);
       if (!row.decision || row.decision.source === "permission" || row.decision.version !== input.version) throw Error(changed);
       text = sessionReplyMessage(row, input);

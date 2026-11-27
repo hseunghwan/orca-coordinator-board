@@ -4,7 +4,9 @@
 // orchestration tells a coordinator about worker_done. A busy or signerless recipient leaves the message queued
 // for the next poll or turn end; each message has one messageId derived from what it is about, so a retry only
 // reconciles and the same candidate is never asked twice. verify is the coordinator's command that confirms a
-// reported item (done) or sends it back (running) with the reason, sent from the coordinator to the session.
+// reported item (done) or sends it back (running) with the reason, sent from the coordinator to the session;
+// once the fix attempts ran out it escalates the item to a person instead and sends the session nothing. The
+// send-back's messageId comes from the attempt it is, never the clock, so running verify again only reconciles.
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { DeliveryOutcome, Fleet, SessionId } from "../orca";
@@ -34,15 +36,20 @@ export function doneCheckText(item: WorkItem) {
   ].join("\n");
 }
 
+/** The phases the coordinator hears about, and the title each notice carries. */
+const NOTICE_TITLE: Partial<Record<WorkItem["phase"], string>> = { reported: "완료 보고", stale: "방치", escalated: "사람 결정 대기" };
+
 export function noticeText(item: WorkItem) {
   const what = item.phase === "reported"
     ? "작업자가 완료를 보고했습니다. 산출물과 완료 기준을 대조한 뒤 `coordinator-board verify --item " + item.itemId + " --result pass|fail --text-file -`로 확정하거나 사유와 함께 되돌리세요."
-    : "작업이 멈춘 것으로 보입니다. 세션을 확인하고 이어서 맡기거나 정리하세요. 사람이 보드에서 세션을 열거나 작업자가 다시 보고하면 진행 중으로 돌아갑니다.";
+    : item.phase === "escalated"
+      ? "검증이 " + (item.attempts ?? 0) + "번 실패해 보드가 사람에게 결정을 넘겼습니다. 사람이 답하기 전에는 이 작업을 다시 배정하거나 새 작업자를 띄우지 마세요."
+      : "작업이 멈춘 것으로 보입니다. 세션을 확인하고 이어서 맡기거나 정리하세요. 사람이 보드에서 세션을 열거나 작업자가 다시 보고하면 진행 중으로 돌아갑니다.";
   return [
-    "[Coordinator Board · 작업 " + (item.phase === "reported" ? "완료 보고" : "방치") + "]",
+    "[Coordinator Board · 작업 " + (NOTICE_TITLE[item.phase] ?? item.phase) + "]",
     JSON.stringify({ type: "coordinator-board.work", itemId: item.itemId, sessionId: item.sessionId, phase: item.phase, doneMeans: item.doneMeans,
       ...(item.report ? { report: item.report.text } : {}), ...(item.staleReason ? { staleReason: item.staleReason } : {}),
-      ...(item.pull ? { pull: item.pull } : {}) }),
+      ...(item.pull ? { pull: item.pull } : {}), ...(item.attempts ? { attempts: item.attempts } : {}) }),
     what + " 이 이벤트는 새 승인이 아닙니다.",
   ].join("\n");
 }
@@ -69,12 +76,12 @@ export class WorkNotices {
           subject: "Coordinator Board · 완료 확인", from: { kind: "board" }, whenWorking: "refuse" });
         const status = statusOf(outcome);
         if (status !== candidate.ask?.status) {
-          changed = this.items.applyToItems([[item.itemId, { kind: "asked", messageId, status, at: Date.now() }]]).changed || changed;
+          changed = this.items.applyToItems([[item.itemId, { kind: "asked", candidate: { reason: candidate.reason, at: candidate.at }, messageId, status, at: Date.now() }]]).changed || changed;
         }
         continue;
       }
       const coordinator = this.coordinator();
-      if ((item.phase !== "reported" && item.phase !== "stale") || !coordinator || coordinator === item.sessionId) continue;
+      if (!NOTICE_TITLE[item.phase] || !coordinator || coordinator === item.sessionId) continue;
       const key = noticeKey(item);
       if (item.notice?.key === key && item.notice.status !== "queued") continue;
       const messageId = uuidFrom(["work-notice", item.itemId, key, coordinator]);
@@ -106,11 +113,13 @@ export function verifyTool(prefs: PreferenceStore, items: WorkItemStore, fleet: 
       throw new Error("완료 보고된 작업만 확정할 수 있습니다. 지금 단계: " + item.phase);
     }
     const at = Date.now();
-    items.applyToItems([[itemId, { kind: "verify", result, at }]]);
+    items.applyToItems([[itemId, { kind: "verify", result, text, at }]]);
     changed();
-    const phase = items.item(itemId)?.phase ?? item.phase;
+    const after = items.item(itemId);
+    const phase = after?.phase ?? item.phase;
+    if (phase === "escalated") return { text: JSON.stringify({ itemId, phase, attempts: after?.attempts, reason: "escalated-to-person" }) };
     if (result === "pass" || !item.sessionId) return { text: JSON.stringify({ itemId, phase }) };
-    const outcome = await fleet.deliver({ messageId: uuidFrom(["verify-fail", itemId, at]), to: item.sessionId as SessionId,
+    const outcome = await fleet.deliver({ messageId: uuidFrom(["verify-fail", itemId, after?.attempts ?? 0]), to: item.sessionId as SessionId,
       text: ["[Coordinator Board · 완료 확인 반려]", JSON.stringify({ type: "coordinator-board.verify", itemId, result: "fail", doneMeans: item.doneMeans }), text].join("\n"),
       subject: "Coordinator Board · 완료 확인 반려", from: { kind: "agent", session: agent.id as SessionId }, whenWorking: "refuse" });
     return { text: JSON.stringify({ itemId, phase, reason: statusOf(outcome) === "sent" ? "sent" : outcome.status === "refused" ? "not-sent:" + outcome.reason : "unconfirmed" }) };

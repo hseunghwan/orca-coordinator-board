@@ -71,21 +71,21 @@ test('assign starts one worker from the coordinator\'s own shell, marked for the
   const f = setup()
   let pending: PendingLaunch[] = []
   f.orca.behavior.onWrite = () => { pending = f.board.pendingLaunches() }
-  const result = JSON.parse((await f.board.command('assign', { job: f.task }, 'coord', f.caller)).text)
+  const result = JSON.parse((await f.board.command('assign', { job: { ...f.task, doneMeans: '테스트 통과' } }, 'coord', f.caller)).text)
   expect(result).toEqual({ sessionId: 'launched-1', route: sol, modeId: 'auto-review', terminal: 'term_launch_1' })
   expect(f.shell).toHaveLength(1)
   const [args] = f.launches()
   const flag = (name: string) => args[args.indexOf(name) + 1]
   expect([flag('--agent'), flag('--worktree'), flag('--surface'), flag('--model'), flag('--effort')]).toEqual(['codex', 'id:acme::/w/acme', 'terminal', sol.model, 'high'])
   expect(pending).toEqual([{ launchId: expect.any(String), modeId: 'auto-review', role: 'worker' }])
-  expect(flag('--prompt')).toBe(launchMarker(pending[0].launchId) + '\n' + f.task.prompt + '\n\n' + workerNote('/plugin/bin'))
+  expect(flag('--prompt')).toBe(launchMarker(pending[0].launchId) + '\n' + f.task.prompt + '\n\n' + workerNote('/plugin/bin', '테스트 통과'))
   expect(workerNote('/plugin/bin')).toMatch(/^.*절대 경로로 `"\/plugin\/bin[\\/]coordinator-board(\.cmd)?" report --kind question --text-file -`/)
   expect(f.board.pendingLaunches()).toEqual([])
   expect(f.board.worker('launched-1')).toEqual({ requestKey: f.task.requestKey, reports: true, intent: expect.stringMatching(/^[a-f0-9]{64}$/), grade: 'C', parent: 'coord', mode: 'auto-review' })
   expect(await f.board.command('report', { kind: 'review', text: 'Ready.' }, 'launched-1')).toEqual({ text: 'Reported on your own Coordinator Board card.' })
-  expect(JSON.parse((await f.board.command('assign', { job: f.task }, 'coord', f.caller)).text)).toEqual(result)
-  await expect(f.board.command('assign', { job: { ...f.task, prompt: '다른 작업' } }, 'coord', f.caller)).rejects.toThrow('다른 작업')
-  await expect(f.board.command('assign', { job: { ...f.task, requestKey: 'request-dispatch-02' } }, 'coord')).rejects.toThrow('코디네이터 터미널')
+  expect(JSON.parse((await f.board.command('assign', { job: { ...f.task, doneMeans: '테스트 통과' } }, 'coord', f.caller)).text)).toEqual(result)
+  await expect(f.board.command('assign', { job: { ...f.task, prompt: '다른 작업', doneMeans: '테스트 통과' } }, 'coord', f.caller)).rejects.toThrow('다른 작업')
+  await expect(f.board.command('assign', { job: { ...f.task, requestKey: 'request-dispatch-02', doneMeans: '테스트 통과' } }, 'coord')).rejects.toThrow('코디네이터 터미널')
   expect(f.launches()).toHaveLength(1)
 })
 
@@ -212,7 +212,7 @@ test('verify belongs to the coordinator and only settles reported work: pass is 
 
 test('a gone session takes its judgment and worker metadata with it, unless a fresh read still lists it', async () => {
   const f = setup()
-  await f.board.command('assign', { job: f.task }, 'coord', f.caller)
+  await f.board.command('assign', { job: { ...f.task, doneMeans: '테스트 통과' } }, 'coord', f.caller)
   f.prefs.change(s => {
     s.judgments['ghost'] = { evidenceId: 'e', kind: 'idle', text: '남은 일 없음', projectId: 'acme' }
     s.judgments['coord'] = { evidenceId: 'e', kind: 'idle', text: '남은 일 없음', projectId: 'acme' }

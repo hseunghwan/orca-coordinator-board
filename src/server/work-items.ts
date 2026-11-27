@@ -4,8 +4,12 @@
 // reduceWorkItem is the one place a phase changes. Indirect signs (a turn that ended without a report, a pull
 // request that merged or closed) only leave a done candidate, which the board asks the session about once
 // (./work-notices.ts). Only the session's own report moves an item to reported, and only the coordinator's
-// verify or a person moves it to done. The 30 s poll's tick marks work stale when it sits idle too long or
-// leaves the done check unanswered; a report, new work or a person opening the session brings it back.
+// verify or a person moves it to done. The coordinator's verify sends work back at most MAX_FIX_ATTEMPTS times;
+// the next failure escalates it to a person (a decision card, ./board.ts), and only a person's reply or done
+// takes it from there. The 30 s poll's tick marks running work stale when it sits idle too long or leaves the
+// done check unanswered; work waiting for input is never stale by time, as a person's answer wakes it. A report,
+// new work or a person opening the session brings stale work back. Every event that changes nothing returns the
+// same object, so a repeated event (a redelivered report, a second poll) writes and tells nothing.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +28,9 @@ const workItem = z.object({
   pull: workPull.optional(),
   /** The last board message to the coordinator about this item: key is "<phase>@<phaseAt>". */
   notice: z.object({ key: z.string(), messageId: z.string(), status: noticeStatus }).optional(),
+  /** How many times the coordinator's verify sent the work back, and the last reason it gave. */
+  attempts: z.number().int().nonnegative().optional(),
+  failure: z.object({ text: z.string(), at: z.number() }).optional(),
   history: z.array(historyEntry),
 });
 const file = z.object({ version: z.literal(1), items: z.record(z.string(), workItem), settings: workSettings.optional() });
@@ -31,6 +38,7 @@ export type WorkItem = z.output<typeof workItem>;
 type File = z.output<typeof file>;
 type NoticeStatus = z.output<typeof noticeStatus>;
 type PullState = NonNullable<z.output<typeof workPull>["state"]>;
+type Candidate = z.output<typeof workCandidate>;
 
 export const DEFAULT_WORK_SETTINGS: WorkSettings = { idleMinutes: 60, askMinutes: 30 };
 
@@ -44,7 +52,9 @@ export type WorkEvent =
   /** A person marked the card done. */
   | { kind: "confirmed"; at: number }
   /** The coordinator's verify. */
-  | { kind: "verify"; result: "pass" | "fail"; at: number }
+  | { kind: "verify"; result: "pass" | "fail"; text?: string; at: number }
+  /** A person answered the escalated work's decision card: the work goes back to the session. */
+  | { kind: "person-reply"; at: number }
   /** A person opened the session from the board. */
   | { kind: "reopened"; at: number }
   /** The session left Orca (src/orca/signals.ts gone). */
@@ -57,8 +67,8 @@ export type WorkEvent =
   | { kind: "tick"; at: number; state: OrcaState; idleSince: number | null; settings: WorkSettings }
   /** The linked pull request's state as GitHub reports it. */
   | { kind: "pull"; state: PullState; at: number }
-  /** How the done check went. */
-  | { kind: "asked"; messageId: string; status: NoticeStatus; at: number }
+  /** How the done check about this candidate (its reason and at) went; a changed candidate ignores it. */
+  | { kind: "asked"; candidate: { reason: Candidate["reason"]; at: number }; messageId: string; status: NoticeStatus; at: number }
   /** How the notice to the coordinator went. */
   | { kind: "noticed"; key: string; messageId: string; status: NoticeStatus };
 
@@ -66,6 +76,8 @@ const KEEP = 500;
 const HISTORY = 20;
 const REPORT_CHARS = 2000;
 const MINUTE = 60_000;
+/** Orca's orchestration gives a worker two fix attempts before a person decides. */
+export const MAX_FIX_ATTEMPTS = 2;
 const PULL_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/(\d{1,9})\b/;
 
 /** The first GitHub pull request URL in a report. */
@@ -86,6 +98,8 @@ function withCandidate(item: WorkItem, reason: z.output<typeof workCandidate>["r
 }
 
 const open = (item: WorkItem) => item.phase === "running" || item.phase === "awaiting-input";
+/** Phases a session's own done report has already reached or that wait for someone else: a repeat only refreshes the text. */
+const pastReport = (item: WorkItem) => item.phase === "reported" || item.phase === "verifying" || item.phase === "escalated";
 
 /** The next item for one event, or the same object when nothing changes (so a poll writes nothing). */
 export function reduceWorkItem(item: WorkItem, event: WorkEvent): WorkItem {
@@ -112,9 +126,13 @@ export function reduceWorkItem(item: WorkItem, event: WorkEvent): WorkItem {
     case "report": {
       const pull = item.pull ?? pullIn(event.text);
       const linked = pull && pull !== item.pull ? { pull } : {};
-      if (event.report === "done") {
-        return move(item, "reported", event.at, "session", { ...linked, report: { text: event.text.slice(0, REPORT_CHARS), at: event.at } });
+      const text = event.text.slice(0, REPORT_CHARS);
+      if (event.report === "done" && pastReport(item)) {
+        // A redelivered or repeated done report keeps the phase and its phaseAt, so the coordinator is not told twice.
+        return item.report?.text === text && !("pull" in linked) ? item : { ...item, ...linked, report: { text, at: event.at } };
       }
+      if (event.report === "done") return move(item, "reported", event.at, "session", { ...linked, report: { text, at: event.at } });
+      if (item.phase === "escalated") return pull && pull !== item.pull ? { ...item, pull } : item;
       if (event.report === "question" && (item.phase === "running" || item.phase === "stale")) return move(item, "awaiting-input", event.at, "session", linked);
       if (item.phase === "stale") return move(item, "running", event.at, "session", linked);
       return pull && pull !== item.pull ? { ...item, pull } : item;
@@ -123,25 +141,32 @@ export function reduceWorkItem(item: WorkItem, event: WorkEvent): WorkItem {
       return move(item, "done", event.at, "person");
     case "verify":
       if (item.phase !== "reported" && item.phase !== "verifying") return item;
-      if (event.result === "fail") return move(item, "running", event.at, "coordinator");
+      if (event.result === "fail") {
+        const attempts = (item.attempts ?? 0) + 1;
+        const failure = event.text ? { failure: { text: event.text.slice(0, REPORT_CHARS), at: event.at } } : {};
+        return move(item, attempts > MAX_FIX_ATTEMPTS ? "escalated" : "running", event.at, "coordinator", { attempts, ...failure });
+      }
       return move(item.phase === "reported" ? move(item, "verifying", event.at, "coordinator") : item, "done", event.at, "coordinator");
+    case "person-reply":
+      return item.phase === "escalated" ? move(item, "running", event.at, "person", { attempts: 0 }) : item;
     case "reopened":
       return item.phase === "stale" ? move(item, "running", event.at, "person") : item;
     case "gone":
-      return open(item) ? move(item, "stale", event.at, "board", { staleReason: "gone" }) : item;
+      return open(item) || item.phase === "escalated" ? move(item, "stale", event.at, "board", { staleReason: "gone" }) : item;
     case "tick": {
       if (!open(item)) return item;
-      if (item.phase === "running" && !item.candidate && event.state === "done" && event.idleSince !== null) {
-        return withCandidate(item, "turn-ended", event.idleSince);
-      }
-      const ask = item.candidate?.ask;
+      // One tick reaches its final state: the same clock reading never gives one result now and another on the
+      // next poll, so how many polls ran does not change where the work ends up.
+      const seen = item.phase === "running" && !item.candidate && event.state === "done" && event.idleSince !== null
+        ? withCandidate(item, "turn-ended", event.idleSince) : item;
+      const ask = seen.candidate?.ask;
       if (ask?.status === "sent" && event.at - ask.at > event.settings.askMinutes * MINUTE) {
-        return move(item, "stale", event.at, "board", { staleReason: "no-answer" });
+        return move(seen, "stale", event.at, "board", { staleReason: "no-answer" });
       }
-      if (event.idleSince !== null && event.at - Math.max(item.phaseAt, event.idleSince) > event.settings.idleMinutes * MINUTE) {
-        return move(item, "stale", event.at, "board", { staleReason: "idle" });
+      if (seen.phase === "running" && event.idleSince !== null && event.at - Math.max(seen.phaseAt, event.idleSince) > event.settings.idleMinutes * MINUTE) {
+        return move(seen, "stale", event.at, "board", { staleReason: "idle" });
       }
-      return item;
+      return seen;
     }
     case "pull": {
       if (!item.pull || item.pull.state === event.state) return item;
@@ -157,7 +182,7 @@ export function reduceWorkItem(item: WorkItem, event: WorkEvent): WorkItem {
       return seen;
     }
     case "asked":
-      if (!item.candidate) return item;
+      if (!item.candidate || item.candidate.reason !== event.candidate.reason || item.candidate.at !== event.candidate.at) return item;
       if (item.candidate.ask?.messageId === event.messageId && item.candidate.ask.status === event.status) return item;
       return { ...item, candidate: { ...item.candidate, ask: { messageId: event.messageId, status: event.status, at: event.at } } };
   }
@@ -168,7 +193,19 @@ export function workItemView(item: WorkItem): WorkItemView {
     itemId: item.itemId, phase: item.phase, phaseAt: item.phaseAt, title: item.title, doneMeans: item.doneMeans,
     ...(item.candidate && { candidate: item.candidate }), ...(item.report && { report: item.report }),
     ...(item.staleReason && { staleReason: item.staleReason }), ...(item.pull && { pull: item.pull }),
+    ...(item.attempts && { attempts: item.attempts }),
   };
+}
+
+/** The question a person decides once the fix attempts ran out (./decisions.ts makes it a decision card). */
+export function escalationQuestion(item: WorkItem): string | null {
+  if (item.phase !== "escalated") return null;
+  return [
+    "코디네이터 검증이 " + (item.attempts ?? MAX_FIX_ATTEMPTS + 1) + "번 실패해 보드가 사람에게 넘겼습니다(작업: " + item.title + ").",
+    ...(item.doneMeans ? ["완료 기준: " + item.doneMeans] : []),
+    ...(item.failure ? ["마지막 반려 사유: " + item.failure.text] : []),
+    "이 세션에 이어서 할 일을 답장하거나, 끝난 일이면 카드를 완료로 기록하세요.",
+  ].join("\n");
 }
 
 export type Applied = { changed: boolean; moved: WorkItem[] };
@@ -215,6 +252,16 @@ export class WorkItemStore {
       history: [{ phase: "running", at, by: "coordinator" }] };
     this.write({ ...current, items: { ...current.items, [item.itemId]: item } });
     return item;
+  }
+
+  /** Drops an item whose launch Orca refused: nothing started, so nothing is tracked. An item with a session stays. */
+  discard(itemId: string): boolean {
+    const current = this.read();
+    const item = current.items[itemId];
+    if (!item || item.sessionId) return false;
+    const { [itemId]: _dropped, ...items } = current.items;
+    this.write({ ...current, items });
+    return true;
   }
 
   /** Names the session each item's launch started ([itemId, sessionId] pairs). An item keeps its first session. */
