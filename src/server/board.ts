@@ -415,7 +415,7 @@ export function contribute(server: PluginServerContext, fleet: Fleet, dataDir: s
       const events: [string, WorkEvent][] = [];
       for (const [sessionId] of tracked) {
         const session = world.sessions.get(sessionId as SessionId);
-        if (session) events.push([sessionId, { kind: "tick", at, idleSince: session.state === "working" ? null : session.stateStartedAt, settings }]);
+        if (session) events.push([sessionId, { kind: "tick", at, state: session.state, idleSince: session.state === "working" ? null : session.stateStartedAt, settings }]);
       }
       let changed = items.apply(events).changed;
       const scope = prefs.read();

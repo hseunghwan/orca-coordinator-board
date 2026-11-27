@@ -49,8 +49,12 @@ export type WorkEvent =
   | { kind: "reopened"; at: number }
   /** The session left Orca (src/orca/signals.ts gone). */
   | { kind: "gone"; at: number }
-  /** The poll's clock: idleSince is when the session stopped working, null while it works. */
-  | { kind: "tick"; at: number; idleSince: number | null; settings: WorkSettings }
+  /**
+   * The poll's clock: the session's Orca state, and idleSince, when it stopped working (null while it works). A
+   * running item whose session sits done without a report is a candidate even when no turn-ended was seen: Orca
+   * names a worker's session only around its first answer, so that first turn can end before the item is linked.
+   */
+  | { kind: "tick"; at: number; state: OrcaState; idleSince: number | null; settings: WorkSettings }
   /** The linked pull request's state as GitHub reports it. */
   | { kind: "pull"; state: PullState; at: number }
   /** How the done check went. */
@@ -127,6 +131,9 @@ export function reduceWorkItem(item: WorkItem, event: WorkEvent): WorkItem {
       return open(item) ? move(item, "stale", event.at, "board", { staleReason: "gone" }) : item;
     case "tick": {
       if (!open(item)) return item;
+      if (item.phase === "running" && !item.candidate && event.state === "done" && event.idleSince !== null) {
+        return withCandidate(item, "turn-ended", event.idleSince);
+      }
       const ask = item.candidate?.ask;
       if (ask?.status === "sent" && event.at - ask.at > event.settings.askMinutes * MINUTE) {
         return move(item, "stale", event.at, "board", { staleReason: "no-answer" });

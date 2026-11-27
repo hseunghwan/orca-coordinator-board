@@ -2,11 +2,16 @@
 // loaded development plugin runs this code (board.work-items answers). Steps, each its own run:
 //   send   --coordinator <id> --path <workspace path> --yes   routes grade D to Haiku (keeping the old value in the
 //                                                             probe's folder) and asks the coordinator for ONE worker
-//                                                             with a doneMeans; the worker answers once and runs nothing
-//   items  --coordinator <id>                                 read only: the probe's work item and the worker's Orca state
+//                                                             with a doneMeans; the worker answers once, then the board's
+//                                                             done check asks it to report
+//   items  --coordinator <id>                                 read only: the probe's work item (phase, candidate, done check,
+//                                                             coordinator notice) and the worker's Orca state
 //   report --coordinator <id> --yes                           asks the worker for one `report --kind done`
 //   read   --coordinator <id> --yes                           asks the coordinator to run read and answer the worker's work field
 //   answer --coordinator <id>                                 read only: the coordinator's last answer (the work field it read)
+//   verify --coordinator <id> --result pass|fail --yes        asks the coordinator to run verify on the probe's item once
+//   worker --coordinator <id>                                 read only: the kinds of the worker's last transcript entries
+//                                                             and the head of each board message it got
 //   close  --terminal <term_…> --yes                          closes the worker's terminal and restores grade D
 // Prints ids, phases and states; the only session text is the coordinator's answer to the read step.
 import { build } from 'esbuild'
@@ -57,7 +62,7 @@ if (step === 'send') {
   if (!session || session.surface !== 'terminal' || !workspace || !ops.catalog.some((c) => c.provider === 'claude' && c.model === 'haiku')) throw new Error('not ready')
   if (!existsSync(join(state, 'routing-d.json'))) writeFileSync(join(state, 'routing-d.json'), JSON.stringify({ candidates: ops.routing.D ?? [] }))
   rpc('board.update-routing', { grade: 'D', candidates: [{ provider: 'claude', model: 'haiku', effort: null }], expectedRevision: ops.revision })
-  const prompt = '준비됨이라고만 답하세요. 파일을 읽거나 고치거나 명령을 실행하지 마세요. 보드 보고도 아직 하지 마세요.'
+  const prompt = '준비됨이라고만 답하세요. 파일을 읽거나 고치지 마세요. 보드가 완료 여부를 물으면 그 안내대로 한 번 보고하세요.'
   const text = [
     '[보드 작업 단계 실기 확인] 아래 순서대로 한 번씩만 하고 다른 일은 하지 마세요. coordinator-board가 PATH에 없으면 CB_BIN 폴더의 같은 이름 파일을 실행하세요.',
     '1. coordinator-board plan 을 실행하세요.',
@@ -74,6 +79,7 @@ if (step === 'send') {
   const worker = l?.sessionId ? world.sessions.get(l.sessionId) : null
   console.log({ launch: l ? { state: l.state, sessionId: l.sessionId, terminal: l.handle } : null,
     item: l?.sessionId ? items[l.sessionId] ?? null : null,
+    stored: (() => { try { const f = JSON.parse(readFileSync(join(homedir(), '.orca-coordinator-board', 'work-items.json'), 'utf8')); const i = f.items[requestKey]; return i ? { notice: i.notice ?? null, history: i.history.map((h) => h.phase + ':' + h.by) } : null } catch { return null } })(),
     worker: worker ? { state: worker.state, unread: worker.unread, livePty: worker.livePty } : null })
 } else if (step === 'report') {
   yes()
@@ -91,6 +97,19 @@ if (step === 'send') {
   const read = orca(['agent', 'read', 'orca_session_id:' + flag('--coordinator'), '--limit', '6']).result
   const last = read.entries.filter((e) => e.kind === 'message' && e.role === 'assistant').at(-1)
   console.log({ entries: read.entries.map((e) => e.kind + (e.role ? ':' + e.role : '') + (e.toolName ? ':' + e.toolName : '')), answer: last?.text?.slice(-600) ?? null })
+} else if (step === 'verify') {
+  yes()
+  const result = flag('--result')
+  if (result !== 'pass' && result !== 'fail') throw new Error('verify needs --result pass|fail')
+  const reason = result === 'pass' ? '완료 기준과 보고를 대조했고 맞습니다.' : '실기 확인용 반려입니다. 같은 보고를 한 번 더 해 주세요.'
+  const text = '[보드 작업 단계 실기 확인] coordinator-board verify --item ' + requestKey + ' --result ' + result + ' --text-file - 를 한 번 실행하고, 표준 입력으로 "' + reason + '"를 넘기세요. 출력된 JSON만 답하세요. 다른 일은 하지 마세요.'
+  console.log('verify:', await fleet.deliver({ messageId: messageId('verify/' + requestKey + '/' + result), to: flag('--coordinator'), text, subject: 'Coordinator Board', from: { kind: 'person' }, whenWorking: 'refuse' }))
+} else if (step === 'worker') {
+  const l = launch()
+  if (!l?.sessionId) throw new Error('no worker session yet')
+  const read = orca(['agent', 'read', 'orca_session_id:' + l.sessionId, '--limit', '20']).result
+  console.log(read.entries.map((e) => e.kind + (e.role ? ':' + e.role : '') + (e.toolName ? ':' + e.toolName : '') +
+    (e.role === 'user' && /Coordinator Board ·/.test(e.text ?? '') ? ' ' + (e.text.match(/\[Coordinator Board · [^\]]+\]/) ?? [''])[0] : '')))
 } else if (step === 'close') {
   if (!args.includes('--yes') || !flag('--terminal')) throw new Error('close needs --terminal <term_…> --yes')
   console.log('close:', orca(['terminal', 'close', '--terminal', flag('--terminal')]).ok)
@@ -101,6 +120,6 @@ if (step === 'send') {
     console.log('grade D restored')
   }
 } else {
-  console.error('usage: node scripts/probe-work.mjs send|items|report|read|answer|close (see the top of this file)')
+  console.error('usage: node scripts/probe-work.mjs send|items|report|read|answer|verify|worker|close (see the top of this file)')
   process.exit(1)
 }

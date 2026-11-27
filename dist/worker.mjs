@@ -25504,6 +25504,9 @@ function reduceWorkItem(item, event) {
       return open3(item) ? move(item, "stale", event.at, "board", { staleReason: "gone" }) : item;
     case "tick": {
       if (!open3(item)) return item;
+      if (item.phase === "running" && !item.candidate && event.state === "done" && event.idleSince !== null) {
+        return withCandidate(item, "turn-ended", event.idleSince);
+      }
       const ask = item.candidate?.ask;
       if (ask?.status === "sent" && event.at - ask.at > event.settings.askMinutes * MINUTE) {
         return move(item, "stale", event.at, "board", { staleReason: "no-answer" });
@@ -28639,7 +28642,7 @@ function contribute(server, fleet, dataDir, pulls, host = NO_HOST) {
       const events = [];
       for (const [sessionId3] of tracked2) {
         const session2 = world.sessions.get(sessionId3);
-        if (session2) events.push([sessionId3, { kind: "tick", at: at2, idleSince: session2.state === "working" ? null : session2.stateStartedAt, settings }]);
+        if (session2) events.push([sessionId3, { kind: "tick", at: at2, state: session2.state, idleSince: session2.state === "working" ? null : session2.stateStartedAt, settings }]);
       }
       let changed3 = items.apply(events).changed;
       const scope = prefs.read();

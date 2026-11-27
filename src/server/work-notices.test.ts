@@ -29,15 +29,24 @@ test('verify confirms a reported item through verifying, or sends it back to run
 test('the stale clock: idle past the limit, or no answer to a sent done check, and only while the work is open', () => {
   const settings = { idleMinutes: 60, askMinutes: 30 }
   const running = item({ phaseAt: 0 })
-  expect(reduceWorkItem(running, { kind: 'tick', at: 61 * MIN, idleSince: null, settings })).toBe(running)
-  expect(reduceWorkItem(running, { kind: 'tick', at: 61 * MIN, idleSince: 30 * MIN, settings })).toBe(running)
-  expect(reduceWorkItem(running, { kind: 'tick', at: 61 * MIN, idleSince: 0, settings })).toMatchObject({ phase: 'stale', staleReason: 'idle' })
+  expect(reduceWorkItem(running, { kind: 'tick', at: 61 * MIN, state: 'working', idleSince: null, settings })).toBe(running)
+  expect(reduceWorkItem(running, { kind: 'tick', at: 61 * MIN, state: 'waiting', idleSince: 30 * MIN, settings })).toBe(running)
+  expect(reduceWorkItem(running, { kind: 'tick', at: 61 * MIN, state: 'waiting', idleSince: 0, settings })).toMatchObject({ phase: 'stale', staleReason: 'idle' })
   const asked = item({ candidate: { reason: 'turn-ended', at: 0, ask: { messageId: 'm', status: 'sent', at: 0 } } })
-  expect(reduceWorkItem(asked, { kind: 'tick', at: 31 * MIN, idleSince: 31 * MIN, settings })).toMatchObject({ phase: 'stale', staleReason: 'no-answer' })
+  expect(reduceWorkItem(asked, { kind: 'tick', at: 31 * MIN, state: 'done', idleSince: 31 * MIN, settings })).toMatchObject({ phase: 'stale', staleReason: 'no-answer' })
   const queued = item({ candidate: { reason: 'turn-ended', at: 0, ask: { messageId: 'm', status: 'queued', at: 0 } } })
-  expect(reduceWorkItem(queued, { kind: 'tick', at: 31 * MIN, idleSince: 31 * MIN, settings })).toBe(queued)
+  expect(reduceWorkItem(queued, { kind: 'tick', at: 31 * MIN, state: 'done', idleSince: 31 * MIN, settings })).toBe(queued)
   const reported = item({ phase: 'reported' })
-  expect(reduceWorkItem(reported, { kind: 'tick', at: 999 * MIN, idleSince: 0, settings })).toBe(reported)
+  expect(reduceWorkItem(reported, { kind: 'tick', at: 999 * MIN, state: 'done', idleSince: 0, settings })).toBe(reported)
+})
+
+test('a running item whose session sits done without a report becomes a candidate on the next tick, even with no turn-ended seen', () => {
+  const settings = { idleMinutes: 60, askMinutes: 30 }
+  const running = item()
+  expect(reduceWorkItem(running, { kind: 'tick', at: 2 * MIN, state: 'done', idleSince: MIN, settings })).toMatchObject({ phase: 'running', candidate: { reason: 'turn-ended', at: MIN } })
+  expect(reduceWorkItem(running, { kind: 'tick', at: 2 * MIN, state: 'working', idleSince: null, settings })).toBe(running)
+  const asked = item({ candidate: { reason: 'turn-ended', at: MIN, ask: { messageId: 'm', status: 'sent', at: MIN } } })
+  expect(reduceWorkItem(asked, { kind: 'tick', at: 2 * MIN, state: 'done', idleSince: MIN, settings })).toBe(asked)
 })
 
 test('gone makes open work stale but keeps a reported one; a report, new work or a person opening it brings stale work back', () => {
