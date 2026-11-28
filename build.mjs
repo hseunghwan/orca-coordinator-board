@@ -6,7 +6,9 @@ import { build, context } from "esbuild";
 const watch = process.argv.includes("--watch");
 // Minified: the plugin directory holds large plugins for review, and the whole repository is installed.
 // The source is in src/, which the listing policy accepts for bundled output.
-const common = { bundle: true, logLevel: "info", sourcemap: false, minify: !watch };
+// charset utf8: esbuild escapes every non-ASCII character by default, so the Korean UI text became
+// long runs of \uXXXX that the plugin directory flags as packed code for a manual review.
+const common = { bundle: true, logLevel: "info", sourcemap: false, minify: !watch, charset: "utf8" };
 const targets = [
   { ...common, entryPoints: ["src/worker.ts"], outfile: "dist/worker.mjs", platform: "node", format: "esm", target: "node20" },
   { ...common, entryPoints: ["src/cli/main.ts"], outfile: "dist/cli.cjs", platform: "node", format: "cjs", target: "node20" },
